@@ -1,0 +1,20 @@
+# Test and quality output
+/build/
+/coverage/
+*.coverprofile
+
+# Compiled launcher artifacts
+/dist/
+/agentmemory
+*.exe
+
+# Local development state and secrets
+.env
+.env.*
+!.env.example
+.agentmemory/
+
+# Editor and operating-system metadata
+.DS_Store
+.idea/
+.vscode/

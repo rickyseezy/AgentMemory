@@ -7,9 +7,10 @@ It is designed to preserve useful context across sessions, repositories, directo
 agent vendors while keeping the Brain and its data on the user's own machine.
 
 > [!IMPORTANT]
-> AgentMemory is currently in the **production specification and architecture stage**.
-> This repository contains the complete product requirements and technical delivery
-> specification. It does not yet contain a working release or installable MCP package.
+> AgentMemory is in **early production implementation**. The PF-001 installer kernel is being
+> built, but there is not yet a working release or installable MCP package. See the
+> [PF-001 implementation record](docs/implementation/PF-001.md) for the exact delivered and
+> outstanding scope; no current code should be interpreted as a completed installer.
 
 The project is inspired by the persistent-memory experience of
 [Claude-Mem](https://github.com/thedotmack/claude-mem), but its target is broader:
@@ -319,6 +320,7 @@ acceptance criteria, a normative technical approach, mandatory tests, and ration
 |---|---|
 | [Product Requirements Document](./PRD.md) | Product vision, behavior, graph and memory model, installation experience, security, quality gates, and product acceptance scenarios |
 | [Technical Requirements and Delivery Specification](./TECHNICAL_REQUIREMENTS.md) | Required architecture, stack, persistence, contracts, security controls, engineering standards, CI/CD, implementation stories, and test obligations |
+| [PF-001 implementation record](./docs/implementation/PF-001.md) | Exact delivered installer-foundation scope, automated evidence, known gaps, and next implementation order |
 
 The two documents are jointly normative. The PRD defines what the complete product must do;
 the technical specification defines how it must be implemented and proven.
@@ -328,17 +330,24 @@ the technical specification defines how it must be implemented and proven.
 Present today:
 
 - complete product requirements;
-- production architecture and technology decisions;
+- normative production architecture and stack requirements, with the required ADR decision
+  set still outstanding;
 - local Docker deployment and zero-knowledge installation contract;
 - graph, memory, indexing, retrieval, provider, and learning specifications;
 - security, privacy, backup, upgrade, recovery, and supply-chain requirements;
-- 99 implementation-ready user stories and their acceptance/test contracts.
+- 99 implementation-ready user stories and their acceptance/test contracts;
+- the first unreleasable PF-001 foundation slice: installer domain state machine,
+  application saga contracts, portable operation repository, durable Linux journal, and
+  quality tooling.
 
 Not present yet:
 
-- executable application code;
+- a working end-user installer or runnable Brain/core application;
 - Docker images or Compose release artifacts;
-- agent or provider adapters;
+- production host/runtime, agent, or provider adapters;
+- dedicated macOS extended-ACL and Windows DACL-aware durable journal adapters;
+- completed required ADRs and the full PF-001 mutation, security, fault-injection, and
+  certified-host acceptance evidence;
 - an installable MCP package;
 - published releases or support guarantees.
 

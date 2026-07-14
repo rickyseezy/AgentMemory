@@ -1,6 +1,7 @@
 package runtimeprovision
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -251,5 +252,28 @@ func TestParsePositiveUintRequiresOneCanonicalPositiveInteger(t *testing.T) {
 				t.Fatalf("parsePositiveUint(%q) unexpectedly succeeded with %d", test.raw, value)
 			}
 		})
+	}
+}
+
+func TestSanitizedContextErrorPreservesOnlyCancellationAuthority(t *testing.T) {
+	t.Parallel()
+	if validMapPrincipal("") || validMapPrincipal(strings.Repeat("a", 257)) ||
+		!validMapPrincipal("agent-memory_1.local") {
+		t.Fatal("subordinate-ID principal grammar drifted")
+	}
+	if rangesOverlap([]subordinateRange{{start: 20, count: 1}, {start: 10, count: 1}}) {
+		t.Fatal("disjoint reverse-ordered subordinate ranges overlapped")
+	}
+	fallback := errors.New("sanitized fallback")
+	if got := sanitizedContextError(nil, fallback); !errors.Is(got, fallback) {
+		t.Fatalf("nil context result = %v", got)
+	}
+	if got := sanitizedContextError(context.Background(), fallback); !errors.Is(got, fallback) {
+		t.Fatalf("active context result = %v", got)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := sanitizedContextError(cancelled, fallback); !errors.Is(got, context.Canceled) || errors.Is(got, fallback) {
+		t.Fatalf("cancelled context result = %v", got)
 	}
 }

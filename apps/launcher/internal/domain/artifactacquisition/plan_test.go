@@ -20,6 +20,9 @@ func TestPF001AcquisitionPlanCalculatesExactSignedHeadroom(t *testing.T) {
 	}
 	artifact := plan.Artifacts()[0]
 	if artifact.ID() != "core" || artifact.Size() != 6 || artifact.ExpandedBytes() != 6 ||
+		!artifact.ExpandedDigest().Equal(releaseinventory.DigestBytes([]byte("abcdef"))) ||
+		artifact.TargetKind() != releaseinventory.ExpandedTargetComposeBundle ||
+		artifact.TargetStorageID() != "compose/compose.yaml" || artifact.TargetAuthorityDigest().IsZero() ||
 		artifact.ContentKey() != "sha256/"+artifact.Digest().Hex()[:2]+"/"+artifact.Digest().Hex() ||
 		!artifact.SourceAuthorized("https://releases.agentmemory.dev/artifacts/core.bin") ||
 		artifact.SourceAuthorized("https://releases.agentmemory.dev/artifacts/core.bin/extra") {

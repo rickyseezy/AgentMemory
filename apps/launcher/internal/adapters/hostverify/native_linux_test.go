@@ -31,6 +31,8 @@ func TestPF001LinuxNativePlatformAndResourceEvidence(t *testing.T) {
 		{value: "'bookworm'", want: "bookworm", ok: true},
 		{value: "unsafe value"},
 		{value: `bad\value`},
+		{value: `"unterminated`},
+		{value: ""},
 	} {
 		got, valid := strictOSReleaseValue(test.value)
 		if got != test.want || valid != test.ok {
@@ -47,6 +49,7 @@ func TestPF001LinuxNativePlatformAndResourceEvidence(t *testing.T) {
 	if linuxVirtualization(cancelledContext()) {
 		t.Fatal("cancelled KVM proof succeeded")
 	}
+	_ = linuxVirtualization(context.Background())
 	if encryption, valid := linuxEncryption(nil); valid || encryption != "" {
 		t.Fatalf("nil Linux encryption evidence = %q/%t", encryption, valid)
 	}
@@ -81,6 +84,13 @@ func TestPF001LinuxControlledTargetAndEncryptedLeafProofs(t *testing.T) {
 	}
 	if !targetIdentityUnchanged(context.Background(), target, evidence) {
 		t.Fatal("stable controlled target changed identity")
+	}
+	// A normal test filesystem is not required to be encrypted. The probe must
+	// nevertheless traverse its exact descriptor/device authority and return a
+	// closed result without accepting absence of evidence.
+	if encryption, valid := linuxEncryption(evidence.file); valid &&
+		encryption != hostverification.EncryptionFScrypt && encryption != hostverification.EncryptionDMcrypt {
+		t.Fatalf("unexpected controlled-target encryption evidence = %q", encryption)
 	}
 	_ = evidence.file.Close()
 	if _, ok := openControlledTarget(cancelledContext(), target); ok {

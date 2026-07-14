@@ -85,6 +85,9 @@ func TestPF001CapacityLeaseScheduleBindsExactProjectionIdentityAndParentAuthorit
 		if lease.Purpose() != LeaseSecretProjection {
 			continue
 		}
+		if lease.ResourcePurpose() == "" || !lease.TargetDigest().IsZero() {
+			t.Fatalf("projection resource/target binding=%q/%s", lease.ResourcePurpose(), lease.TargetDigest().Hex())
+		}
 		if lease.ProjectionInstallationID() != authority.InstallationID ||
 			lease.ProjectionReleaseID() != authority.ReleaseID ||
 			lease.ProjectionGenerationID() != authority.GenerationID || lease.Bytes() != 1024*1024 {
@@ -300,6 +303,10 @@ func TestPF001CapacityActivationTransfersExpandedTargetsAndUninstallRequiresExac
 	for _, authorization := range authorizations {
 		if authorization.Kind() != CapacityReleaseUninstall || authorization.FromState() != LeaseTransferred {
 			t.Fatalf("uninstall authority=%+v", authorization)
+		}
+		if authorization.Lease().Purpose() == LeaseExpanded &&
+			!authorization.TargetDigest().Equal(authorization.Lease().ExpectedTargetDigest()) {
+			t.Fatalf("uninstall target digest=%s", authorization.TargetDigest().Hex())
 		}
 		if _, err := aggregate.RecordReleased(authorization, capacityReceipt(t, authorization.Lease(), false)); err != nil {
 			t.Fatal(err)

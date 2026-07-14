@@ -679,6 +679,27 @@ func TestPF001ApplicationErrorCodesUseCanonicalTaxonomy(t *testing.T) {
 	}
 }
 
+func TestPF001CancellationBoundaryErrorsUseClosedRetryTaxonomy(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		err       error
+		code      ErrorCode
+		retryable bool
+	}{
+		{err: ErrCancellationIntentIntegrity, code: ErrorCodeIntegrityViolation},
+		{err: ErrCancellationIntentConflict, code: ErrorCodeConflict, retryable: true},
+		{err: context.Canceled, code: ErrorCodeDeadlineExceeded, retryable: true},
+		{err: context.DeadlineExceeded, code: ErrorCodeDeadlineExceeded, retryable: true},
+		{err: errors.New("private repository detail"), code: ErrorCodeDependencyUnavailable, retryable: true},
+	} {
+		mapped := mapCancellationIntentError(test.err)
+		if mapped.Code() != test.code || mapped.Retryable() != test.retryable ||
+			strings.Contains(mapped.Error(), "private") {
+			t.Fatalf("mapCancellationIntentError(%v)=(%s,%t,%q)", test.err, mapped.Code(), mapped.Retryable(), mapped.Error())
+		}
+	}
+}
+
 func TestPF001DefensiveApplicationBranchesRejectInvalidState(t *testing.T) {
 	t.Parallel()
 

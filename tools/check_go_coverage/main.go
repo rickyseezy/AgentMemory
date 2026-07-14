@@ -18,7 +18,7 @@ import (
 const (
 	defaultPackageThreshold = 80
 	defaultChangedThreshold = 90
-	maximumProfileBytes     = 128 << 20
+	maximumProfileBytes     = 256 << 20
 )
 
 var safeGitRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)

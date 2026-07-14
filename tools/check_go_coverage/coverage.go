@@ -22,11 +22,13 @@ const (
 var hunkHeaderPattern = regexp.MustCompile(`^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,([0-9]+))? @@`)
 
 type coverageBlock struct {
-	File       string
-	StartLine  uint64
-	EndLine    uint64
-	Statements uint64
-	Count      uint64
+	File        string
+	StartLine   uint64
+	StartColumn uint64
+	EndLine     uint64
+	EndColumn   uint64
+	Statements  uint64
+	Count       uint64
 }
 
 func (b coverageBlock) Covered() bool {
@@ -82,6 +84,7 @@ func parseProfile(reader io.Reader, modulePath string) (coverageProfile, error) 
 	scanner := bufio.NewScanner(reader)
 	lineNumber := 0
 	profile := coverageProfile{Blocks: make([]coverageBlock, 0)}
+	indices := make(map[coverageBlockIdentity]int)
 	for scanner.Scan() {
 		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
@@ -98,6 +101,19 @@ func parseProfile(reader io.Reader, modulePath string) (coverageProfile, error) 
 		if err != nil {
 			return coverageProfile{}, fmt.Errorf("coverage profile line %d: %w", lineNumber, err)
 		}
+		identity := block.identity()
+		if index, duplicate := indices[identity]; duplicate {
+			if profile.Blocks[index].Statements != block.Statements {
+				return coverageProfile{}, fmt.Errorf(
+					"coverage profile line %d: duplicate block statement count changed", lineNumber,
+				)
+			}
+			if block.Covered() {
+				profile.Blocks[index].Count = 1
+			}
+			continue
+		}
+		indices[identity] = len(profile.Blocks)
 		profile.Blocks = append(profile.Blocks, block)
 	}
 	if err := scanner.Err(); err != nil {
@@ -122,7 +138,7 @@ func parseCoverageBlock(line string, modulePath string) (coverageBlock, error) {
 	if err != nil {
 		return coverageBlock{}, err
 	}
-	startLine, endLine, err := parseSpan(fields[0][separator+1:])
+	startLine, startColumn, endLine, endColumn, err := parseSpan(fields[0][separator+1:])
 	if err != nil {
 		return coverageBlock{}, err
 	}
@@ -135,11 +151,13 @@ func parseCoverageBlock(line string, modulePath string) (coverageBlock, error) {
 		return coverageBlock{}, errors.New("execution count must be a non-negative integer")
 	}
 	return coverageBlock{
-		File:       file,
-		StartLine:  startLine,
-		EndLine:    endLine,
-		Statements: statements,
-		Count:      count,
+		File:        file,
+		StartLine:   startLine,
+		StartColumn: startColumn,
+		EndLine:     endLine,
+		EndColumn:   endColumn,
+		Statements:  statements,
+		Count:       count,
 	}, nil
 }
 
@@ -152,23 +170,36 @@ func normalizeProfilePath(file string, modulePath string) (string, error) {
 	return normalized, nil
 }
 
-func parseSpan(value string) (uint64, uint64, error) {
+func parseSpan(value string) (uint64, uint64, uint64, uint64, error) {
 	start, end, found := strings.Cut(value, ",")
 	if !found {
-		return 0, 0, errors.New("coverage span is malformed")
+		return 0, 0, 0, 0, errors.New("coverage span is malformed")
 	}
 	startLine, startColumn, err := parsePosition(start)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	endLine, endColumn, err := parsePosition(end)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	if endLine < startLine || endLine == startLine && endColumn < startColumn {
-		return 0, 0, errors.New("coverage span ends before it starts")
+		return 0, 0, 0, 0, errors.New("coverage span ends before it starts")
 	}
-	return startLine, endLine, nil
+	return startLine, startColumn, endLine, endColumn, nil
+}
+
+type coverageBlockIdentity struct {
+	file                   string
+	startLine, startColumn uint64
+	endLine, endColumn     uint64
+}
+
+func (b coverageBlock) identity() coverageBlockIdentity {
+	return coverageBlockIdentity{
+		file: b.File, startLine: b.StartLine, startColumn: b.StartColumn,
+		endLine: b.EndLine, endColumn: b.EndColumn,
+	}
 }
 
 func parsePosition(value string) (uint64, uint64, error) {

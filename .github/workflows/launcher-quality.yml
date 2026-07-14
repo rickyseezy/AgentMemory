@@ -80,6 +80,7 @@ jobs:
         run: |
           mkdir -p build
           go test -race -shuffle=on -count=1 -covermode=atomic \
+            -coverpkg=./apps/launcher/... \
             -coverprofile=build/go-cover.out ./apps/launcher/... ./tools/...
 
       - name: Enforce launcher coverage policy

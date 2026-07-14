@@ -31,6 +31,32 @@ github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp/
 	}
 }
 
+func TestParseProfileCoalescesCrossPackageCoverageBlocks(t *testing.T) {
+	t.Parallel()
+
+	profile, err := parseProfile(strings.NewReader(`mode: atomic
+example.com/module/apps/launcher/a/a.go:1.1,2.2 3 0
+example.com/module/apps/launcher/a/a.go:1.1,2.2 3 7
+example.com/module/apps/launcher/a/a.go:3.1,4.2 2 0
+`), "example.com/module")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Blocks) != 2 || !profile.Blocks[0].Covered() || profile.Blocks[0].Count != 1 {
+		t.Fatalf("coalesced profile=%+v", profile.Blocks)
+	}
+	result := evaluatePackages(profile, map[string]struct{}{"apps/launcher/a": {}}, 50)
+	if len(result) != 1 || result[0].Statements != 5 || result[0].Covered != 3 || !result[0].Passed {
+		t.Fatalf("coalesced package result=%+v", result)
+	}
+	if _, err := parseProfile(strings.NewReader(`mode: atomic
+example.com/module/apps/launcher/a/a.go:1.1,2.2 3 0
+example.com/module/apps/launcher/a/a.go:1.1,2.2 4 1
+`), "example.com/module"); err == nil {
+		t.Fatal("duplicate block with changed statement count was accepted")
+	}
+}
+
 func TestParseProfileRejectsMalformedOrUnsafeInput(t *testing.T) {
 	t.Parallel()
 

@@ -142,6 +142,18 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 	if _, err := application.ResolveRuntimePlan(context.Background(), plan.Digest(), plan.OperationID()); err != nil || fixture.runtimeEvidence.calls != 1 {
 		t.Fatalf("runtime replay = %v/calls=%d", err, fixture.runtimeEvidence.calls)
 	}
+	execution, err := application.ResolveRuntimeExecutionAuthority(context.Background(), plan.Digest(), plan.OperationID())
+	request := execution.Request()
+	authority := execution.RuntimeAuthority()
+	if err != nil || !authority.Equal(fixture.runtimePlans.authority) ||
+		request.OperationID != plan.OperationID() || !request.ParentPlanDigest.Equal(plan.Digest()) ||
+		request.RuntimeCatalogID != plan.RuntimeCatalogResourceID() ||
+		!request.RuntimeCatalogDigest.Equal(plan.RuntimeCatalogDigest()) ||
+		!request.HostEvidenceDigest.Equal(authority.HostEvidenceDigest()) ||
+		request.RuntimeCatalogResource.ID() != plan.RuntimeCatalogResourceID() ||
+		fixture.runtimeEvidence.calls != 1 {
+		t.Fatalf("runtime execution authority = %+v/%v/calls=%d", execution, err, fixture.runtimeEvidence.calls)
+	}
 	activation, err := application.ResolveActivationPlan(context.Background(), plan.Digest(), plan.OperationID())
 	if err != nil || !activation.PlanDigest.Equal(plan.Digest()) || activation.InstallationID != plan.InstallationID() ||
 		!activation.ReadinessReceiptDigest.Equal(fixture.receipt.Digest()) ||
@@ -153,6 +165,9 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 	foreignOperation, _ := install.NewOperationID("019f5f9f-0000-7abc-8123-0123456789ab")
 	if _, err := application.ResolveRuntimePlan(context.Background(), plan.Digest(), foreignOperation); !errors.Is(err, ErrRuntimeEvidenceUnavailable) {
 		t.Fatalf("foreign runtime operation error = %v", err)
+	}
+	if _, err := application.ResolveRuntimeExecutionAuthority(context.Background(), plan.Digest(), foreignOperation); !errors.Is(err, ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("foreign runtime execution error = %v", err)
 	}
 	if _, err := application.ResolveActivationPlan(context.Background(), plan.Digest(), foreignOperation); !errors.Is(err, ErrActivationEvidenceUnavailable) {
 		t.Fatalf("foreign activation operation error = %v", err)

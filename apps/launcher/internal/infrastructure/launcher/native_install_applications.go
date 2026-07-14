@@ -12,6 +12,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/activereleaseapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productstack"
 )
 
@@ -20,7 +21,7 @@ import (
 // Release, host-policy, and artifact-acquisition authority are deliberately
 // absent: the builder derives those only from the verified retained release.
 type nativeInstallPhaseCapabilities struct {
-	RuntimeEnsurer     installphase.RuntimeEnsurer
+	RuntimePlatform    nativePlatformRuntimeApplicationFactory
 	Capacity           installphase.ArtifactCapacityApplication
 	ManagedResources   installphase.ManagedResourceEnsurer
 	ProductStack       productstack.Ensurer
@@ -52,7 +53,7 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		return nil, errNativeInstallerIntegrity
 	}
 	required := []any{
-		capabilities.RuntimeEnsurer,
+		capabilities.RuntimePlatform,
 		capabilities.Capacity, capabilities.ManagedResources, capabilities.ProductStack,
 		capabilities.AgentConfiguration,
 	}
@@ -103,6 +104,12 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
+		runtimeExecution, err := newNativeRuntimeExecutionVerifier(
+			release.runtimeCatalogLoader(), catalogPolicy,
+		)
+		if err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
 		credentials := corehttp.NewNativeCredentialSource()
 		return func(
 			operationContext context.Context,
@@ -143,13 +150,23 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 			if activeError != nil {
 				return nil, errNativeInstallerIntegrity
 			}
+			runtimeBuilder := func(
+				_ context.Context,
+				plans *installplanapp.Application,
+				buildAuthority nativeInstallAuthority,
+			) (installphase.RuntimeEnsurer, error) {
+				return newNativeRuntimeEnsurer(
+					buildAuthority.PlanDigest, buildAuthority.OperationID, plans,
+					runtimeExecution, capabilities.RuntimePlatform,
+				)
+			}
 			graph, graphError := newNativeInstallApplicationFactory(nativeInstallGraphDependencies{
 				Plans: composition.plans, RuntimePlans: composition.plans,
 				RuntimeEvidence: runtimeEvidence,
 				Operations:      composition.operations, Cancellation: composition.operations,
 				ReadinessReceipts: receipts, ResourceInventory: composition.resourceState,
 				InstallationLock: composition.installLock,
-				HostVerifier:     release.hostVerification(), RuntimeEnsurer: capabilities.RuntimeEnsurer,
+				HostVerifier:     release.hostVerification(), RuntimeEnsurer: runtimeBuilder,
 				ReleaseVerifier: release.releaseVerification(), Artifacts: artifacts,
 				Capacity: capabilities.Capacity, Directories: productFiles,
 				Secrets: productFiles, ManagedResources: capabilities.ManagedResources,

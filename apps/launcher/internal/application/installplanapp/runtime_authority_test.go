@@ -93,3 +93,45 @@ func TestRuntimePlanAuthorityRejectsEveryTamperedBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeExecutionAuthorityRejectsEveryParentSubstitution(t *testing.T) {
+	t.Parallel()
+	plan := applicationPlan(t)
+	fixture := newApplicationFixture(t, plan)
+	application, err := New(fixture.dependencies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := application.ResolveRuntimeExecutionAuthority(t.Context(), plan.Digest(), plan.OperationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validRequest := execution.Request()
+	authority := execution.RuntimeAuthority()
+	foreignOperation, _ := install.NewOperationID("019f5f9f-0000-7abc-8123-0123456789ab")
+	foreignParent, _ := install.BindPlan([]byte("foreign parent"))
+	foreignEvidence := install.DigestBytes([]byte("foreign evidence"))
+	tests := []struct {
+		name   string
+		mutate func(*RuntimeEvidenceRequest)
+	}{
+		{name: "operation", mutate: func(request *RuntimeEvidenceRequest) { request.OperationID = foreignOperation }},
+		{name: "parent", mutate: func(request *RuntimeEvidenceRequest) { request.ParentPlanDigest = foreignParent }},
+		{name: "resource id", mutate: func(request *RuntimeEvidenceRequest) { request.RuntimeCatalogID = "foreign" }},
+		{name: "resource digest", mutate: func(request *RuntimeEvidenceRequest) { request.RuntimeCatalogDigest = foreignEvidence }},
+		{name: "host evidence", mutate: func(request *RuntimeEvidenceRequest) { request.HostEvidenceDigest = foreignEvidence }},
+		{name: "storage", mutate: func(request *RuntimeEvidenceRequest) { request.HostStorageTarget = "" }},
+		{name: "endpoint", mutate: func(request *RuntimeEvidenceRequest) { request.RuntimeEndpoint = "" }},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := validRequest
+			test.mutate(&request)
+			if _, constructError := NewRuntimeExecutionAuthority(request, authority); !errors.Is(constructError, ErrRuntimePlanIntegrity) {
+				t.Fatalf("NewRuntimeExecutionAuthority() error=%v", constructError)
+			}
+		})
+	}
+}

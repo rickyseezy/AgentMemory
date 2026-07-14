@@ -119,7 +119,8 @@ func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *
 
 func nativeInstallCapabilitiesFixture(dependencies nativeInstallGraphDependencies) nativeInstallPhaseCapabilities {
 	return nativeInstallPhaseCapabilities{
-		RuntimeEnsurer: dependencies.RuntimeEnsurer, Capacity: dependencies.Capacity,
+		RuntimePlatform:  &nativePlatformRuntimeFactoryStub{application: &nativeGraphRuntime{}},
+		Capacity:         dependencies.Capacity,
 		ManagedResources: dependencies.ManagedResources, ProductStack: dependencies.ProductStack,
 		AgentConfiguration: dependencies.AgentConfiguration,
 	}

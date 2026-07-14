@@ -31,6 +31,48 @@ type RuntimeEvidenceRequest struct {
 	RuntimeCatalogResource releaseinventory.Resource
 }
 
+// RuntimeExecutionAuthority is the complete read-only input required to
+// re-verify and execute one persisted PF-006 plan after a process restart.
+// It deliberately carries the signed outer release/catalog resource as well
+// as the immutable nested authority; execution must not trust an in-memory
+// catalog retained from the planning call.
+type RuntimeExecutionAuthority struct {
+	request   RuntimeEvidenceRequest
+	authority RuntimePlanAuthority
+}
+
+// NewRuntimeExecutionAuthority joins a current parent request to one already
+// authenticated persisted nested authority. This constructor is public so
+// infrastructure verification can be tested without exposing mutable fields.
+func NewRuntimeExecutionAuthority(
+	request RuntimeEvidenceRequest,
+	authority RuntimePlanAuthority,
+) (RuntimeExecutionAuthority, error) {
+	plan := authority.Plan()
+	catalogDigest, err := install.ParseDigest(plan.CatalogDigest().String())
+	if err != nil || request.OperationID.IsZero() || request.ParentPlanDigest.IsZero() ||
+		request.OperationID != authority.OperationID() ||
+		!request.ParentPlanDigest.Equal(authority.ParentPlanDigest()) ||
+		request.RuntimeCatalogID == "" || request.RuntimeCatalogID != request.RuntimeCatalogResource.ID() ||
+		request.RuntimeCatalogDigest.IsZero() ||
+		request.RuntimeCatalogResource.Digest().Hex() != request.RuntimeCatalogDigest.String() ||
+		!request.RuntimeCatalogDigest.Equal(authority.CatalogResourceEvidenceDigest()) ||
+		request.HostEvidenceDigest.IsZero() ||
+		!request.HostEvidenceDigest.Equal(authority.HostEvidenceDigest()) ||
+		request.HostStorageTarget == "" || request.RuntimeEndpoint == "" ||
+		!authority.SignedCatalogEvidenceDigest().Equal(catalogDigest) {
+		return RuntimeExecutionAuthority{}, ErrRuntimePlanIntegrity
+	}
+	return RuntimeExecutionAuthority{request: request, authority: authority}, nil
+}
+
+// Request returns the exact parent evidence and signed catalog resource that
+// must be verified again before platform capabilities are constructed.
+func (a RuntimeExecutionAuthority) Request() RuntimeEvidenceRequest { return a.request }
+
+// RuntimeAuthority returns the persisted operation-scoped nested authority.
+func (a RuntimeExecutionAuthority) RuntimeAuthority() RuntimePlanAuthority { return a.authority }
+
 // RuntimeEvidenceResolver performs the read-only verified host/runtime
 // discovery and signed-catalog projection needed to derive a runtime plan.
 type RuntimeEvidenceResolver interface {

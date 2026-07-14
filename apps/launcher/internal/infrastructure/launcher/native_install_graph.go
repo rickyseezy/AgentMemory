@@ -26,7 +26,7 @@ type nativeInstallGraphDependencies struct {
 	InstallationLock  installapp.InstallationLockPort
 
 	HostVerifier       installphase.HostVerifier
-	RuntimeEnsurer     installphase.RuntimeEnsurer
+	RuntimeEnsurer     nativeRuntimeEnsurerBuilder
 	ReleaseVerifier    installphase.ReleaseVerifier
 	Artifacts          installphase.ArtifactApplication
 	Capacity           installphase.ArtifactCapacityApplication
@@ -39,6 +39,12 @@ type nativeInstallGraphDependencies struct {
 	Readiness          installphase.ReadinessVerifier
 	ActiveRelease      installphase.ActiveReleaseCommitter
 }
+
+type nativeRuntimeEnsurerBuilder func(
+	context.Context,
+	*installplanapp.Application,
+	nativeInstallAuthority,
+) (installphase.RuntimeEnsurer, error)
 
 // newNativeInstallApplicationFactory assembles every one of the fourteen
 // narrow phase capabilities. It rejects a partial graph before a worker can be
@@ -85,7 +91,11 @@ func newNativeInstallApplicationFactory(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		runtimePhase, err := installphase.NewContainerRuntimePhase(plans, dependencies.RuntimeEnsurer)
+		runtimeEnsurer, err := dependencies.RuntimeEnsurer(ctx, plans, authority)
+		if err != nil || nilAny(runtimeEnsurer) {
+			return nil, errNativeInstallerIntegrity
+		}
+		runtimePhase, err := installphase.NewContainerRuntimePhase(plans, runtimeEnsurer)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}

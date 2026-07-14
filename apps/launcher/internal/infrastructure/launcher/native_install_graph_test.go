@@ -99,7 +99,11 @@ func nativeInstallGraphFixture() nativeInstallGraphDependencies {
 		RuntimeEvidence: &nativeGraphRuntimeEvidence{}, Operations: operations,
 		Cancellation: operations, ReadinessReceipts: &nativeGraphReadinessReceipts{},
 		ResourceInventory: &nativeGraphResourceInventory{}, InstallationLock: &nativeGraphLockPort{},
-		HostVerifier: &nativeGraphHost{}, RuntimeEnsurer: &nativeGraphRuntime{},
+		HostVerifier: &nativeGraphHost{}, RuntimeEnsurer: func(
+			context.Context, *installplanapp.Application, nativeInstallAuthority,
+		) (installphase.RuntimeEnsurer, error) {
+			return &nativeGraphRuntime{}, nil
+		},
 		ReleaseVerifier: &nativeGraphRelease{}, Artifacts: &nativeGraphArtifacts{},
 		Capacity: &nativeGraphCapacity{}, Directories: &nativeGraphDirectories{},
 		Secrets: &nativeGraphSecrets{}, ManagedResources: &nativeGraphResources{},

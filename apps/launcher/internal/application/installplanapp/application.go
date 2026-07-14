@@ -489,24 +489,11 @@ func (a *Application) ResolveRuntimePlan(
 	if !errors.Is(err, ErrRuntimePlanNotFound) {
 		return installphase.RuntimePlan{}, err
 	}
-	var runtimeResource releaseinventory.Resource
-	exists := false
-	for _, resource := range plan.SignedRelease().Manifest().Resources() {
-		if resource.ID() == plan.RuntimeCatalogResourceID() {
-			runtimeResource, exists = resource, true
-			break
-		}
-	}
-	if !exists {
+	request, err := runtimeExecutionRequest(plan, operationID, hostEvidence.OutputDigest())
+	if err != nil {
 		return installphase.RuntimePlan{}, ErrRuntimeEvidenceUnavailable
 	}
-	evidence, err := a.runtimeEvidence.ResolveRuntimeEvidence(ctx, RuntimeEvidenceRequest{
-		OperationID: operationID, ParentPlanDigest: digest,
-		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
-		SignedHostPlan: plan.SignedHostPlan(), HostEvidenceDigest: hostEvidence.OutputDigest(),
-		HostStorageTarget: plan.HostStorageTarget(), RuntimeEndpoint: plan.RuntimeEndpoint(),
-		SignedRelease: plan.SignedRelease(), RuntimeCatalogResource: runtimeResource,
-	})
+	evidence, err := a.runtimeEvidence.ResolveRuntimeEvidence(ctx, request)
 	if err != nil || !evidence.HostEvidenceDigest().Equal(hostEvidence.OutputDigest()) ||
 		!evidence.CatalogResourceEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) {
 		return installphase.RuntimePlan{}, ErrRuntimeEvidenceUnavailable
@@ -538,6 +525,73 @@ func (a *Application) ResolveRuntimePlan(
 		authority = persisted
 	}
 	return runtimeProjection(plan, operationID, hostEvidence.OutputDigest(), authority)
+}
+
+// ResolveRuntimeExecutionAuthority first resolves/persists the nested runtime
+// plan, then independently reconstructs its signed-catalog verification input
+// from the current parent aggregate evidence. Callers use this on every
+// process lifetime so a prior in-memory catalog can never authorize resume.
+func (a *Application) ResolveRuntimeExecutionAuthority(
+	ctx context.Context,
+	digest install.PlanDigest,
+	operationID install.OperationID,
+) (RuntimeExecutionAuthority, error) {
+	if _, err := a.ResolveRuntimePlan(ctx, digest, operationID); err != nil {
+		return RuntimeExecutionAuthority{}, err
+	}
+	plan, err := a.load(ctx, digest)
+	if err != nil {
+		return RuntimeExecutionAuthority{}, err
+	}
+	operation, hostEvidence, err := a.loadOperationEvidence(ctx, plan, operationID, install.PhaseVerifyHost)
+	if err != nil || operation == nil || !operationAllowsRuntimeAuthority(operation) {
+		return RuntimeExecutionAuthority{}, ErrRuntimeEvidenceUnavailable
+	}
+	request, err := runtimeExecutionRequest(plan, operationID, hostEvidence.OutputDigest())
+	if err != nil {
+		return RuntimeExecutionAuthority{}, ErrRuntimeEvidenceUnavailable
+	}
+	authority, err := a.runtimePlans.LoadRuntimePlan(ctx, operationID, digest)
+	if err != nil {
+		return RuntimeExecutionAuthority{}, err
+	}
+	if _, err := runtimeProjection(plan, operationID, hostEvidence.OutputDigest(), authority); err != nil ||
+		!authority.CatalogResourceEvidenceDigest().Equal(request.RuntimeCatalogDigest) {
+		return RuntimeExecutionAuthority{}, ErrRuntimePlanIntegrity
+	}
+	execution, err := NewRuntimeExecutionAuthority(request, authority)
+	if err != nil {
+		return RuntimeExecutionAuthority{}, ErrRuntimePlanIntegrity
+	}
+	return execution, nil
+}
+
+func runtimeExecutionRequest(
+	plan installplan.Plan,
+	operationID install.OperationID,
+	hostEvidence install.Digest,
+) (RuntimeEvidenceRequest, error) {
+	if plan.Digest().IsZero() || operationID.IsZero() || operationID != plan.OperationID() || hostEvidence.IsZero() {
+		return RuntimeEvidenceRequest{}, ErrRuntimeEvidenceUnavailable
+	}
+	var runtimeResource releaseinventory.Resource
+	exists := false
+	for _, resource := range plan.SignedRelease().Manifest().Resources() {
+		if resource.ID() == plan.RuntimeCatalogResourceID() {
+			runtimeResource, exists = resource, true
+			break
+		}
+	}
+	if !exists || runtimeResource.Digest().Hex() != plan.RuntimeCatalogDigest().String() {
+		return RuntimeEvidenceRequest{}, ErrRuntimeEvidenceUnavailable
+	}
+	return RuntimeEvidenceRequest{
+		OperationID: operationID, ParentPlanDigest: plan.Digest(),
+		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
+		SignedHostPlan: plan.SignedHostPlan(), HostEvidenceDigest: hostEvidence,
+		HostStorageTarget: plan.HostStorageTarget(), RuntimeEndpoint: plan.RuntimeEndpoint(),
+		SignedRelease: plan.SignedRelease(), RuntimeCatalogResource: runtimeResource,
+	}, nil
 }
 
 // ResolveActivationPlan derives dynamic activation inputs only from the exact

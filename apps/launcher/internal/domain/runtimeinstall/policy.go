@@ -362,6 +362,15 @@ func (c CertifiedRuntime) Platform() Platform { return c.platform }
 // Architecture returns the catalog target CPU architecture.
 func (c CertifiedRuntime) Architecture() Architecture { return c.architecture }
 
+// Product returns the closed runtime product identity selected by the catalog.
+func (c CertifiedRuntime) Product() string { return c.product }
+
+// Version returns the exact runtime version selected by the catalog.
+func (c CertifiedRuntime) Version() string { return c.version }
+
+// Channel returns the signed runtime release channel.
+func (c CertifiedRuntime) Channel() string { return c.channel }
+
 // CatalogSequence returns the anti-rollback sequence.
 func (c CertifiedRuntime) CatalogSequence() uint64 { return c.catalogSequence }
 
@@ -491,8 +500,11 @@ type Plan struct {
 	digest             Hash
 	canonical          []byte
 	platform           Platform
+	architecture       Architecture
 	product            string
 	version            string
+	channel            string
+	catalogSequence    uint64
 	catalogHash        Hash
 	termsHash          Hash
 	termsID            string
@@ -521,11 +533,20 @@ func (p Plan) CanonicalBytes() []byte { return append([]byte(nil), p.canonical..
 // Platform returns the signed catalog target used by the decision.
 func (p Plan) Platform() Platform { return p.platform }
 
+// Architecture returns the signed catalog CPU architecture.
+func (p Plan) Architecture() Architecture { return p.architecture }
+
 // Product returns the exact signed runtime product name.
 func (p Plan) Product() string { return p.product }
 
 // Version returns the exact signed runtime product version.
 func (p Plan) Version() string { return p.version }
+
+// Channel returns the exact signed release channel.
+func (p Plan) Channel() string { return p.channel }
+
+// CatalogSequence returns the signed anti-rollback sequence.
+func (p Plan) CatalogSequence() uint64 { return p.catalogSequence }
 
 // CatalogDigest returns the exact verified catalog bound into the plan.
 func (p Plan) CatalogDigest() Hash { return p.catalogHash }

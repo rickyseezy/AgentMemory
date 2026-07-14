@@ -25,6 +25,10 @@ func TestCanonicalPlanV1RoundTripsEveryDecisionInput(t *testing.T) {
 		decoded.TermsVersion() != certifiedCatalog(t).TermsVersion() ||
 		decoded.TermsURL() != certifiedCatalog(t).TermsURL() ||
 		decoded.TermsPresentation() != certifiedCatalog(t).TermsPresentation() ||
+		decoded.Architecture() != certifiedCatalog(t).Architecture() ||
+		decoded.Product() != certifiedCatalog(t).Product() || decoded.Version() != certifiedCatalog(t).Version() ||
+		decoded.Channel() != certifiedCatalog(t).Channel() ||
+		decoded.CatalogSequence() != certifiedCatalog(t).CatalogSequence() ||
 		decoded.HostOSVersion() != supportedHost(t).OSVersion() || decoded.UnrelatedWorkloads() != 0 {
 		t.Fatal("decoded runtime plan lost an exact derived binding")
 	}

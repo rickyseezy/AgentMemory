@@ -456,8 +456,12 @@ func filesystemSignedManifest(t testing.TB) releaseinventory.SignedManifest {
 	imageInput.OCIIndexDigest = indexDigest
 	imageInput.OCIIndexResourceID = "image-index"
 	image := filesystemMustResource(t, imageInput)
-	resources := make([]releaseinventory.Resource, 0, 24)
-	for _, subject := range []releaseinventory.Resource{compose, runtimeCatalog, index, image} {
+	subjects := []releaseinventory.Resource{compose, runtimeCatalog, index, image}
+	for _, input := range filesystemQualifiedSubjectInputs(platform) {
+		subjects = append(subjects, filesystemMustResource(t, input))
+	}
+	resources := make([]releaseinventory.Resource, 0, len(subjects)*6)
+	for _, subject := range subjects {
 		resources = append(resources, subject)
 		resources = append(resources, filesystemEvidence(t, subject)...)
 	}
@@ -492,11 +496,63 @@ func filesystemSignedManifest(t testing.TB) releaseinventory.SignedManifest {
 		SchemaVersion: releaseinventory.SupportedSignatureBundleSchemaMajor,
 		TrustMode:     releaseinventory.SignatureTrustModeKeyID, TrustRootID: "release-root-2026",
 		Signature: bytes.Repeat([]byte{0x42}, releaseinventory.ManifestSignatureSize), RevocationSet: revocations,
+		TrustedTimeEvidence: []byte("trusted time evidence"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return signed
+}
+
+func filesystemQualifiedSubjectInputs(platform releaseinventory.Platform) []releaseinventory.ResourceInput {
+	types := []struct {
+		id      string
+		kind    releaseinventory.ResourceKind
+		purpose releaseinventory.ResourcePurpose
+		media   string
+	}{
+		{"launcher", releaseinventory.ResourceKindLauncher, releaseinventory.ResourcePurposeNativeLauncher, releaseinventory.MediaTypeNativeExecutable},
+		{"helper", releaseinventory.ResourceKindHelper, releaseinventory.ResourcePurposeNativeHelper, releaseinventory.MediaTypeNativeExecutable},
+		{"schema", releaseinventory.ResourceKindSchema, releaseinventory.ResourcePurposeContractBundle, releaseinventory.MediaTypeContractBundle},
+		{"migration", releaseinventory.ResourceKindMigration, releaseinventory.ResourcePurposeMigrationSet, releaseinventory.MediaTypeMigrationSet},
+		{"setup-ui", releaseinventory.ResourceKindSetupUI, releaseinventory.ResourcePurposeSetupUI, releaseinventory.MediaTypeSetupUI},
+		{"verifier", releaseinventory.ResourceKindVerifier, releaseinventory.ResourcePurposeOfflineVerifier, releaseinventory.MediaTypeNativeExecutable},
+	}
+	result := make([]releaseinventory.ResourceInput, 0, len(types)+9)
+	for _, subject := range types {
+		input := filesystemSubjectInput(subject.id, subject.kind, subject.purpose, subject.media, platform,
+			"bundle://"+subject.id, releaseinventory.DigestBytes([]byte(subject.id)))
+		if subject.kind == releaseinventory.ResourceKindLauncher || subject.kind == releaseinventory.ResourceKindHelper ||
+			subject.kind == releaseinventory.ResourceKindVerifier {
+			input.NativePublisherIdentity = "agentmemory.publisher"
+			input.NativePublisherPolicyID = "agentmemory-native-2026"
+		}
+		result = append(result, input)
+	}
+	providers := []releaseinventory.LocalProviderRole{
+		releaseinventory.LocalProviderRoleEmbedding,
+		releaseinventory.LocalProviderRoleReranking,
+		releaseinventory.LocalProviderRoleExtraction,
+	}
+	providerTypes := []struct {
+		kind    releaseinventory.ResourceKind
+		purpose releaseinventory.ResourcePurpose
+		media   string
+	}{
+		{releaseinventory.ResourceKindModel, releaseinventory.ResourcePurposeModelWeights, releaseinventory.MediaTypeModelWeights},
+		{releaseinventory.ResourceKindTokenizer, releaseinventory.ResourcePurposeTokenizer, releaseinventory.MediaTypeTokenizer},
+		{releaseinventory.ResourceKindTemplate, releaseinventory.ResourcePurposePromptTemplate, releaseinventory.MediaTypePromptTemplate},
+	}
+	for _, role := range providers {
+		for _, providerType := range providerTypes {
+			id := string(providerType.kind) + "-" + string(role)
+			input := filesystemSubjectInput(id, providerType.kind, providerType.purpose, providerType.media, platform,
+				"bundle://"+id, releaseinventory.DigestBytes([]byte(id)))
+			input.ProviderRole = role
+			result = append(result, input)
+		}
+	}
+	return result
 }
 
 func filesystemSubject(t testing.TB, id string, kind releaseinventory.ResourceKind,

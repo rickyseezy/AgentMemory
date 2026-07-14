@@ -8,9 +8,15 @@ import (
 )
 
 type nativeProductionFirstStartDependencies struct {
-	Release    nativeReleaseAuthorityDependencies
-	FirstStart nativeFirstStartDependencies
+	Release      nativeReleaseAuthorityDependencies
+	Applications nativeInstallApplicationsBuilder
+	FirstStart   nativeFirstStartDependencies
 }
+
+type nativeInstallApplicationsBuilder func(
+	context.Context,
+	*nativeReleaseAuthority,
+) (nativeInstallApplicationFactory, error)
 
 // nativeProductionFirstStart owns both the retained release authority and the
 // sole process supervisor used by initialization and Setup Accept/Retry.
@@ -27,7 +33,7 @@ func composeNativeProductionFirstStart(
 	ctx context.Context,
 	dependencies nativeProductionFirstStartDependencies,
 ) (nativeProductionFirstStart, error) {
-	if ctx == nil || nilAny(dependencies.FirstStart.Applications) ||
+	if ctx == nil || dependencies.Applications == nil ||
 		nilAny(dependencies.FirstStart.Resolver) || nilAny(dependencies.FirstStart.Plans) ||
 		nilAny(dependencies.FirstStart.Operations) || nilAny(dependencies.FirstStart.Preparations) ||
 		nilAny(dependencies.FirstStart.Binder) || nilAny(dependencies.FirstStart.Runtime) {
@@ -47,6 +53,11 @@ func composeNativeProductionFirstStart(
 		}
 	}()
 	firstStart := dependencies.FirstStart
+	applications, err := dependencies.Applications(ctx, release)
+	if err != nil || nilAny(applications) {
+		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
+	}
+	firstStart.Applications = applications
 	firstStart.Templates = release.templates()
 	// The subordinate composer has no operation context; its only context use
 	// is an unconditional cleanup context if construction fails.

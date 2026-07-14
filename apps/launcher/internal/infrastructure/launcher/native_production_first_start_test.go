@@ -12,12 +12,17 @@ func TestPF001ProductionFirstStartUsesVerifiedReleaseAndOneSupervisor(t *testing
 	t.Parallel()
 	releaseFixture := nativeReleaseStackFixture(t)
 	firstStart := nativeFirstStartFixture()
+	applications := firstStart.Applications
 	firstStart.Templates = nil
+	firstStart.Applications = nil
 	composition, err := composeNativeProductionFirstStart(t.Context(), nativeProductionFirstStartDependencies{
 		Release: nativeReleaseAuthorityDependencies{
 			BundleRoot: func() (string, error) { return nativeReleaseAuthorityBundleRoot(t), nil },
 			Trust:      func() (nativeReleaseTrustMaterial, error) { return releaseFixture.Trust, nil },
 			Clock:      releaseFixture.Clock, AntiRollback: releaseFixture.AntiRollback,
+		},
+		Applications: func(context.Context, *nativeReleaseAuthority) (nativeInstallApplicationFactory, error) {
+			return applications, nil
 		},
 		FirstStart: firstStart,
 	})
@@ -42,6 +47,9 @@ func TestPF001ProductionFirstStartDoesNotExposePartialAuthority(t *testing.T) {
 			Trust:      func() (nativeReleaseTrustMaterial, error) { return releaseFixture.Trust, nil },
 			Clock:      releaseFixture.Clock, AntiRollback: releaseFixture.AntiRollback,
 		},
+		Applications: func(context.Context, *nativeReleaseAuthority) (nativeInstallApplicationFactory, error) {
+			return nativeFirstStartFixture().Applications, nil
+		},
 		FirstStart: nativeFirstStartFixture(),
 	}
 	for _, test := range []struct {
@@ -50,7 +58,12 @@ func TestPF001ProductionFirstStartDoesNotExposePartialAuthority(t *testing.T) {
 		want   error
 	}{
 		{name: "release", mutate: func(d *nativeProductionFirstStartDependencies) { d.Release.Trust = nil }, want: firststartapp.ErrIntegrity},
-		{name: "applications", mutate: func(d *nativeProductionFirstStartDependencies) { d.FirstStart.Applications = nil }, want: errNativeInstallerIntegrity},
+		{name: "applications", mutate: func(d *nativeProductionFirstStartDependencies) { d.Applications = nil }, want: errNativeInstallerIntegrity},
+		{name: "application failure", mutate: func(d *nativeProductionFirstStartDependencies) {
+			d.Applications = func(context.Context, *nativeReleaseAuthority) (nativeInstallApplicationFactory, error) {
+				return nil, errors.New("private graph")
+			}
+		}, want: errNativeInstallerIntegrity},
 		{name: "resolver", mutate: func(d *nativeProductionFirstStartDependencies) { d.FirstStart.Resolver = nil }, want: errNativeInstallerIntegrity},
 		{name: "plans", mutate: func(d *nativeProductionFirstStartDependencies) { d.FirstStart.Plans = nil }, want: errNativeInstallerIntegrity},
 		{name: "operations", mutate: func(d *nativeProductionFirstStartDependencies) { d.FirstStart.Operations = nil }, want: errNativeInstallerIntegrity},

@@ -47,6 +47,7 @@ type NativeRoots struct {
 	RuntimeState               string
 	RuntimeConsentKeyState     string
 	RuntimeConsentReceiptState string
+	RuntimeReplayState         string
 	ReleaseAnchorState         string
 	RuntimeCatalogAnchorState  string
 	ArtifactState              string
@@ -120,6 +121,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		RuntimeState:               filepath.Join(base, "runtime-state"),
 		RuntimeConsentKeyState:     filepath.Join(base, "runtime-consent-key-state"),
 		RuntimeConsentReceiptState: filepath.Join(base, "runtime-consent-receipt-state"),
+		RuntimeReplayState:         filepath.Join(base, "runtime-replay-state"),
 		ReleaseAnchorState:         filepath.Join(base, "release-anchor-state"),
 		RuntimeCatalogAnchorState:  filepath.Join(base, "runtime-catalog-anchor-state"),
 		ArtifactState:              filepath.Join(base, "artifact-state"),
@@ -136,7 +138,7 @@ func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
-		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState,
+		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState, r.RuntimeReplayState,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
 		r.ReadinessState,
 	}
@@ -165,6 +167,7 @@ type nativeComposition struct {
 	consentSigner        *runtimeconsent.ProtectedSigner
 	consentBroker        *runtimeconsent.Broker
 	consentRepository    *runtimeconsentjournal.Repository
+	replayJournals       filesystem.OperationJournalProvider
 	releaseAnchor        *releaseanchor.Repository
 	runtimeCatalogAnchor *runtimecataloganchor.Repository
 	artifacts            *artifactjournal.Repository
@@ -174,6 +177,25 @@ type nativeComposition struct {
 	activations          *activereleasejournal.ActivationRepository
 	hostPointers         *activereleasejournal.HostPointerRepository
 	installLock          *hostlock.Port
+}
+
+// newRuntimeReplayLedger creates one operation-scoped replay authority only
+// after the parent installation identity has been authenticated. The ledger
+// itself resolves a protected journal lazily so process restart does not
+// weaken one-use receipt semantics.
+func (c *nativeComposition) newRuntimeReplayLedger(
+	operationID install.OperationID,
+) (*runtimeconsentjournal.ReplayLedger, error) {
+	if c == nil || operationID.IsZero() || nilCapability(c.replayJournals) {
+		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	ledger, err := runtimeconsentjournal.NewReplayLedger(
+		c.replayJournals, setuphost.Clock{}, operationID.String(),
+	)
+	if err != nil {
+		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	return ledger, nil
 }
 
 func composeNative(
@@ -210,6 +232,10 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	consentReceiptLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeConsentReceiptState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	replayLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeReplayState)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -255,6 +281,10 @@ func composeNative(
 	}
 	consentReceiptJournals, err := journalFactory(consentReceiptLocator)
 	if err != nil || nilCapability(consentReceiptJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	replayJournals, err := journalFactory(replayLocator)
+	if err != nil || nilCapability(replayJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
 	releaseAnchorJournals, err := journalFactory(releaseAnchorLocator)
@@ -402,6 +432,7 @@ func composeNative(
 		consentSigner:        consentSigner,
 		consentBroker:        consentBroker,
 		consentRepository:    consentRepository,
+		replayJournals:       replayJournals,
 		runtimeCatalogAnchor: runtimeCatalogAnchorRepository,
 		artifacts:            artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,

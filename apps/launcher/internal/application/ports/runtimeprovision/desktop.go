@@ -814,12 +814,7 @@ type DesktopMutationAuthenticator interface {
 
 // DesktopMutationReplayLedger atomically rejects reused helper receipts.
 type DesktopMutationReplayLedger interface {
-	ConsumeDesktopMutation(context.Context, DesktopMutationReceipt) error
-}
-
-// DesktopTermsObserver foregrounds and observes vendor UI when the catalog requires it.
-type DesktopTermsObserver interface {
-	ObserveDesktopTerms(context.Context, DesktopAuthority, DesktopConsentReceipt) (runtimeinstall.Hash, error)
+	ConsumeDesktopMutation(context.Context, Nonce, runtimeinstall.Hash) error
 }
 
 // DesktopRuntimeLauncher launches only the signed application path as the invoking user.

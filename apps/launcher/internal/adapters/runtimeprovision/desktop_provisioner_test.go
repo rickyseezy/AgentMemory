@@ -23,13 +23,12 @@ func TestDesktopProvisionerCompletesWindowsInstallWithExactConsentNativeMutation
 	consentRepository := &desktopConsentRepositoryFake{}
 	artifacts := &desktopArtifactFake{authority: authority}
 	mutations := &desktopMutationFake{clock: clock}
-	terms := &desktopTermsFake{}
 	launcher := &desktopLauncherFake{}
 	capabilities := &desktopCapabilitiesFake{}
 	provisioner := newDesktopTestProvisioner(t, desktopTestDependencies{
 		authority: authority, host: desktopHostEvidence(t, authority, false), runtime: runtimeInspector,
 		consent: consent, consentRepository: consentRepository, artifacts: artifacts, mutation: mutations,
-		terms: terms, launcher: launcher, capabilities: capabilities, clock: clock,
+		launcher: launcher, capabilities: capabilities, clock: clock,
 	})
 	application := newDesktopRuntimeApplication(t, provisioner)
 	result, err := application.Ensure(context.Background(), runtimeinstallapp.Command{
@@ -46,10 +45,10 @@ func TestDesktopProvisionerCompletesWindowsInstallWithExactConsentNativeMutation
 	if consent.calls != 1 || consentRepository.stores != 1 || artifacts.acquireCalls != 1 || artifacts.verifyCalls != 2 ||
 		!slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{
 			runtimeport.DesktopMutationInstallPrerequisites, runtimeport.DesktopMutationInstallRuntime,
-		}) || terms.calls != 0 || launcher.calls != 1 || capabilities.calls != 1 || runtimeInspector.calls != 3 {
-		t.Fatalf("effects: consent=%d stores=%d acquire=%d verify=%d mutations=%v terms=%d launch=%d caps=%d runtime=%d",
+		}) || launcher.calls != 1 || capabilities.calls != 1 || runtimeInspector.calls != 3 {
+		t.Fatalf("effects: consent=%d stores=%d acquire=%d verify=%d mutations=%v launch=%d caps=%d runtime=%d",
 			consent.calls, consentRepository.stores, artifacts.acquireCalls, artifacts.verifyCalls,
-			mutations.operations, terms.calls, launcher.calls, capabilities.calls, runtimeInspector.calls)
+			mutations.operations, launcher.calls, capabilities.calls, runtimeInspector.calls)
 	}
 	if mutations.installArtifactDigest.IsZero() || mutations.prerequisiteArtifactDigest != (runtimeinstall.Hash{}) {
 		t.Fatal("mutation artifact binding did not distinguish prerequisites from installer")
@@ -61,11 +60,10 @@ func TestDesktopProvisionerSkipsWindowsPrerequisitesAndVendorUIOnMac(t *testing.
 	plan, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
 	clock := &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)}
 	mutations := &desktopMutationFake{clock: clock}
-	terms := &desktopTermsFake{}
 	provisioner := newDesktopTestProvisioner(t, desktopTestDependencies{
 		authority: authority, host: desktopHostEvidence(t, authority, true), runtime: &desktopRuntimeFake{authority: authority},
 		consent: &desktopConsentFake{clock: clock}, consentRepository: &desktopConsentRepositoryFake{},
-		artifacts: &desktopArtifactFake{authority: authority}, mutation: mutations, terms: terms,
+		artifacts: &desktopArtifactFake{authority: authority}, mutation: mutations,
 		launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
 	})
 	result, err := newDesktopRuntimeApplication(t, provisioner).Ensure(context.Background(), runtimeinstallapp.Command{
@@ -74,8 +72,8 @@ func TestDesktopProvisionerSkipsWindowsPrerequisitesAndVendorUIOnMac(t *testing.
 	if err != nil || result.State != runtimeinstall.OperationStateReady {
 		t.Fatalf("macOS Ensure() = state:%s error:%v", result.State, err)
 	}
-	if !slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{runtimeport.DesktopMutationInstallRuntime}) || terms.calls != 0 {
-		t.Fatalf("macOS mutations=%v terms=%d", mutations.operations, terms.calls)
+	if !slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{runtimeport.DesktopMutationInstallRuntime}) {
+		t.Fatalf("macOS mutations=%v", mutations.operations)
 	}
 }
 
@@ -103,7 +101,7 @@ func TestDesktopProvisionerMapsConsentAndNativeElevationDecisions(t *testing.T) 
 				authority: authority, host: desktopHostEvidence(t, authority, false), runtime: &desktopRuntimeFake{authority: authority},
 				consent: &desktopConsentFake{clock: clock, err: test.consentErr}, consentRepository: &desktopConsentRepositoryFake{},
 				artifacts: &desktopArtifactFake{authority: authority}, mutation: &desktopMutationFake{clock: clock, err: test.mutationErr},
-				terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
+				launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
 			})
 			result, ensureErr := newDesktopRuntimeApplication(t, provisioner).Ensure(context.Background(), runtimeinstallapp.Command{
 				OperationID: "desktop-decision-1", CanonicalPlan: plan.CanonicalBytes(),
@@ -144,7 +142,7 @@ func TestDesktopProvisionerRejectsForgedConsentArtifactMutationAndCapabilities(t
 				authority: authority, host: desktopHostEvidence(t, authority, false), runtime: &desktopRuntimeFake{authority: authority},
 				consent: &desktopConsentFake{clock: clock}, consentRepository: &desktopConsentRepositoryFake{},
 				artifacts: &desktopArtifactFake{authority: authority}, mutation: &desktopMutationFake{clock: clock},
-				terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
+				launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
 			}
 			test.mutate(&dependencies)
 			result, ensureErr := newDesktopRuntimeApplication(t, newDesktopTestProvisioner(t, dependencies)).Ensure(
@@ -168,7 +166,7 @@ func TestDesktopProvisionerPersistsAndResumesOnlySignedRebootReceipt(t *testing.
 		authority: authority, host: desktopHostEvidence(t, authority, false), runtime: &desktopRuntimeFake{authority: authority},
 		consent: &desktopConsentFake{clock: clock}, consentRepository: &desktopConsentRepositoryFake{},
 		artifacts: &desktopArtifactFake{authority: authority}, mutation: mutations,
-		terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
+		launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
 	})
 	application := newDesktopRuntimeApplication(t, provisioner)
 	command := runtimeinstallapp.Command{OperationID: "desktop-reboot-1", CanonicalPlan: plan.CanonicalBytes()}
@@ -196,7 +194,7 @@ func TestDesktopProvisionerFailsClosedOnMissingDependencyAuthorityAndCancellatio
 		authority: authority, host: desktopHostEvidence(t, authority, true), runtime: &desktopRuntimeFake{authority: authority},
 		consent: &desktopConsentFake{clock: clock}, consentRepository: &desktopConsentRepositoryFake{},
 		artifacts: &desktopArtifactFake{authority: authority}, mutation: &desktopMutationFake{clock: clock},
-		terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
+		launcher: &desktopLauncherFake{}, capabilities: &desktopCapabilitiesFake{}, clock: clock,
 	})
 	fields := []func(*DesktopDependencies){
 		func(v *DesktopDependencies) { v.Authority = nil }, func(v *DesktopDependencies) { v.Host = nil },
@@ -204,7 +202,7 @@ func TestDesktopProvisionerFailsClosedOnMissingDependencyAuthorityAndCancellatio
 		func(v *DesktopDependencies) { v.ConsentAuthenticator = nil }, func(v *DesktopDependencies) { v.ConsentRepository = nil },
 		func(v *DesktopDependencies) { v.Artifacts = nil }, func(v *DesktopDependencies) { v.ArtifactVerifier = nil },
 		func(v *DesktopDependencies) { v.Mutation = nil }, func(v *DesktopDependencies) { v.MutationAuthenticator = nil },
-		func(v *DesktopDependencies) { v.MutationReplay = nil }, func(v *DesktopDependencies) { v.Terms = nil },
+		func(v *DesktopDependencies) { v.MutationReplay = nil },
 		func(v *DesktopDependencies) { v.Launcher = nil }, func(v *DesktopDependencies) { v.Capabilities = nil },
 		func(v *DesktopDependencies) { v.Nonces = nil }, func(v *DesktopDependencies) { v.Clock = nil },
 	}
@@ -251,7 +249,7 @@ func TestDesktopProvisionerEveryPhaseRejectsAnUnboundRequestBeforeNativeEffects(
 		authority: authority, host: desktopHostEvidence(t, authority, true),
 		runtime: &desktopRuntimeFake{authority: authority}, consent: &desktopConsentFake{clock: clock},
 		consentRepository: &desktopConsentRepositoryFake{}, artifacts: &desktopArtifactFake{authority: authority},
-		mutation: &desktopMutationFake{clock: clock}, terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{},
+		mutation: &desktopMutationFake{clock: clock}, launcher: &desktopLauncherFake{},
 		capabilities: &desktopCapabilitiesFake{}, clock: clock,
 	}
 	provisioner := newDesktopTestProvisioner(t, dependencies)
@@ -342,7 +340,6 @@ type desktopTestDependencies struct {
 	consentRepository          *desktopConsentRepositoryFake
 	artifacts                  *desktopArtifactFake
 	mutation                   *desktopMutationFake
-	terms                      *desktopTermsFake
 	launcher                   *desktopLauncherFake
 	capabilities               *desktopCapabilitiesFake
 	clock                      *fakeClock
@@ -377,8 +374,8 @@ func desktopDependenciesForTest(t testing.TB, input desktopTestDependencies) Des
 		ConsentAuthenticator: desktopConsentAuthenticatorFake{err: input.consentAuthenticatorError},
 		ConsentRepository:    input.consentRepository, Artifacts: input.artifacts, ArtifactVerifier: input.artifacts,
 		Mutation: input.mutation, MutationAuthenticator: desktopMutationAuthenticatorFake{err: input.mutationAuthenticatorError},
-		MutationReplay: desktopMutationReplayFake{err: input.mutationReplayError}, Terms: input.terms,
-		Launcher: input.launcher, Capabilities: input.capabilities, Nonces: &incrementingNonces{}, Clock: input.clock,
+		MutationReplay: desktopMutationReplayFake{err: input.mutationReplayError},
+		Launcher:       input.launcher, Capabilities: input.capabilities, Nonces: &incrementingNonces{}, Clock: input.clock,
 	}
 }
 
@@ -627,32 +624,12 @@ func (f desktopMutationAuthenticatorFake) VerifyDesktopMutation(
 
 type desktopMutationReplayFake struct{ err error }
 
-func (f desktopMutationReplayFake) ConsumeDesktopMutation(context.Context, runtimeport.DesktopMutationReceipt) error {
-	return f.err
-}
-
-type desktopTermsFake struct {
-	mu    sync.Mutex
-	calls int
-	zero  bool
-	err   error
-}
-
-func (f *desktopTermsFake) ObserveDesktopTerms(
+func (f desktopMutationReplayFake) ConsumeDesktopMutation(
 	context.Context,
-	runtimeport.DesktopAuthority,
-	runtimeport.DesktopConsentReceipt,
-) (runtimeinstall.Hash, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls++
-	if f.err != nil {
-		return runtimeinstall.Hash{}, f.err
-	}
-	if f.zero {
-		return runtimeinstall.Hash{}, nil
-	}
-	return runtimeinstall.Sum([]byte("vendor-terms-observed")), nil
+	runtimeport.Nonce,
+	runtimeinstall.Hash,
+) error {
+	return f.err
 }
 
 type desktopLauncherFake struct {

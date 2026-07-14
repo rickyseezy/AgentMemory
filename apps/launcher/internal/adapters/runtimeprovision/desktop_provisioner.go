@@ -33,7 +33,6 @@ type DesktopDependencies struct {
 	Mutation              runtimeport.DesktopMutationBroker
 	MutationAuthenticator runtimeport.DesktopMutationAuthenticator
 	MutationReplay        runtimeport.DesktopMutationReplayLedger
-	Terms                 runtimeport.DesktopTermsObserver
 	Launcher              runtimeport.DesktopRuntimeLauncher
 	Capabilities          runtimeport.DesktopCapabilityProbe
 	Nonces                runtimeport.NonceSource
@@ -54,7 +53,6 @@ type DesktopProvisioner struct {
 	mutation              runtimeport.DesktopMutationBroker
 	mutationAuthenticator runtimeport.DesktopMutationAuthenticator
 	mutationReplay        runtimeport.DesktopMutationReplayLedger
-	terms                 runtimeport.DesktopTermsObserver
 	launcher              runtimeport.DesktopRuntimeLauncher
 	capabilities          runtimeport.DesktopCapabilityProbe
 	nonces                runtimeport.NonceSource
@@ -67,7 +65,7 @@ func NewDesktopProvisioner(dependencies DesktopDependencies) (*DesktopProvisione
 		dependencies.Authority, dependencies.Host, dependencies.Runtime, dependencies.Consent,
 		dependencies.ConsentAuthenticator, dependencies.ConsentRepository, dependencies.Artifacts,
 		dependencies.ArtifactVerifier, dependencies.Mutation, dependencies.MutationAuthenticator,
-		dependencies.MutationReplay, dependencies.Terms, dependencies.Launcher, dependencies.Capabilities,
+		dependencies.MutationReplay, dependencies.Launcher, dependencies.Capabilities,
 		dependencies.Nonces, dependencies.Clock,
 	}
 	for _, value := range values {
@@ -81,7 +79,7 @@ func NewDesktopProvisioner(dependencies DesktopDependencies) (*DesktopProvisione
 		consentRepository: dependencies.ConsentRepository, artifacts: dependencies.Artifacts,
 		artifactVerifier: dependencies.ArtifactVerifier, mutation: dependencies.Mutation,
 		mutationAuthenticator: dependencies.MutationAuthenticator, mutationReplay: dependencies.MutationReplay,
-		terms: dependencies.Terms, launcher: dependencies.Launcher, capabilities: dependencies.Capabilities,
+		launcher: dependencies.Launcher, capabilities: dependencies.Capabilities,
 		nonces: dependencies.Nonces, clock: dependencies.Clock,
 	}, nil
 }
@@ -334,8 +332,9 @@ func (p *DesktopProvisioner) InstallRuntime(
 	return p.completed(request, authority, combineDigests(mutation, artifact.Digest()), runtimeinstall.OwnershipUnknown)
 }
 
-// AwaitThirdPartyTerms revalidates stored consent and observes any mandatory
-// vendor surface without synthesizing a decision.
+// AwaitThirdPartyTerms revalidates the authenticated AgentMemory decision.
+// Catalog validation forbids a second vendor decision surface when the exact
+// installer invocation carries --accept-license.
 func (p *DesktopProvisioner) AwaitThirdPartyTerms(
 	ctx context.Context,
 	request runtimeinstallapp.Request,
@@ -354,20 +353,10 @@ func (p *DesktopProvisioner) AwaitThirdPartyTerms(
 	if err != nil {
 		return p.desktopConsentError(ctx, err)
 	}
-	if !authority.VendorUIMandatory() {
-		return p.completed(request, authority, consent.Digest(), runtimeinstall.OwnershipUnknown)
-	}
-	observation, err := p.terms.ObserveDesktopTerms(ctx, authority, consent)
-	if err != nil {
-		if errors.Is(err, runtimeport.ErrDesktopConsentDeclined) {
-			return expected(runtimeinstallapp.OutcomeCancelled)
-		}
-		return runtimeinstallapp.Output{}, sanitizeDesktopBoundary(ctx, err, ErrProbeFailed)
-	}
-	if observation.IsZero() {
+	if authority.VendorUIMandatory() {
 		return runtimeinstallapp.Output{}, ErrProvisionIntegrity
 	}
-	return p.completed(request, authority, combineDigests(consent.Digest(), observation), runtimeinstall.OwnershipUnknown)
+	return p.completed(request, authority, consent.Digest(), runtimeinstall.OwnershipUnknown)
 }
 
 // StartRuntime launches the exact signed application path and waits on the
@@ -520,7 +509,7 @@ func (p *DesktopProvisioner) executeMutation(
 	if !receipt.Matches(mutationRequest, p.clock.Now()) ||
 		p.mutationAuthenticator.VerifyDesktopMutation(ctx, mutationRequest, receipt) != nil ||
 		!receipt.Matches(mutationRequest, p.clock.Now()) ||
-		p.mutationReplay.ConsumeDesktopMutation(ctx, receipt) != nil ||
+		p.mutationReplay.ConsumeDesktopMutation(ctx, mutationRequest.Nonce(), receipt.Digest()) != nil ||
 		!receipt.Matches(mutationRequest, p.clock.Now()) {
 		return runtimeinstall.Hash{}, nil, ErrProvisionIntegrity
 	}

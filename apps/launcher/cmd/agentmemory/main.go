@@ -46,7 +46,7 @@ func run(
 	transport mcp.Transport,
 ) int {
 	host, ok := parseMCPCommand(args)
-	if !ok || ctx == nil || stderr == nil || nilCapability(factory) || nilCapability(transport) {
+	if !ok || ctx == nil || nilCapability(stderr) || nilCapability(factory) || nilCapability(transport) {
 		writeCode(stderr, "AM_USAGE")
 		return exitUsage
 	}
@@ -95,7 +95,7 @@ func reportFactoryError(stderr io.Writer, err error) int {
 }
 
 func writeCode(stderr io.Writer, code string) {
-	if stderr != nil {
+	if !nilCapability(stderr) {
 		_, _ = fmt.Fprintln(stderr, code)
 	}
 }

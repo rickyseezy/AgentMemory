@@ -55,6 +55,38 @@ func TestPF001SecretProjectorCommandRejectsNilCapabilities(t *testing.T) {
 	assertFileContains(t, stderrPath, "argument-contract")
 }
 
+func TestPF001SecretProjectorCommandRequiresBothOwnedStreams(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		nilStdout bool
+		nilStderr bool
+	}{
+		{name: "nil stdout", nilStdout: true},
+		{name: "nil stderr", nilStderr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdout, _ := temporaryFile(t)
+			stderr, _ := temporaryFile(t)
+			ownedStdout, ownedStderr := stdout, stderr
+			defer func() { _ = ownedStdout.Close(); _ = ownedStderr.Close() }()
+			if test.nilStdout {
+				stdout = nil
+			}
+			if test.nilStderr {
+				stderr = nil
+			}
+			called := false
+			if code := run([]string{"agentmemory-secret-projector"}, stdout, stderr, func() error {
+				called = true
+				return nil
+			}); code != 1 || called {
+				t.Fatalf("run()=%d called=%t", code, called)
+			}
+		})
+	}
+}
+
 func temporaryFile(t testing.TB) (*os.File, string) {
 	t.Helper()
 	file, err := os.CreateTemp(t.TempDir(), "command-stream-*")

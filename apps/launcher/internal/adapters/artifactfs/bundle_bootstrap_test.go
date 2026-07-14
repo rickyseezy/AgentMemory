@@ -16,9 +16,7 @@ func TestPF001RetainedBundleReadsOnlyTheFixedBoundedDistributionEnvelope(t *test
 	t.Parallel()
 	root := resolvedTempDir(t)
 	bootstrap := filepath.Join(root, "bootstrap")
-	if err := os.Mkdir(bootstrap, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	makeSecureTestDirectory(t, bootstrap)
 	path := filepath.Join(bootstrap, "distribution-manifest.json")
 	want := []byte(`{"manifest":"separately signed"}`)
 	if err := os.WriteFile(path, want, 0o600); err != nil {
@@ -60,9 +58,7 @@ func TestPF001RetainedBundleRejectsMissingEmptyOversizedAndLinkedEnvelopes(t *te
 	t.Parallel()
 	t.Run("missing", func(t *testing.T) {
 		root := resolvedTempDir(t)
-		if err := os.Mkdir(filepath.Join(root, "bootstrap"), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		makeSecureTestDirectory(t, filepath.Join(root, "bootstrap"))
 		fetcher, err := NewBundleFetcher(root)
 		if err != nil {
 			t.Fatal(err)
@@ -82,10 +78,10 @@ func TestPF001RetainedBundleRejectsMissingEmptyOversizedAndLinkedEnvelopes(t *te
 		t.Run(test.name, func(t *testing.T) {
 			root := resolvedTempDir(t)
 			bootstrap := filepath.Join(root, "bootstrap")
-			if err := os.Mkdir(bootstrap, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			file, err := os.OpenFile(filepath.Join(bootstrap, "distribution-manifest.json"), os.O_CREATE|os.O_WRONLY, 0o600)
+			makeSecureTestDirectory(t, bootstrap)
+			file, err := os.OpenFile( //nolint:gosec // Exact test-owned retained-bundle path.
+				filepath.Join(bootstrap, "distribution-manifest.json"), os.O_CREATE|os.O_WRONLY, 0o600,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,9 +107,7 @@ func TestPF001RetainedBundleRejectsMissingEmptyOversizedAndLinkedEnvelopes(t *te
 		t.Run("symlink", func(t *testing.T) {
 			root := resolvedTempDir(t)
 			bootstrap := filepath.Join(root, "bootstrap")
-			if err := os.Mkdir(bootstrap, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			makeSecureTestDirectory(t, bootstrap)
 			target := filepath.Join(root, "foreign.json")
 			if err := os.WriteFile(target, []byte(`{}`), 0o600); err != nil {
 				t.Fatal(err)

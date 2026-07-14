@@ -18,11 +18,13 @@ func TestPF001AgentMemoryCommandDispatchesExactMCPAgentWithoutDiagnosticOutput(t
 	factory := &factoryStub{runner: runner}
 	transport, _ := mcp.NewInMemoryTransports()
 	var stderr strings.Builder
+	ctx := context.Background()
 	exitCode := run(
-		context.Background(), []string{"mcp", "--agent", "codex"}, &stderr, factory, transport,
+		ctx, []string{"mcp", "--agent", "codex"}, &stderr, factory, transport,
 	)
 	if exitCode != exitSuccess || stderr.Len() != 0 || factory.calls != 1 ||
-		factory.host != agentconfig.AgentHostCodex || runner.calls != 1 || runner.transport != transport {
+		factory.ctx != ctx || factory.host != agentconfig.AgentHostCodex || runner.calls != 1 ||
+		runner.ctx != ctx || runner.transport != transport {
 		t.Fatalf("exit=%d stderr=%q factory=%+v runner=%+v", exitCode, stderr.String(), factory, runner)
 	}
 }
@@ -121,27 +123,76 @@ func TestPF001AgentMemoryCommandFailsClosedForRunnerAndMissingComposition(t *tes
 	}
 }
 
+func TestPF001AgentMemoryCommandRequiresEveryInvocationCapability(t *testing.T) {
+	t.Parallel()
+	validArgs := []string{"mcp", "--agent", "codex"}
+	transport, _ := mcp.NewInMemoryTransports()
+	validFactory := &factoryStub{runner: &runnerStub{}}
+	for _, test := range []struct {
+		name      string
+		ctx       context.Context
+		stderr    *strings.Builder
+		factory   launcher.MCPFactory
+		transport mcp.Transport
+	}{
+		{name: "nil context", stderr: &strings.Builder{}, factory: validFactory, transport: transport},
+		{name: "nil diagnostics", ctx: context.Background(), factory: validFactory, transport: transport},
+		{name: "nil factory", ctx: context.Background(), stderr: &strings.Builder{}, transport: transport},
+		{name: "nil transport", ctx: context.Background(), stderr: &strings.Builder{}, factory: validFactory},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if code := run(test.ctx, validArgs, test.stderr, test.factory, test.transport); code != exitUsage {
+				t.Fatalf("run()=%d, want usage", code)
+			}
+		})
+	}
+}
+
+func TestPF001AgentMemoryCommandDistinguishesSignalCancellationFromRunnerFailure(t *testing.T) {
+	t.Parallel()
+	transport, _ := mcp.NewInMemoryTransports()
+	args := []string{"mcp", "--agent", "codex"}
+	var stderr strings.Builder
+	if code := run(context.Background(), args, &stderr,
+		&factoryStub{runner: &runnerStub{err: context.Canceled}}, transport); code != exitMCPUnavailable ||
+		stderr.String() != "AM_MCP_UNAVAILABLE\n" {
+		t.Fatalf("live cancellation code=%d stderr=%q", code, stderr.String())
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	stderr.Reset()
+	if code := run(cancelled, args, &stderr,
+		&factoryStub{runner: &runnerStub{err: errors.New("runner failed")}}, transport); code != exitMCPUnavailable ||
+		stderr.String() != "AM_MCP_UNAVAILABLE\n" {
+		t.Fatalf("non-cancellation failure code=%d stderr=%q", code, stderr.String())
+	}
+}
+
 type factoryStub struct {
 	runner launcher.MCPRunner
 	err    error
+	ctx    context.Context
 	host   agentconfig.AgentHost
 	calls  int
 }
 
-func (f *factoryStub) BuildMCP(_ context.Context, host agentconfig.AgentHost) (launcher.MCPRunner, error) {
+func (f *factoryStub) BuildMCP(ctx context.Context, host agentconfig.AgentHost) (launcher.MCPRunner, error) {
 	f.calls++
+	f.ctx = ctx
 	f.host = host
 	return f.runner, f.err
 }
 
 type runnerStub struct {
 	err       error
+	ctx       context.Context
 	transport mcp.Transport
 	calls     int
 }
 
-func (r *runnerStub) Run(_ context.Context, transport mcp.Transport) error {
+func (r *runnerStub) Run(ctx context.Context, transport mcp.Transport) error {
 	r.calls++
+	r.ctx = ctx
 	r.transport = transport
 	return r.err
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -30,7 +31,7 @@ func TestPF001NativeProjectionBindsInvokingOwnerExecutableAndCertifiedLocation(t
 		home:       func() (string, error) { return home, nil },
 		executable: func() (string, error) { return executable, nil },
 		open:       os.Open, lstat: os.Lstat, locations: projectionLocationStub{location: location},
-		owners: projectionOwnerStub{owner: owner}, goos: "linux",
+		owners: projectionOwnerStub{owner: owner}, goos: runtime.GOOS,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,8 +40,16 @@ func TestPF001NativeProjectionBindsInvokingOwnerExecutableAndCertifiedLocation(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantEndpoint := "unix:///var/run/docker.sock"
+	switch runtime.GOOS {
+	case "darwin":
+		wantEndpoint = "unix://" + filepath.Join(home, ".docker", "run", "docker.sock")
+	case "windows":
+		wantEndpoint = "npipe:////./pipe/docker_engine"
+	case "linux":
+	}
 	if projection.StorageRoot != filepath.Join(home, ".agentmemory") ||
-		projection.RuntimeEndpoint != "unix:///var/run/docker.sock" ||
+		projection.RuntimeEndpoint != wantEndpoint ||
 		projection.ConfigurationPath != location.String() || projection.LauncherPath != executable ||
 		!projection.LauncherDigest.Equal(agentconfigdomain.DigestBytes(contents)) ||
 		!projection.OwnerSubjectDigest.Equal(owner.PrincipalDigest()) {

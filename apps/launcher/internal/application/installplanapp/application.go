@@ -17,6 +17,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/composeplan"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/installplan"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/resourceinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
@@ -488,9 +489,21 @@ func (a *Application) ResolveRuntimePlan(
 	if !errors.Is(err, ErrRuntimePlanNotFound) {
 		return installphase.RuntimePlan{}, err
 	}
+	var runtimeResource releaseinventory.Resource
+	exists := false
+	for _, resource := range plan.SignedRelease().Manifest().Resources() {
+		if resource.ID() == plan.RuntimeCatalogResourceID() {
+			runtimeResource, exists = resource, true
+			break
+		}
+	}
+	if !exists {
+		return installphase.RuntimePlan{}, ErrRuntimeEvidenceUnavailable
+	}
 	evidence, err := a.runtimeEvidence.ResolveRuntimeEvidence(ctx, RuntimeEvidenceRequest{
 		OperationID: operationID, ParentPlanDigest: digest,
 		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
+		SignedRelease: plan.SignedRelease(), RuntimeCatalogResource: runtimeResource,
 	})
 	if err != nil || !evidence.HostEvidenceDigest().Equal(hostEvidence.OutputDigest()) ||
 		!evidence.CatalogResourceEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) {

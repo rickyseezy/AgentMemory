@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
@@ -17,10 +18,12 @@ const (
 // RuntimeEvidenceRequest identifies the exact parent authority and signed
 // runtime-catalog resource an evidence resolver must verify.
 type RuntimeEvidenceRequest struct {
-	OperationID          install.OperationID
-	ParentPlanDigest     install.PlanDigest
-	RuntimeCatalogID     string
-	RuntimeCatalogDigest install.Digest
+	OperationID            install.OperationID
+	ParentPlanDigest       install.PlanDigest
+	RuntimeCatalogID       string
+	RuntimeCatalogDigest   install.Digest
+	SignedRelease          releaseinventory.SignedManifest
+	RuntimeCatalogResource releaseinventory.Resource
 }
 
 // RuntimeEvidenceResolver performs the read-only verified host/runtime

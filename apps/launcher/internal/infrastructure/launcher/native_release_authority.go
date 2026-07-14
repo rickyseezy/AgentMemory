@@ -33,6 +33,7 @@ type nativeReleaseAuthority struct {
 	hostProbe       *hostverify.NativeProbe
 	hostVerifier    *hostverifyapp.Application
 	releaseVerifier *installphase.ReleaseApplicationAdapter
+	runtimeCatalog  *nativeRuntimeCatalogLoader
 	closeOnce       sync.Once
 	closeError      error
 }
@@ -90,11 +91,18 @@ func newNativeReleaseAuthority(
 		_ = hostProbe.Close(context.WithoutCancel(ctx))
 		return nil, firststartapp.ErrIntegrity
 	}
-	failed = false
-	return &nativeReleaseAuthority{
+	authority := &nativeReleaseAuthority{
 		source: source, stack: stack, hostProbe: hostProbe,
 		hostVerifier: hostApplication, releaseVerifier: releaseApplication,
-	}, nil
+	}
+	runtimeCatalog, err := newNativeRuntimeCatalogLoader(authority)
+	if err != nil {
+		_ = hostProbe.Close(context.WithoutCancel(ctx))
+		return nil, firststartapp.ErrIntegrity
+	}
+	authority.runtimeCatalog = runtimeCatalog
+	failed = false
+	return authority, nil
 }
 
 func (a *nativeReleaseAuthority) templates() firststartapp.VerifiedTemplateSource {
@@ -123,6 +131,13 @@ func (a *nativeReleaseAuthority) releaseVerification() *installphase.ReleaseAppl
 		return nil
 	}
 	return a.releaseVerifier
+}
+
+func (a *nativeReleaseAuthority) runtimeCatalogLoader() *nativeRuntimeCatalogLoader {
+	if a == nil {
+		return nil
+	}
+	return a.runtimeCatalog
 }
 
 func (a *nativeReleaseAuthority) Close(ctx context.Context) error {

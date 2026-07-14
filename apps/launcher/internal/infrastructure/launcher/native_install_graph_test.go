@@ -149,7 +149,10 @@ func (*nativeGraphRuntimeEvidence) ResolveRuntimeEvidence(context.Context, insta
 	return installplanapp.RuntimeEvidence{}, nil
 }
 
-type nativeGraphOperations struct{}
+// A blank byte gives each pointer distinct identity. Go may coalesce pointers
+// to separate zero-sized values, which would invalidate this authority-split
+// security test on some architectures.
+type nativeGraphOperations struct{ _ byte }
 
 func (*nativeGraphOperations) Load(context.Context, install.OperationID) (*install.Operation, error) {
 	return nil, nil

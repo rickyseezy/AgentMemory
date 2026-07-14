@@ -158,6 +158,8 @@ type LinuxExecutionPolicyInput struct {
 	Repository                LinuxRepositoryInput
 	Packages                  []LinuxPackageInput
 	PackageSetDigest          Digest
+	RollbackHeadroomBytes     uint64
+	AcquisitionSafetyBytes    uint64
 	SubordinateIDCount        uint32
 	SELinuxEnforcingSupported bool
 	ServiceID                 string
@@ -180,6 +182,8 @@ type LinuxExecutionPolicy struct {
 	repository                LinuxRepository
 	packages                  []LinuxPackage
 	packageSetDigest          Digest
+	rollbackHeadroomBytes     uint64
+	acquisitionSafetyBytes    uint64
 	subordinateIDCount        uint32
 	selinuxEnforcingSupported bool
 	serviceID                 string
@@ -199,7 +203,8 @@ func newLinuxExecutionPolicy(
 	if !input.PackageManager.valid() || !validLinuxPackageVersion(input.PackageManagerVersion) ||
 		!validIdentifier(input.Codename) || !validLinuxPackageVersion(input.MinimumKernel) ||
 		input.MinimumAvailableMemory == 0 || input.MinimumAvailableMemory > maximumSafeJSONInteger ||
-		input.PackageSetDigest.IsZero() || input.SubordinateIDCount < 65536 ||
+		input.PackageSetDigest.IsZero() || input.RollbackHeadroomBytes == 0 ||
+		input.AcquisitionSafetyBytes == 0 || input.SubordinateIDCount < 65536 ||
 		input.ServiceID != "docker.service" || input.ServiceUnitDigest.IsZero() ||
 		input.RootlessToolPath != "/usr/bin/dockerd-rootless-setuptool.sh" || input.RootlessToolDigest.IsZero() ||
 		input.ProbeContractVersion != "1" || input.CapabilityPolicyDigest.IsZero() ||
@@ -211,8 +216,12 @@ func newLinuxExecutionPolicy(
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
 	packages, err := newLinuxPackages(input.PackageManager, input.Packages, artifact)
+	reserved, reserveOverflow := checkedLinuxBytes(
+		artifact.downloadBytes, input.RollbackHeadroomBytes, input.AcquisitionSafetyBytes,
+	)
 	if err != nil || !LinuxPackageSetDigest(input.Packages).Equal(input.PackageSetDigest) ||
-		!input.PackageSetDigest.Equal(artifact.sha256) || packageDownloadBytes(packages) != artifact.downloadBytes {
+		!input.PackageSetDigest.Equal(artifact.sha256) || packageDownloadBytes(packages) != artifact.downloadBytes ||
+		reserveOverflow || reserved != artifact.reserveBytes {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
 	return LinuxExecutionPolicy{
@@ -220,6 +229,8 @@ func newLinuxExecutionPolicy(
 		codename: input.Codename, minimumKernel: input.MinimumKernel,
 		minimumAvailableMemory: input.MinimumAvailableMemory, repository: repository,
 		packages: packages, packageSetDigest: input.PackageSetDigest,
+		rollbackHeadroomBytes:     input.RollbackHeadroomBytes,
+		acquisitionSafetyBytes:    input.AcquisitionSafetyBytes,
 		subordinateIDCount:        input.SubordinateIDCount,
 		selinuxEnforcingSupported: input.SELinuxEnforcingSupported,
 		serviceID:                 input.ServiceID, serviceUnitDigest: input.ServiceUnitDigest,
@@ -228,6 +239,17 @@ func newLinuxExecutionPolicy(
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest,
 	}, nil
+}
+
+func checkedLinuxBytes(values ...uint64) (uint64, bool) {
+	var total uint64
+	for _, value := range values {
+		if value > maximumSafeJSONInteger || total > maximumSafeJSONInteger-value {
+			return 0, true
+		}
+		total += value
+	}
+	return total, false
 }
 
 func newLinuxPackages(
@@ -390,6 +412,7 @@ func linuxExecutionInputZero(input LinuxExecutionPolicyInput) bool {
 	return input.PackageManager == "" && input.PackageManagerVersion == "" && input.Codename == "" &&
 		input.MinimumKernel == "" && input.MinimumAvailableMemory == 0 && input.Repository == (LinuxRepositoryInput{}) &&
 		len(input.Packages) == 0 && input.PackageSetDigest.IsZero() && input.SubordinateIDCount == 0 &&
+		input.RollbackHeadroomBytes == 0 && input.AcquisitionSafetyBytes == 0 &&
 		!input.SELinuxEnforcingSupported && input.ServiceID == "" && input.ServiceUnitDigest.IsZero() &&
 		input.RootlessToolPath == "" && input.RootlessToolDigest.IsZero() && input.ProbeImage == "" &&
 		input.ProbeImageDigest.IsZero() && input.ProbeContractVersion == "" && input.CapabilityPolicyDigest.IsZero()
@@ -510,6 +533,12 @@ func (p LinuxExecutionPolicy) Packages() []LinuxPackage {
 // PackageSetDigest returns the aggregate retained-set identity.
 func (p LinuxExecutionPolicy) PackageSetDigest() Digest { return p.packageSetDigest }
 
+// RollbackHeadroomBytes returns acquisition capacity retained for recovery.
+func (p LinuxExecutionPolicy) RollbackHeadroomBytes() uint64 { return p.rollbackHeadroomBytes }
+
+// AcquisitionSafetyBytes returns the post-download free-space safety floor.
+func (p LinuxExecutionPolicy) AcquisitionSafetyBytes() uint64 { return p.acquisitionSafetyBytes }
+
 // SubordinateIDCount returns the required rootless UID/GID allocation.
 func (p LinuxExecutionPolicy) SubordinateIDCount() uint32 { return p.subordinateIDCount }
 
@@ -566,6 +595,8 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 			MetadataDigest:        p.repository.metadataDigest,
 		},
 		Packages: inputs, PackageSetDigest: p.packageSetDigest,
+		RollbackHeadroomBytes:     p.rollbackHeadroomBytes,
+		AcquisitionSafetyBytes:    p.acquisitionSafetyBytes,
 		SubordinateIDCount:        p.subordinateIDCount,
 		SELinuxEnforcingSupported: p.selinuxEnforcingSupported,
 		ServiceID:                 p.serviceID, ServiceUnitDigest: p.serviceUnitDigest,

@@ -31,6 +31,39 @@ func TestVerifiedCatalogProjectsExactLinuxAuthority(t *testing.T) {
 	}
 }
 
+func TestVerifiedCatalogProjectsLinuxPackagesIntoHardenedCASPlan(t *testing.T) {
+	t.Parallel()
+
+	catalog := verifiedLinuxCatalog(t)
+	runtimePlan := linuxCatalogPlan(t, catalog)
+	authority, err := catalog.LinuxAuthority(runtimePlan.CanonicalBytes(), linuxHostBinding(t, "24.04"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := catalog.LinuxArtifactPlan(authority)
+	if err != nil {
+		t.Fatalf("LinuxArtifactPlan() error = %v", err)
+	}
+	artifacts := plan.Artifacts()
+	if len(artifacts) != 7 || artifacts[0].ID() != "containerd.io" ||
+		artifacts[0].Sources()[0] != "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io.deb" ||
+		len(artifacts[0].Chunks()) != 1 || artifacts[0].Chunks()[0].Size() != artifacts[0].Size() ||
+		plan.Totals().DownloadBytes() != catalog.Manifest().Artifact().DownloadBytes() ||
+		plan.Totals().ExpandedBytes() != 0 ||
+		plan.Totals().RequiredBytes() != catalog.Manifest().Artifact().ReserveBytes() {
+		t.Fatal("Linux CAS acquisition projection is incomplete")
+	}
+
+	otherCatalog := verifiedLinuxCatalog(t)
+	otherCatalog.manifest = runtimecatalog.Manifest{}
+	if projected, projectError := otherCatalog.LinuxArtifactPlan(authority); projectError == nil || len(projected.Artifacts()) != 0 {
+		t.Fatal("substituted verified catalog projected package acquisition authority")
+	}
+	if projected, projectError := (VerifiedCatalog{}).LinuxArtifactPlan(authority); projectError == nil || len(projected.Artifacts()) != 0 {
+		t.Fatal("unverified catalog projected package acquisition authority")
+	}
+}
+
 func TestLinuxAuthorityRejectsCatalogPlanAndHostSubstitution(t *testing.T) {
 	t.Parallel()
 
@@ -227,6 +260,7 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 				MetadataDigest:      runtimecatalog.DigestBytes([]byte("metadata")),
 			},
 			Packages: packages, PackageSetDigest: packageSetDigest, SubordinateIDCount: 65536,
+			RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
 			SELinuxEnforcingSupported: true, ServiceID: "docker.service",
 			ServiceUnitDigest:  runtimecatalog.DigestBytes([]byte("unit")),
 			RootlessToolPath:   "/usr/bin/dockerd-rootless-setuptool.sh",

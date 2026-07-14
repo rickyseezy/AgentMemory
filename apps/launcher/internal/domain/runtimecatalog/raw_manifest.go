@@ -214,6 +214,8 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 			MetadataDigest: metadataDigest,
 		},
 		Packages: packages, PackageSetDigest: packageSetDigest,
+		RollbackHeadroomBytes:     document.RollbackHeadroomBytes,
+		AcquisitionSafetyBytes:    document.AcquisitionSafetyBytes,
 		SubordinateIDCount:        document.SubordinateIDCount,
 		SELinuxEnforcingSupported: document.SELinuxEnforcingSupported,
 		ServiceID:                 document.ServiceID, ServiceUnitDigest: serviceUnitDigest,

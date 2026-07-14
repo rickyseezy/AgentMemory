@@ -64,6 +64,7 @@ type canonicalPublisher struct {
 }
 
 type canonicalLinuxExecution struct {
+	AcquisitionSafetyBytes    uint64                   `json:"acquisition_safety_bytes"`
 	CapabilityPolicyDigest    string                   `json:"capability_policy_digest"`
 	Codename                  string                   `json:"codename"`
 	MinimumAvailableMemory    uint64                   `json:"minimum_available_memory"`
@@ -76,6 +77,7 @@ type canonicalLinuxExecution struct {
 	ProbeImage                string                   `json:"probe_image"`
 	ProbeImageDigest          string                   `json:"probe_image_digest"`
 	Repository                canonicalLinuxRepository `json:"repository"`
+	RollbackHeadroomBytes     uint64                   `json:"rollback_headroom_bytes"`
 	RootlessToolDigest        string                   `json:"rootless_tool_digest"`
 	RootlessToolPath          string                   `json:"rootless_tool_path"`
 	SELinuxEnforcingSupported bool                     `json:"selinux_enforcing_supported"`
@@ -180,6 +182,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 		}
 		policy := manifest.linuxExecution
 		linuxExecution = &canonicalLinuxExecution{
+			AcquisitionSafetyBytes: policy.acquisitionSafetyBytes,
 			CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(), Codename: policy.codename,
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumKernel: policy.minimumKernel,
 			PackageManager: policy.packageManager, PackageManagerVersion: policy.packageManagerVersion,
@@ -193,7 +196,8 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 				SigningKeyFingerprint: policy.repository.signingKeyFingerprint, Suite: policy.repository.suite,
 				URL: canonicalSource{Scheme: policy.repository.url.scheme, Host: policy.repository.url.host, PathPrefix: policy.repository.url.pathPrefix},
 			},
-			RootlessToolDigest: policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
+			RollbackHeadroomBytes: policy.rollbackHeadroomBytes,
+			RootlessToolDigest:    policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
 			SELinuxEnforcingSupported: policy.selinuxEnforcingSupported, ServiceID: policy.serviceID,
 			ServiceUnitDigest: policy.serviceUnitDigest.Hex(), SubordinateIDCount: policy.subordinateIDCount,
 		}

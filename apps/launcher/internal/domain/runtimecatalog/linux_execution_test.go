@@ -52,6 +52,8 @@ func TestLinuxExecutionPolicyRejectsMutableOrIncompleteAuthority(t *testing.T) {
 		{name: "package digest", edit: func(v *LinuxExecutionPolicyInput) { v.Packages[0].SHA256 = Digest{} }},
 		{name: "package source", edit: func(v *LinuxExecutionPolicyInput) { v.Packages[0].Source.Host = "mirror.invalid" }},
 		{name: "package set digest", edit: func(v *LinuxExecutionPolicyInput) { v.PackageSetDigest = DigestBytes([]byte("different")) }},
+		{name: "rollback headroom", edit: func(v *LinuxExecutionPolicyInput) { v.RollbackHeadroomBytes = 0 }},
+		{name: "capacity mismatch", edit: func(v *LinuxExecutionPolicyInput) { v.AcquisitionSafetyBytes++ }},
 		{name: "service", edit: func(v *LinuxExecutionPolicyInput) { v.ServiceID = "docker-root.service" }},
 		{name: "rootless path", edit: func(v *LinuxExecutionPolicyInput) { v.RootlessToolPath = "/tmp/setup.sh" }},
 		{name: "probe tag", edit: func(v *LinuxExecutionPolicyInput) {
@@ -121,6 +123,7 @@ func linuxExecutionPolicyInput(t testReporter, artifact ArtifactPolicyInput) Lin
 			MetadataDigest:        DigestBytes([]byte("docker apt repository metadata")),
 		},
 		Packages: packages, PackageSetDigest: artifact.SHA256,
+		RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
 		SubordinateIDCount: 65536, SELinuxEnforcingSupported: true,
 		ServiceID: "docker.service", ServiceUnitDigest: DigestBytes([]byte("docker user service")),
 		RootlessToolPath:   "/usr/bin/dockerd-rootless-setuptool.sh",

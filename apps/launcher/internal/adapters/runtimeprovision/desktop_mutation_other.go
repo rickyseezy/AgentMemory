@@ -23,6 +23,7 @@ func executeNativeDesktopHelper(
 	ctx context.Context,
 	_ runtimeport.DesktopHelperAuthority,
 	_ string,
+	_ runtimeport.DesktopMutationOperation,
 ) error {
 	if ctx == nil || ctx.Err() != nil {
 		return context.Canceled

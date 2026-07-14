@@ -663,10 +663,10 @@ func TestDarwinNativeHelpersRejectAmbientPathsWithoutPrompt(t *testing.T) {
 	)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := executeNativeDesktopHelper(cancelled, helper, filepath.Join(helper.ExchangeDirectory(), "request.json")); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+	if err := executeNativeDesktopHelper(cancelled, helper, filepath.Join(helper.ExchangeDirectory(), "request.json"), runtimeport.DesktopMutationInstallRuntime); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("cancelled helper error = %v", err)
 	}
-	if err := executeNativeDesktopHelper(context.Background(), helper, "/tmp/request.json"); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+	if err := executeNativeDesktopHelper(context.Background(), helper, "/tmp/request.json", runtimeport.DesktopMutationInstallRuntime); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("ambient helper path error = %v", err)
 	}
 	if verifyDarwinMutationHelper(context.Background(), helper) {

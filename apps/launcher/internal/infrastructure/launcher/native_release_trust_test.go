@@ -19,7 +19,8 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	document := nativeReleaseTrustFixture()
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
 	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
-		len(trust.RuntimeCatalogKeys) != 1 || len(trust.RuntimePublishers) != 1 ||
+		len(trust.RuntimeCatalogKeys) != 1 || len(trust.RuntimeHelperReceiptKey) != ed25519.PublicKeySize ||
+		len(trust.RuntimePublishers) != 1 ||
 		len(trust.Offline.RevocationAuthorities) != 1 || len(trust.Offline.TimeAuthorities) != 1 ||
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
 		len(trust.Provenance.BuildIdentities) != 1 || len(trust.Provenance.RecipeDigests) != 1 ||
@@ -38,11 +39,15 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*nativeReleaseTrustDocument){
-		"schema":               func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
-		"manifest keys":        func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
-		"host policy keys":     func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
-		"runtime catalog keys": func(document *nativeReleaseTrustDocument) { document.RuntimeCatalogKeys = nil },
-		"runtime publishers":   func(document *nativeReleaseTrustDocument) { document.RuntimePublishers = nil },
+		"schema":                     func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
+		"manifest keys":              func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
+		"host policy keys":           func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
+		"runtime catalog keys":       func(document *nativeReleaseTrustDocument) { document.RuntimeCatalogKeys = nil },
+		"runtime helper receipt key": func(document *nativeReleaseTrustDocument) { document.RuntimeHelperReceiptKey = "" },
+		"runtime helper receipt key bytes": func(document *nativeReleaseTrustDocument) {
+			document.RuntimeHelperReceiptKey = base64.StdEncoding.EncodeToString([]byte("short"))
+		},
+		"runtime publishers": func(document *nativeReleaseTrustDocument) { document.RuntimePublishers = nil },
 		"duplicate runtime publisher": func(document *nativeReleaseTrustDocument) {
 			document.RuntimePublishers = append(document.RuntimePublishers, document.RuntimePublishers[0])
 		},
@@ -137,10 +142,11 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 	license := releaseinventory.DigestBytes([]byte("license policy")).Hex()
 	vulnerability := releaseinventory.DigestBytes([]byte("vulnerability policy")).Hex()
 	return nativeReleaseTrustDocument{
-		SchemaVersion:      nativeReleaseTrustSchemaVersion,
-		ManifestKeys:       map[string]string{"release-root": key},
-		HostPolicyKeys:     map[string]string{"host-policy-root": key},
-		RuntimeCatalogKeys: map[string]string{"runtime-catalog-root": key},
+		SchemaVersion:           nativeReleaseTrustSchemaVersion,
+		ManifestKeys:            map[string]string{"release-root": key},
+		HostPolicyKeys:          map[string]string{"host-policy-root": key},
+		RuntimeCatalogKeys:      map[string]string{"runtime-catalog-root": key},
+		RuntimeHelperReceiptKey: key,
 		RuntimePublishers: []runtimeprovision.RuntimePublisherPolicyInput{{
 			Verification:       runtimecatalog.NativeVerificationAppleNotarized,
 			Identity:           "developer-id-application-docker-inc-9bnsxjn65r",

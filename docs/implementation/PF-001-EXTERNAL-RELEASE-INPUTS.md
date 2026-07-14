@@ -59,6 +59,16 @@ SBOM associations, native publisher statements, and offline trust bundle.
 Private signing material must never be stored in the repository or embedded in
 the launcher.
 
+The release owner must also provide the public Ed25519 receipt-verification key
+embedded in the signed launcher trust document and a corresponding private-key
+operation available only to the exact signed runtime helper. The helper key is
+distinct from manifest, host-policy, catalog, and qualification keys. Its
+private material must be provisioned into a platform-protected helper signing
+boundary and must never appear in source, build arguments, a release bundle,
+an installer log, or launcher memory. Linux privilege receipts and macOS/
+Windows mutation receipts use different domain-separated statements even when
+one platform release authorizes the same helper key.
+
 Every published artifact must carry an offline-verifiable Sigstore bundle or
 equivalent manifest-bound evidence. Sigstore documents that a verification
 bundle contains the material required for offline verification:

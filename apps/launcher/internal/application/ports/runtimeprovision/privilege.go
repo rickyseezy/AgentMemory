@@ -477,6 +477,16 @@ func (r PrivilegeReceipt) validSubordinateEvidence(authority LinuxAuthority) boo
 // Digest returns a signature-independent receipt binding used by the replay ledger.
 func (r PrivilegeReceipt) Digest() runtimeinstall.Hash { return r.digest }
 
+// AuthenticationPayload returns the domain-separated, signature-independent
+// bytes signed by the immutable privilege helper. Signing the receipt digest
+// keeps the helper protocol bounded while binding every semantic field.
+func (r PrivilegeReceipt) AuthenticationPayload() []byte {
+	if r.digest.IsZero() {
+		return nil
+	}
+	return []byte("agentmemory.runtime-helper.privilege-receipt.v1\n" + r.digest.String())
+}
+
 // Signature returns a caller-owned copy for the authenticated verifier.
 func (r PrivilegeReceipt) Signature() []byte { return append([]byte(nil), r.input.Signature...) }
 

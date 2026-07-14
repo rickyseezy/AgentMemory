@@ -697,9 +697,19 @@ func NewDesktopMutationReceipt(input DesktopMutationReceiptInput) (DesktopMutati
 
 // Matches verifies exact request, exit-code, expiry, and reboot semantics.
 func (r DesktopMutationReceipt) Matches(request DesktopMutationRequest, now time.Time) bool {
+	if !r.BoundTo(request) || now.Before(r.input.CompletedAt) || !now.Before(r.input.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+// BoundTo verifies the exact request and semantic exit/reboot shape without
+// consulting a clock. It exists so the cryptographic authenticator can reject
+// a correctly signed receipt substituted from another helper request.
+func (r DesktopMutationReceipt) BoundTo(request DesktopMutationRequest) bool {
 	if r.digest.IsZero() || request.digest.IsZero() || r.input.RequestDigest != request.digest ||
 		r.input.AuthorityDigest != request.authority.Digest() || r.input.Nonce != request.nonce ||
-		r.input.PostState != request.expectedState || now.Before(r.input.CompletedAt) || !now.Before(r.input.ExpiresAt) {
+		r.input.PostState != request.expectedState {
 		return false
 	}
 	reboot := slices.Contains(request.authority.RebootExitCodes(), r.input.ExitCode)
@@ -714,6 +724,38 @@ func (r DesktopMutationReceipt) RebootReceipt() runtimeinstall.Hash { return r.i
 
 // Signature returns a defensive copy of the native helper signature.
 func (r DesktopMutationReceipt) Signature() []byte { return slices.Clone(r.input.Signature) }
+
+// AuthenticationPayload returns the domain-separated canonical statement
+// signed by the native mutation helper. Signature bytes and their checksum
+// are intentionally excluded to avoid a circular signature definition.
+func (r DesktopMutationReceipt) AuthenticationPayload() []byte {
+	if r.digest.IsZero() {
+		return nil
+	}
+	payload, err := desktopMutationReceiptAuthenticationBytes(r.input)
+	if err != nil {
+		return nil
+	}
+	return append([]byte("agentmemory.runtime-helper.desktop-mutation-receipt.v1\n"), payload...)
+}
+
+func desktopMutationReceiptAuthenticationBytes(input DesktopMutationReceiptInput) ([]byte, error) {
+	return json.Marshal(struct {
+		Authority     string `json:"authority_digest"`
+		CompletedAt   int64  `json:"completed_at_unix_micro"`
+		ExitCode      uint32 `json:"exit_code"`
+		ExpiresAt     int64  `json:"expires_at_unix_micro"`
+		Nonce         Nonce  `json:"nonce"`
+		PostState     string `json:"post_state_digest"`
+		RebootReceipt string `json:"reboot_receipt"`
+		Request       string `json:"request_digest"`
+	}{
+		Authority: input.AuthorityDigest.String(), CompletedAt: input.CompletedAt.UnixMicro(),
+		ExitCode: input.ExitCode, ExpiresAt: input.ExpiresAt.UnixMicro(), Nonce: input.Nonce,
+		PostState: input.PostState.String(), RebootReceipt: input.RebootReceipt.String(),
+		Request: input.RequestDigest.String(),
+	})
+}
 
 type desktopMutationReceiptDocument struct {
 	Authority       string `json:"authority_digest"`

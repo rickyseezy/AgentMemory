@@ -123,9 +123,14 @@ func executeNativeDesktopHelper(
 	ctx context.Context,
 	helper runtimeport.DesktopHelperAuthority,
 	requestPath string,
+	operation runtimeport.DesktopMutationOperation,
 ) error {
 	if ctx == nil || ctx.Err() != nil || helper.Platform() != runtimeinstall.PlatformWindows ||
 		!strings.EqualFold(filepath.Dir(requestPath), helper.ExchangeDirectory()) {
+		return runtimeport.ErrDesktopMutationIntegrity
+	}
+	verbName, elevated, validOperation := windowsDesktopMutationExecutionPolicy(operation)
+	if !validOperation {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	retained, err := retainWindowsMutationHelper(ctx, helper)
@@ -133,7 +138,7 @@ func executeNativeDesktopHelper(
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	defer func() { _ = retained.Close() }()
-	verb, _ := windows.UTF16PtrFromString("runas")
+	verb, _ := windows.UTF16PtrFromString(verbName)
 	file, _ := windows.UTF16PtrFromString(helper.CanonicalPath())
 	parameters, _ := windows.UTF16PtrFromString(
 		"--execute-desktop-mutation " + windows.EscapeArg(requestPath),
@@ -150,10 +155,13 @@ func executeNativeDesktopHelper(
 	result, _, callError := desktopShellExecuteExW.Call(uintptr(unsafe.Pointer(&information))) // #nosec G103 -- exact ShellExecuteExW ABI structure.
 	runtimeKeepAliveDesktopShell(&information, verb, file, parameters, directory)
 	if result == 0 {
-		if errors.Is(callError, errWindowsUACCancelled) {
+		if elevated && errors.Is(callError, errWindowsUACCancelled) {
 			return runtimeport.ErrDesktopMutationDenied
 		}
-		return runtimeport.ErrDesktopMutationPolicy
+		if elevated {
+			return runtimeport.ErrDesktopMutationPolicy
+		}
+		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	if information.Process == 0 {
 		return runtimeport.ErrDesktopMutationIntegrity

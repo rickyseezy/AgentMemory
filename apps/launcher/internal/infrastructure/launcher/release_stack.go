@@ -25,14 +25,15 @@ type nativeReleaseContentSource interface {
 // release pipeline and compiled into a signed launcher build. It deliberately
 // contains no private key or credential.
 type nativeReleaseTrustMaterial struct {
-	ManifestKeys       map[string]ed25519.PublicKey
-	HostPolicyKeys     map[string]ed25519.PublicKey
-	RuntimeCatalogKeys map[string]ed25519.PublicKey
-	RuntimePublishers  []runtimeprovision.RuntimePublisherPolicyInput
-	Offline            releaseverifyadapter.OfflineTrustPolicyInput
-	Provenance         releaseverifyadapter.ProvenanceTrustPolicyInput
-	Qualification      releaseverifyadapter.QualificationTrustPolicyInput
-	Publishers         releaseverifyadapter.NativePublisherPolicyInput
+	ManifestKeys            map[string]ed25519.PublicKey
+	HostPolicyKeys          map[string]ed25519.PublicKey
+	RuntimeCatalogKeys      map[string]ed25519.PublicKey
+	RuntimeHelperReceiptKey ed25519.PublicKey
+	RuntimePublishers       []runtimeprovision.RuntimePublisherPolicyInput
+	Offline                 releaseverifyadapter.OfflineTrustPolicyInput
+	Provenance              releaseverifyadapter.ProvenanceTrustPolicyInput
+	Qualification           releaseverifyadapter.QualificationTrustPolicyInput
+	Publishers              releaseverifyadapter.NativePublisherPolicyInput
 }
 
 type nativeReleaseStackDependencies struct {
@@ -54,6 +55,11 @@ type nativeReleaseStack struct {
 // verifier for development or offline installation.
 func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeReleaseStack, error) {
 	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) || nilAny(dependencies.AntiRollback) {
+		return nativeReleaseStack{}, firststartapp.ErrIntegrity
+	}
+	if _, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(
+		dependencies.Trust.RuntimeHelperReceiptKey,
+	); err != nil {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	signature, err := releaseverifyadapter.NewEd25519KeyIDVerifier(dependencies.Trust.ManifestKeys)

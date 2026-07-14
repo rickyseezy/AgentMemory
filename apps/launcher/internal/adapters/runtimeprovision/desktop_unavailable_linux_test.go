@@ -83,10 +83,10 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 	if _, err := createNativeDesktopMutationExchange(nilContext, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context mutation exchange error = %v", err)
 	}
-	if err := executeNativeDesktopHelper(ctx, runtimeport.DesktopHelperAuthority{}, "request"); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
+	if err := executeNativeDesktopHelper(ctx, runtimeport.DesktopHelperAuthority{}, "request", runtimeport.DesktopMutationInstallRuntime); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
 		t.Fatalf("desktop helper execution error = %v", err)
 	}
-	if err := executeNativeDesktopHelper(nilContext, runtimeport.DesktopHelperAuthority{}, "request"); !errors.Is(err, context.Canceled) {
+	if err := executeNativeDesktopHelper(nilContext, runtimeport.DesktopHelperAuthority{}, "request", runtimeport.DesktopMutationInstallRuntime); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context desktop helper error = %v", err)
 	}
 	exchange := nativeDesktopMutationExchange{}

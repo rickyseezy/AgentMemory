@@ -25,15 +25,16 @@ const (
 var embeddedNativeReleaseTrustBase64 string
 
 type nativeReleaseTrustDocument struct {
-	SchemaVersion      uint16                                         `json:"schemaVersion"`
-	ManifestKeys       map[string]string                              `json:"manifestKeys"`
-	HostPolicyKeys     map[string]string                              `json:"hostPolicyKeys"`
-	RuntimeCatalogKeys map[string]string                              `json:"runtimeCatalogKeys"`
-	RuntimePublishers  []runtimeprovision.RuntimePublisherPolicyInput `json:"runtimeNativePublishers"`
-	Offline            nativeOfflineTrustDocument                     `json:"offline"`
-	Provenance         nativeProvenanceDocument                       `json:"provenance"`
-	Qualification      nativeQualificationDocument                    `json:"qualification"`
-	Publishers         map[string][]string                            `json:"nativePublishers"`
+	SchemaVersion           uint16                                         `json:"schemaVersion"`
+	ManifestKeys            map[string]string                              `json:"manifestKeys"`
+	HostPolicyKeys          map[string]string                              `json:"hostPolicyKeys"`
+	RuntimeCatalogKeys      map[string]string                              `json:"runtimeCatalogKeys"`
+	RuntimeHelperReceiptKey string                                         `json:"runtimeHelperReceiptKey"`
+	RuntimePublishers       []runtimeprovision.RuntimePublisherPolicyInput `json:"runtimeNativePublishers"`
+	Offline                 nativeOfflineTrustDocument                     `json:"offline"`
+	Provenance              nativeProvenanceDocument                       `json:"provenance"`
+	Qualification           nativeQualificationDocument                    `json:"qualification"`
+	Publishers              map[string][]string                            `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -89,6 +90,10 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	runtimeHelperReceiptKey, err := decodeNativeReleasePublicKey(document.RuntimeHelperReceiptKey)
+	if err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	revocationKeys, err := decodeNativeReleaseKeys(document.Offline.RevocationAuthorities)
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
@@ -117,8 +122,9 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	}
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
-		RuntimeCatalogKeys: runtimeCatalogKeys,
-		RuntimePublishers:  append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
+		RuntimeCatalogKeys:      runtimeCatalogKeys,
+		RuntimeHelperReceiptKey: runtimeHelperReceiptKey,
+		RuntimePublishers:       append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 			TrustDomain:           document.Offline.TrustDomain,
 			RevocationAuthorities: revocationKeys, TimeAuthorities: timeKeys,
@@ -141,6 +147,9 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := runtimeprovision.NewCatalogSignatureVerifier(trust.RuntimeCatalogKeys); err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
+	if _, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(trust.RuntimeHelperReceiptKey); err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := runtimeprovision.NewRuntimePublisherPolicyVerifier(trust.RuntimePublishers); err != nil {
@@ -185,6 +194,14 @@ func decodeNativeReleaseKeys(values map[string]string) (map[string]ed25519.Publi
 		result[keyID] = append(ed25519.PublicKey(nil), decoded...)
 	}
 	return result, nil
+}
+
+func decodeNativeReleasePublicKey(value string) (ed25519.PublicKey, error) {
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || base64.StdEncoding.EncodeToString(decoded) != value || len(decoded) != ed25519.PublicKeySize {
+		return nil, errNativeInstallerIntegrity
+	}
+	return append(ed25519.PublicKey(nil), decoded...), nil
 }
 
 func decodeNativeReleaseDigests(values []string) ([]releaseinventory.Digest, error) {

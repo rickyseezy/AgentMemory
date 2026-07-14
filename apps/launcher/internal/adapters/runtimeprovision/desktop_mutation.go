@@ -70,7 +70,7 @@ func (b *nativeDesktopMutationBroker) ExecuteDesktopMutation(
 	if b.publisher.VerifyDesktopHelperPublisher(ctx, helper) != nil {
 		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
 	}
-	if err := executeNativeDesktopHelper(ctx, helper, exchange.requestPath); err != nil {
+	if err := executeNativeDesktopHelper(ctx, helper, exchange.requestPath, request.Operation()); err != nil {
 		return runtimeport.DesktopMutationReceipt{}, err
 	}
 	raw, err := exchange.readReceipt(ctx)
@@ -82,6 +82,19 @@ func (b *nativeDesktopMutationBroker) ExecuteDesktopMutation(
 		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
 	}
 	return receipt, nil
+}
+
+func windowsDesktopMutationExecutionPolicy(
+	operation runtimeport.DesktopMutationOperation,
+) (string, bool, bool) {
+	switch operation {
+	case runtimeport.DesktopMutationInstallPrerequisites:
+		return "runas", true, true
+	case runtimeport.DesktopMutationInstallRuntime:
+		return "open", false, true
+	default:
+		return "", false, false
+	}
 }
 
 type nativeDesktopMutationExchange struct {

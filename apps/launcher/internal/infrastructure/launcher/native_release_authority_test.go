@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,8 +23,14 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 	if err != nil || authority.templates() == nil || authority.verifier() == nil ||
 		authority.hostVerification() == nil || authority.releaseVerification() == nil ||
 		authority.runtimeCatalogLoader() == nil || authority.runtimeCatalogSignatureVerifier() == nil ||
-		authority.runtimeCatalogPublisherVerifier() == nil {
+		authority.runtimeCatalogPublisherVerifier() == nil ||
+		len(authority.runtimeHelperAuthenticationKey()) != ed25519.PublicKeySize {
 		t.Fatalf("authority=%#v error=%v", authority, err)
+	}
+	helperKey := authority.runtimeHelperAuthenticationKey()
+	helperKey[0] ^= 0xff
+	if authority.runtimeHelperAuthenticationKey()[0] == helperKey[0] {
+		t.Fatal("runtime helper authentication key aliases caller memory")
 	}
 	if err := authority.Close(t.Context()); err != nil {
 		t.Fatal(err)

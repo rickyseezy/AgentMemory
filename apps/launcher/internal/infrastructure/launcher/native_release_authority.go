@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"sync"
 
@@ -37,6 +38,7 @@ type nativeReleaseAuthority struct {
 	runtimeCatalog          *nativeRuntimeCatalogLoader
 	runtimeCatalogSignature *runtimeprovision.CatalogSignatureVerifier
 	runtimeCatalogPublisher *runtimeprovision.RuntimePublisherPolicyVerifier
+	runtimeHelperReceiptKey ed25519.PublicKey
 	closeOnce               sync.Once
 	closeError              error
 }
@@ -107,6 +109,7 @@ func newNativeReleaseAuthority(
 		hostVerifier: hostApplication, releaseVerifier: releaseApplication,
 		runtimeCatalogSignature: runtimeCatalogSignature,
 		runtimeCatalogPublisher: runtimeCatalogPublisher,
+		runtimeHelperReceiptKey: append(ed25519.PublicKey(nil), trust.RuntimeHelperReceiptKey...),
 	}
 	runtimeCatalog, err := newNativeRuntimeCatalogLoader(authority)
 	if err != nil {
@@ -116,6 +119,13 @@ func newNativeReleaseAuthority(
 	authority.runtimeCatalog = runtimeCatalog
 	failed = false
 	return authority, nil
+}
+
+func (a *nativeReleaseAuthority) runtimeHelperAuthenticationKey() ed25519.PublicKey {
+	if a == nil || len(a.runtimeHelperReceiptKey) != ed25519.PublicKeySize {
+		return nil
+	}
+	return append(ed25519.PublicKey(nil), a.runtimeHelperReceiptKey...)
 }
 
 func (a *nativeReleaseAuthority) templates() firststartapp.VerifiedTemplateSource {

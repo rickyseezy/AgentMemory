@@ -342,7 +342,8 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	runtime := &nativeRuntimeFactory{
-		operations: operations, decisions: decisionJournals, clock: clock,
+		operations: operations, runtime: runtimeState, runtimePlans: plans,
+		decisions: decisionJournals, clock: clock,
 		ready: ready, resources: resources, decodePlan: decodeRuntimePlan,
 		setup: newNativeSetupController, readyForPlan: newNativeReadySurface,
 	}
@@ -435,6 +436,8 @@ func (c *boundCancellation) ApplySetupDecision(
 
 type nativeRuntimeFactory struct {
 	operations   cancellationRepository
+	runtime      installprogress.RuntimeOperationRepository
+	runtimePlans installprogress.RuntimePlanRepository
 	decisions    installprogress.DecisionJournalProvider
 	clock        installprogress.Clock
 	ready        mcpbootstrap.ReadySurfaceProvider
@@ -528,7 +531,8 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 	resolved mcpbootstrapapp.ResolvedBootstrap,
 ) (BootstrapRuntime, error) {
 	if f == nil || ctx == nil || !host.Valid() || !resolved.Valid() ||
-		nilAny(f.operations) || nilAny(f.decisions) || nilAny(f.clock) ||
+		nilAny(f.operations) || nilAny(f.runtime) || nilAny(f.runtimePlans) ||
+		nilAny(f.decisions) || nilAny(f.clock) ||
 		(nilCapability(f.ready) && f.readyForPlan == nil) ||
 		f.resources == nil || f.decodePlan == nil || f.setup == nil {
 		return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapIntegrity
@@ -557,7 +561,8 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 	}
 	authority, err := installprogress.NewAuthority(
 		binding, plan.totalBytes,
-		f.operations, f.decisions, cancellation, f.clock,
+		f.operations, f.runtime, f.runtimePlans,
+		f.decisions, cancellation, f.clock,
 	)
 	if err != nil {
 		return BootstrapRuntime{}, err

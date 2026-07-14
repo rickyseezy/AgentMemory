@@ -10,12 +10,16 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
 const (
@@ -30,6 +34,23 @@ const (
 // progress projection. The concrete filesystem repository implements it.
 type OperationRepository interface {
 	Load(context.Context, install.OperationID) (*install.Operation, error)
+}
+
+// RuntimeOperationRepository restores the authenticated PF-006 child saga.
+// Its revision is folded into the public sequence so nested progress cannot be
+// hidden behind an unchanged PF-001 aggregate.
+type RuntimeOperationRepository interface {
+	Load(context.Context, string) (*runtimeinstall.Operation, error)
+}
+
+// RuntimePlanRepository restores the immutable signed nested authority that
+// PF-001 persisted before PF-006 began. Consent is projected only from it.
+type RuntimePlanRepository interface {
+	LoadRuntimePlan(
+		context.Context,
+		install.OperationID,
+		install.PlanDigest,
+	) (installplanapp.RuntimePlanAuthority, error)
 }
 
 // DecisionJournalProvider supplies a purpose-separated authenticated and
@@ -55,6 +76,8 @@ type Authority struct {
 	binding      setupprogressapp.Binding
 	totalBytes   uint64
 	operations   OperationRepository
+	runtime      RuntimeOperationRepository
+	runtimePlans RuntimePlanRepository
 	decisions    DecisionJournalProvider
 	effects      DecisionEffect
 	clock        Clock
@@ -66,17 +89,21 @@ func NewAuthority(
 	binding setupprogressapp.Binding,
 	totalBytes uint64,
 	operations OperationRepository,
+	runtime RuntimeOperationRepository,
+	runtimePlans RuntimePlanRepository,
 	decisions DecisionJournalProvider,
 	effects DecisionEffect,
 	clock Clock,
 ) (*Authority, error) {
 	if !binding.Valid() || totalBytes > setupprogressapp.MaximumSafeInteger ||
-		nilCapability(operations) || nilCapability(decisions) ||
+		nilCapability(operations) || nilCapability(runtime) || nilCapability(runtimePlans) ||
+		nilCapability(decisions) ||
 		nilCapability(effects) || nilCapability(clock) {
 		return nil, setupprogressapp.ErrAuthorityIntegrity
 	}
 	return &Authority{
 		binding: binding, totalBytes: totalBytes, operations: operations,
+		runtime: runtime, runtimePlans: runtimePlans,
 		decisions: decisions, effects: effects, clock: clock,
 		pollInterval: defaultPollInterval,
 	}, nil
@@ -104,7 +131,7 @@ func (a *Authority) CurrentSnapshot(
 		!operation.PlanDigest().Equal(binding.PlanDigest()) {
 		return setupprogressapp.Snapshot{}, setupprogressapp.ErrAuthorityIntegrity
 	}
-	return a.project(operation)
+	return a.project(ctx, operation)
 }
 
 // WaitSnapshotAfter polls only the authenticated repository with a bounded
@@ -225,14 +252,18 @@ func (a *Authority) validateCall(ctx context.Context, binding setupprogressapp.B
 	if a == nil || ctx == nil || !a.binding.Valid() || !binding.Valid() ||
 		binding.OperationID() != a.binding.OperationID() ||
 		!binding.PlanDigest().Equal(a.binding.PlanDigest()) ||
-		nilCapability(a.operations) || nilCapability(a.decisions) ||
+		nilCapability(a.operations) || nilCapability(a.runtime) || nilCapability(a.runtimePlans) ||
+		nilCapability(a.decisions) ||
 		nilCapability(a.effects) || nilCapability(a.clock) || a.pollInterval <= 0 {
 		return setupprogressapp.ErrAuthorityIntegrity
 	}
 	return ctx.Err()
 }
 
-func (a *Authority) project(operation *install.Operation) (setupprogressapp.Snapshot, error) {
+func (a *Authority) project(
+	ctx context.Context,
+	operation *install.Operation,
+) (setupprogressapp.Snapshot, error) {
 	if operation.AggregateVersion() >= setupprogressapp.MaximumSafeInteger {
 		return setupprogressapp.Snapshot{}, setupprogressapp.ErrAuthorityIntegrity
 	}
@@ -249,20 +280,169 @@ func (a *Authority) project(operation *install.Operation) (setupprogressapp.Snap
 			break
 		}
 	}
+	sequence := operation.AggregateVersion() + 1
+	var consent *setupprogressapp.ConsentInput
+	if operation.CurrentPhase() >= install.PhaseEnsureContainerRuntime ||
+		operation.State() == install.StateReady {
+		child, childErr := a.runtime.Load(ctx, operation.ID().String())
+		switch {
+		case errors.Is(childErr, runtimeinstallapp.ErrOperationNotFound):
+			if operation.CurrentPhase() > install.PhaseEnsureContainerRuntime ||
+				operation.State() == install.StateReady {
+				return setupprogressapp.Snapshot{}, setupprogressapp.ErrAuthorityIntegrity
+			}
+		case childErr != nil:
+			return setupprogressapp.Snapshot{}, mapRuntimeProjectionError(childErr)
+		case child == nil || child.ID() != operation.ID().String() || child.PlanDigest().IsZero() ||
+			child.Version() > setupprogressapp.MaximumSafeInteger-sequence:
+			return setupprogressapp.Snapshot{}, setupprogressapp.ErrAuthorityIntegrity
+		default:
+			sequence += child.Version()
+			if operation.CurrentPhase() == install.PhaseEnsureContainerRuntime {
+				state, action = setupRuntimeState(child.State())
+				if child.State() == runtimeinstall.OperationStateRunning &&
+					child.CurrentPhase() == runtimeinstall.PhaseAwaitRuntimeConsent {
+					projected, projectionErr := a.runtimeConsent(ctx, operation, child)
+					if projectionErr != nil {
+						return setupprogressapp.Snapshot{}, projectionErr
+					}
+					state, action, consent = setupprogressapp.StateAwaitingConsent,
+						setupprogressapp.ActionNone, &projected
+				}
+			}
+		}
+	}
+	message := setupMessage(operation.State(), operation.CurrentPhase())
+	if consent != nil {
+		message = setupprogressapp.MessageAwaitingConsent
+	} else if operation.CurrentPhase() == install.PhaseEnsureContainerRuntime {
+		message = runtimeMessage(state)
+	}
 	snapshot, err := setupprogressapp.NewSnapshot(setupprogressapp.SnapshotInput{
-		Sequence:    operation.AggregateVersion() + 1,
+		Sequence:    sequence,
 		OperationID: operation.ID(), PlanDigest: operation.PlanDigest(),
-		State: state, Phase: phase, MessageKey: setupMessage(operation.State(), operation.CurrentPhase()),
+		State: state, Phase: phase, MessageKey: message,
 		Progress: setupprogressapp.Progress{
 			CompletedStages: uint64(len(completed)), TotalStages: uint64(len(install.OrderedPhases())),
 			DownloadedBytes: downloaded, TotalBytes: a.totalBytes,
 		},
-		SafeAction: action,
+		SafeAction: action, Consent: consent,
 	})
 	if err != nil {
 		return setupprogressapp.Snapshot{}, setupprogressapp.ErrAuthorityIntegrity
 	}
 	return snapshot, nil
+}
+
+func (a *Authority) runtimeConsent(
+	ctx context.Context,
+	parent *install.Operation,
+	child *runtimeinstall.Operation,
+) (setupprogressapp.ConsentInput, error) {
+	authority, err := a.runtimePlans.LoadRuntimePlan(ctx, parent.ID(), parent.PlanDigest())
+	if err != nil {
+		return setupprogressapp.ConsentInput{}, mapRuntimeProjectionError(err)
+	}
+	plan := authority.Plan()
+	if authority.OperationID() != parent.ID() ||
+		!authority.ParentPlanDigest().Equal(parent.PlanDigest()) ||
+		plan.Digest() != child.PlanDigest() || plan.TermsDigest().IsZero() ||
+		plan.DownloadBytes() == 0 || plan.ExpandedBytes() < plan.DownloadBytes() ||
+		plan.DownloadBytes() > setupprogressapp.MaximumSafeInteger ||
+		plan.ExpandedBytes() > setupprogressapp.MaximumSafeInteger {
+		return setupprogressapp.ConsentInput{}, setupprogressapp.ErrAuthorityIntegrity
+	}
+	change, elevation, reboot, ok := runtimeConsentChange(plan)
+	if !ok {
+		return setupprogressapp.ConsentInput{}, setupprogressapp.ErrAuthorityIntegrity
+	}
+	return setupprogressapp.ConsentInput{
+		TermsTitle:  "Docker Subscription Service Agreement",
+		TermsURL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
+		TermsDigest: plan.TermsDigest().String(), DownloadBytes: plan.DownloadBytes(),
+		ExpandedBytes: plan.ExpandedBytes(), RequiresElevation: elevation,
+		MayRequireReboot: reboot, Changes: []string{change},
+	}, nil
+}
+
+func runtimeConsentChange(plan runtimeinstall.Plan) (string, bool, bool, bool) {
+	product := strings.ReplaceAll(plan.Product(), "_", " ")
+	if product == "" || plan.Version() == "" {
+		return "", false, false, false
+	}
+	suffix := product + " " + plan.Version()
+	switch plan.Action() {
+	case runtimeinstall.PlanActionAdoptCompatible:
+		return "Use the compatible existing " + suffix, false, false, true
+	case runtimeinstall.PlanActionStartCompatible:
+		return "Start the compatible existing " + suffix, false, false, true
+	case runtimeinstall.PlanActionInstallCertified:
+		return "Install the certified " + suffix, true,
+			plan.Platform() == runtimeinstall.PlatformWindows, true
+	case runtimeinstall.PlanActionRepairManaged:
+		return "Repair the AgentMemory-managed " + suffix, true,
+			plan.Platform() == runtimeinstall.PlatformWindows, true
+	case runtimeinstall.PlanActionUnknown, runtimeinstall.PlanActionBlock:
+		return "", false, false, false
+	default:
+		return "", false, false, false
+	}
+}
+
+func setupRuntimeState(
+	state runtimeinstall.OperationState,
+) (setupprogressapp.State, setupprogressapp.SafeAction) {
+	switch state {
+	case runtimeinstall.OperationStateRunning, runtimeinstall.OperationStateReady:
+		return setupprogressapp.StateRunning, setupprogressapp.ActionCancel
+	case runtimeinstall.OperationStateRebootPending:
+		return setupprogressapp.StateRebootRequired, setupprogressapp.ActionReboot
+	case runtimeinstall.OperationStatePausedForAdministrator:
+		return setupprogressapp.StatePausedForAdministrator, setupprogressapp.ActionOpenNativePrompt
+	case runtimeinstall.OperationStateFailedRecoverable:
+		return setupprogressapp.StateFailed, setupprogressapp.ActionRetry
+	case runtimeinstall.OperationStateCancelled:
+		return setupprogressapp.StateCancelled, setupprogressapp.ActionNone
+	case runtimeinstall.OperationStateUnsupportedHost, runtimeinstall.OperationStateRuntimeConflict:
+		return setupprogressapp.StateFailed, setupprogressapp.ActionNone
+	case runtimeinstall.OperationStateUnknown:
+		return setupprogressapp.StateConnecting, setupprogressapp.ActionNone
+	default:
+		return setupprogressapp.StateConnecting, setupprogressapp.ActionNone
+	}
+}
+
+func runtimeMessage(state setupprogressapp.State) setupprogressapp.MessageKey {
+	switch state {
+	case setupprogressapp.StateRebootRequired:
+		return setupprogressapp.MessageRebootRequired
+	case setupprogressapp.StatePausedForAdministrator:
+		return setupprogressapp.MessageAdministratorRequired
+	case setupprogressapp.StateFailed:
+		return setupprogressapp.MessageRetryableFailure
+	case setupprogressapp.StateCancelled:
+		return setupprogressapp.MessageCancelled
+	case setupprogressapp.StateConnecting:
+		return setupprogressapp.MessageConnecting
+	case setupprogressapp.StateAwaitingConsent:
+		return setupprogressapp.MessageAwaitingConsent
+	case setupprogressapp.StateRunning, setupprogressapp.StateReady:
+		return setupprogressapp.MessagePreparingRuntime
+	default:
+		return setupprogressapp.MessageConnecting
+	}
+}
+
+func mapRuntimeProjectionError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) ||
+		errors.Is(err, installplanapp.ErrRuntimePlanIntegrity) ||
+		errors.Is(err, installplanapp.ErrRuntimePlanConflict) {
+		return setupprogressapp.ErrAuthorityIntegrity
+	}
+	return errors.New("runtime setup authority is unavailable")
 }
 
 func setupState(state install.State) (setupprogressapp.State, setupprogressapp.SafeAction) {

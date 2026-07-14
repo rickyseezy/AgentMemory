@@ -14,11 +14,14 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	agentconfigdomain "github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/agentconfig"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
 func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.T) {
@@ -416,7 +419,8 @@ func TestPF001NativeRuntimeFactoryBuildsBoundProgressSetupAndCancellation(t *tes
 	setup := &nativeSetupStub{}
 	resources := &nativeResources{plans: &nativePlanCloser{}}
 	factory := &nativeRuntimeFactory{
-		operations: repository, decisions: nativeMissingJournalProvider{}, clock: fixedResolverClock{},
+		operations: repository, runtime: nativeMissingRuntimeOperations{}, runtimePlans: nativeMissingRuntimePlans{},
+		decisions: nativeMissingJournalProvider{}, clock: fixedResolverClock{},
 		ready: &readyStub{err: errors.New("not Ready")}, resources: resources,
 		decodePlan: func([]byte) (runtimePlanProjection, error) {
 			return runtimeProjection(resolved, agentconfigdomain.AgentHostCodex, 4096), nil
@@ -454,7 +458,8 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 	operation, _ := install.NewOperation(resolved.OperationID(), resolved.PlanDigest())
 	base := nativeRuntimeFactory{
 		operations: &nativeCancellationRepository{operation: operation},
-		decisions:  nativeMissingJournalProvider{}, clock: fixedResolverClock{},
+		runtime:    nativeMissingRuntimeOperations{}, runtimePlans: nativeMissingRuntimePlans{},
+		decisions: nativeMissingJournalProvider{}, clock: fixedResolverClock{},
 		ready: &readyStub{err: errors.New("not Ready")}, resources: &nativeResources{plans: &nativePlanCloser{}},
 		decodePlan: func([]byte) (runtimePlanProjection, error) {
 			return runtimeProjection(resolved, agentconfigdomain.AgentHostCodex, 1), nil
@@ -480,13 +485,15 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 	}
 
 	for name, mutate := range map[string]func(*nativeRuntimeFactory){
-		"operations": func(f *nativeRuntimeFactory) { f.operations = (*nativeCancellationRepository)(nil) },
-		"decisions":  func(f *nativeRuntimeFactory) { f.decisions = (*nativeMissingJournalProvider)(nil) },
-		"clock":      func(f *nativeRuntimeFactory) { f.clock = nil },
-		"Ready":      func(f *nativeRuntimeFactory) { f.ready = (*readyStub)(nil) },
-		"resources":  func(f *nativeRuntimeFactory) { f.resources = nil },
-		"decoder":    func(f *nativeRuntimeFactory) { f.decodePlan = nil },
-		"setup":      func(f *nativeRuntimeFactory) { f.setup = nil },
+		"operations":    func(f *nativeRuntimeFactory) { f.operations = (*nativeCancellationRepository)(nil) },
+		"runtime":       func(f *nativeRuntimeFactory) { f.runtime = (*nativeMissingRuntimeOperations)(nil) },
+		"runtime plans": func(f *nativeRuntimeFactory) { f.runtimePlans = (*nativeMissingRuntimePlans)(nil) },
+		"decisions":     func(f *nativeRuntimeFactory) { f.decisions = (*nativeMissingJournalProvider)(nil) },
+		"clock":         func(f *nativeRuntimeFactory) { f.clock = nil },
+		"Ready":         func(f *nativeRuntimeFactory) { f.ready = (*readyStub)(nil) },
+		"resources":     func(f *nativeRuntimeFactory) { f.resources = nil },
+		"decoder":       func(f *nativeRuntimeFactory) { f.decodePlan = nil },
+		"setup":         func(f *nativeRuntimeFactory) { f.setup = nil },
 	} {
 		candidate := base
 		mutate(&candidate)
@@ -526,6 +533,25 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 		errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
 		t.Fatalf("setup failure error=%v", err)
 	}
+}
+
+type nativeMissingRuntimeOperations struct{}
+
+func (nativeMissingRuntimeOperations) Load(
+	context.Context,
+	string,
+) (*runtimeinstall.Operation, error) {
+	return nil, runtimeinstallapp.ErrOperationNotFound
+}
+
+type nativeMissingRuntimePlans struct{}
+
+func (nativeMissingRuntimePlans) LoadRuntimePlan(
+	context.Context,
+	install.OperationID,
+	install.PlanDigest,
+) (installplanapp.RuntimePlanAuthority, error) {
+	return installplanapp.RuntimePlanAuthority{}, installplanapp.ErrRuntimePlanNotFound
 }
 
 func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.T) {

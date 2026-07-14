@@ -47,8 +47,13 @@ func NewPlanV1(host HostCapabilities, discovery RuntimeDiscovery, catalog Certif
 		decisionCode:       parseDecisionCode(document.DecisionCode),
 		digest:             Sum(canonical),
 		canonical:          canonical,
+		platform:           catalog.platform,
+		product:            catalog.product,
+		version:            catalog.version,
 		catalogHash:        catalog.catalogDigest,
 		termsHash:          catalog.termsDigest,
+		downloadBytes:      catalog.downloadBytes,
+		expandedBytes:      catalog.expandedBytes,
 		hostOSVersion:      host.osVersion,
 		unrelatedWorkloads: discovery.unrelatedWorkloads,
 	}, nil

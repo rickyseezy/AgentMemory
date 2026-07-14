@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
 const decisionID = "019f5f2a-1234-7abc-8123-0123456789ab"
@@ -71,7 +74,7 @@ func TestPF001ProgressAuthorityWaitHonorsCancellation(t *testing.T) {
 func TestPF001ProgressAuthorityRejectsInvalidCompositionAndSubstitution(t *testing.T) {
 	t.Parallel()
 	fixture := newAuthorityFixture(t)
-	if _, err := NewAuthority(setupprogressapp.Binding{}, 0, nil, nil, nil, nil); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
+	if _, err := NewAuthority(setupprogressapp.Binding{}, 0, nil, nil, nil, nil, nil, nil); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
 		t.Fatalf("NewAuthority() error=%v", err)
 	}
 	foreignID, _ := install.NewOperationID("019f5f2a-1234-7abc-8123-0123456789ac")
@@ -110,6 +113,72 @@ func TestPF001ProgressAuthorityRejectsInvalidCompositionAndSubstitution(t *testi
 	}
 }
 
+func TestPF001ProgressProjectsAuthenticatedRuntimeConsent(t *testing.T) {
+	t.Parallel()
+	fixture := newAuthorityFixture(t)
+	advanceParentToRuntime(t, fixture.operations.operation)
+	child, authority := runtimeConsentAuthority(t, fixture.operations.operation)
+	fixture.runtime.operation = child
+	fixture.runtime.err = nil
+	fixture.runtimePlans.authority = authority
+	fixture.runtimePlans.err = nil
+
+	snapshot, err := fixture.authority.CurrentSnapshot(context.Background(), fixture.binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.State() != setupprogressapp.StateAwaitingConsent ||
+		snapshot.Phase() != setupprogressapp.PhaseEnsureContainerRuntime ||
+		snapshot.MessageKey() != setupprogressapp.MessageAwaitingConsent ||
+		snapshot.SafeAction() != setupprogressapp.ActionNone || snapshot.Sequence() != 5 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	canonical, err := snapshot.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`"termsDigest":"` + authority.Plan().TermsDigest().String() + `"`,
+		`"downloadBytes":700000000`, `"expandedBytes":2000000000`,
+		`"requiresElevation":true`, `"mayRequireReboot":false`,
+		`"changes":["Install the certified docker desktop 28.3.2"]`,
+	} {
+		if !strings.Contains(string(canonical), required) {
+			t.Fatalf("canonical consent %s missing %s", canonical, required)
+		}
+	}
+}
+
+func TestPF001ProgressRuntimeProjectionFailsClosed(t *testing.T) {
+	t.Parallel()
+	missing := newAuthorityFixture(t)
+	advanceParentToRuntime(t, missing.operations.operation)
+	advanceParentBeyondRuntime(t, missing.operations.operation)
+	if _, err := missing.authority.CurrentSnapshot(context.Background(), missing.binding); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
+		t.Fatalf("missing completed runtime error=%v", err)
+	}
+
+	fixture := newAuthorityFixture(t)
+	advanceParentToRuntime(t, fixture.operations.operation)
+	child, authority := runtimeConsentAuthority(t, fixture.operations.operation)
+	fixture.runtime.operation, fixture.runtime.err = child, nil
+	fixture.runtimePlans.authority, fixture.runtimePlans.err = authority, nil
+
+	fixture.runtimePlans.err = installplanapp.ErrRuntimePlanIntegrity
+	if _, err := fixture.authority.CurrentSnapshot(context.Background(), fixture.binding); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
+		t.Fatalf("runtime plan integrity error=%v", err)
+	}
+	fixture.runtimePlans.err = nil
+	fixture.runtimePlans.authority = installplanapp.RuntimePlanAuthority{}
+	if _, err := fixture.authority.CurrentSnapshot(context.Background(), fixture.binding); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
+		t.Fatalf("substituted runtime plan error=%v", err)
+	}
+	fixture.runtime.err = context.Canceled
+	if _, err := fixture.authority.CurrentSnapshot(context.Background(), fixture.binding); !errors.Is(err, context.Canceled) {
+		t.Fatalf("runtime cancellation error=%v", err)
+	}
+}
+
 func TestPF001ProgressProjectionCoversEveryClosedStatePhaseAndMessage(t *testing.T) {
 	t.Parallel()
 	states := []install.State{
@@ -131,6 +200,53 @@ func TestPF001ProgressProjectionCoversEveryClosedStatePhaseAndMessage(t *testing
 	}
 	if _, ok := setupPhase(install.PhaseUnknown); ok || setupMessage(install.StateRunning, install.PhaseUnknown) != setupprogressapp.MessageConnecting {
 		t.Fatal("unknown phase did not fail closed")
+	}
+}
+
+func TestPF001RuntimeProgressProjectionCoversEveryClosedStateAndFailure(t *testing.T) {
+	t.Parallel()
+	states := []runtimeinstall.OperationState{
+		runtimeinstall.OperationStateUnknown,
+		runtimeinstall.OperationStateRunning,
+		runtimeinstall.OperationStateRebootPending,
+		runtimeinstall.OperationStateReady,
+		runtimeinstall.OperationStateCancelled,
+		runtimeinstall.OperationStatePausedForAdministrator,
+		runtimeinstall.OperationStateUnsupportedHost,
+		runtimeinstall.OperationStateRuntimeConflict,
+		runtimeinstall.OperationStateFailedRecoverable,
+		runtimeinstall.OperationState(255),
+	}
+	for _, state := range states {
+		projected, action := setupRuntimeState(state)
+		if projected == "" || action == "" || runtimeMessage(projected) == "" {
+			t.Fatalf("runtime state %v has incomplete projection", state)
+		}
+	}
+	for _, state := range []setupprogressapp.State{
+		setupprogressapp.StateAwaitingConsent,
+		setupprogressapp.StateReady,
+		setupprogressapp.State("unknown"),
+	} {
+		if runtimeMessage(state) == "" {
+			t.Fatalf("runtime message missing for %q", state)
+		}
+	}
+	for _, input := range []error{
+		context.Canceled,
+		context.DeadlineExceeded,
+		runtimeinstallapp.ErrOperationIntegrity,
+		installplanapp.ErrRuntimePlanIntegrity,
+		installplanapp.ErrRuntimePlanConflict,
+		errors.New("private path"),
+	} {
+		mapped := mapRuntimeProjectionError(input)
+		if mapped == nil || strings.Contains(mapped.Error(), "private") {
+			t.Fatalf("mapRuntimeProjectionError(%v)=%v", input, mapped)
+		}
+	}
+	if _, _, _, ok := runtimeConsentChange(runtimeinstall.Plan{}); ok {
+		t.Fatal("zero runtime plan produced consent")
 	}
 }
 
@@ -292,11 +408,13 @@ func TestPF001ProgressSnapshotCanonicalDecoderRejectsNonCanonicalInput(t *testin
 }
 
 type authorityFixture struct {
-	authority  *Authority
-	binding    setupprogressapp.Binding
-	operations *memoryOperations
-	journal    *memoryDecisionJournal
-	effect     *cancellingEffect
+	authority    *Authority
+	binding      setupprogressapp.Binding
+	operations   *memoryOperations
+	runtime      *memoryRuntimeOperations
+	runtimePlans *memoryRuntimePlans
+	journal      *memoryDecisionJournal
+	effect       *cancellingEffect
 }
 
 func newAuthorityFixture(t testing.TB) authorityFixture {
@@ -318,13 +436,124 @@ func newAuthorityFixture(t testing.TB) authorityFixture {
 		t.Fatal(err)
 	}
 	operations := &memoryOperations{operation: operation}
+	runtimeOperations := &memoryRuntimeOperations{err: runtimeinstallapp.ErrOperationNotFound}
+	runtimePlans := &memoryRuntimePlans{err: installplanapp.ErrRuntimePlanNotFound}
 	journal := &memoryDecisionJournal{}
 	effect := &cancellingEffect{operation: operation, plan: planDigest}
-	authority, err := NewAuthority(binding, 1024, operations, staticDecisionProvider{journal: journal}, effect, fixedProgressClock{})
+	authority, err := NewAuthority(
+		binding, 1024, operations, runtimeOperations, runtimePlans,
+		staticDecisionProvider{journal: journal}, effect, fixedProgressClock{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return authorityFixture{authority: authority, binding: binding, operations: operations, journal: journal, effect: effect}
+	return authorityFixture{
+		authority: authority, binding: binding, operations: operations,
+		runtime: runtimeOperations, runtimePlans: runtimePlans,
+		journal: journal, effect: effect,
+	}
+}
+
+func advanceParentToRuntime(t testing.TB, operation *install.Operation) {
+	t.Helper()
+	boundary, err := install.NewCompensationBoundary("verify-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, err := install.NewSafeAction("continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := install.NewStepEvidence(install.StepEvidenceInput{
+		Phase: install.PhaseVerifyHost, Attempt: 1, PlanDigest: operation.PlanDigest(),
+		InputDigest:          install.DigestBytes([]byte("host-input")),
+		OutputDigest:         install.DigestBytes([]byte("host-output")),
+		RuntimeOwnership:     install.RuntimeOwnershipUndetermined,
+		CompensationBoundary: boundary, NextSafeAction: action,
+	})
+	if err != nil || operation.CompleteStep(evidence) != nil {
+		t.Fatalf("advance parent: %v", err)
+	}
+}
+
+func advanceParentBeyondRuntime(t testing.TB, operation *install.Operation) {
+	t.Helper()
+	boundary, err := install.NewCompensationBoundary("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, err := install.NewSafeAction("continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := install.NewStepEvidence(install.StepEvidenceInput{
+		Phase: install.PhaseEnsureContainerRuntime, Attempt: 1, PlanDigest: operation.PlanDigest(),
+		InputDigest:            install.DigestBytes([]byte("runtime-input")),
+		OutputDigest:           install.DigestBytes([]byte("runtime-output")),
+		VerifiedArtifactDigest: install.DigestBytes([]byte("runtime-artifact")),
+		RuntimeOwnership:       install.RuntimeOwnershipProvisionedByAgentMemory,
+		CompensationBoundary:   boundary, NextSafeAction: action,
+	})
+	if err != nil || operation.CompleteStep(evidence) != nil {
+		t.Fatalf("advance parent beyond runtime: %v", err)
+	}
+}
+
+func runtimeConsentAuthority(
+	t testing.TB,
+	parent *install.Operation,
+) (*runtimeinstall.Operation, installplanapp.RuntimePlanAuthority) {
+	t.Helper()
+	host, err := runtimeinstall.NewHostCapabilities(
+		runtimeinstall.PlatformDarwin, runtimeinstall.ArchitectureARM64, "15.5", true,
+		true, true, true, 8, 16<<30, 12<<30, 80<<30,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := runtimeinstall.NewCertifiedRuntime(
+		runtimeinstall.PlatformDarwin, runtimeinstall.ArchitectureARM64,
+		"docker_desktop", "28.3.2", "stable", 42,
+		runtimeinstall.Sum([]byte("catalog")), runtimeinstall.Sum([]byte("terms")),
+		700000000, 2000000000,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := runtimeinstall.NewPlanV1(host, runtimeinstall.NewAbsentRuntimeDiscovery(), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := runtimeinstall.NewOperation(parent.ID().String(), plan.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []runtimeinstall.Phase{
+		runtimeinstall.PhaseDetectHost,
+		runtimeinstall.PhaseDetectRuntime,
+		runtimeinstall.PhasePlanRuntime,
+	} {
+		evidence, evidenceErr := runtimeinstall.NewTransitionEvidence(
+			phase, child.Attempt(), plan.Digest(),
+			runtimeinstall.Sum([]byte("input-"+phase.String())),
+			runtimeinstall.Sum([]byte("output-"+phase.String())),
+			runtimeinstall.Hash{}, runtimeinstall.OwnershipUnknown,
+		)
+		if evidenceErr != nil || child.Complete(phase, evidence) != nil {
+			t.Fatalf("advance runtime %s: %v", phase, evidenceErr)
+		}
+	}
+	authority, err := installplanapp.NewRuntimePlanAuthority(
+		parent.ID(), parent.PlanDigest(), plan,
+		install.DigestBytes([]byte("host-evidence")),
+		install.DigestBytes([]byte("discovery-evidence")),
+		install.DigestBytes([]byte("catalog-resource-evidence")),
+		install.DigestBytes([]byte("catalog")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return child, authority
 }
 
 type memoryOperations struct {
@@ -334,6 +563,28 @@ type memoryOperations struct {
 
 func (r *memoryOperations) Load(context.Context, install.OperationID) (*install.Operation, error) {
 	return r.operation, r.err
+}
+
+type memoryRuntimeOperations struct {
+	operation *runtimeinstall.Operation
+	err       error
+}
+
+func (r *memoryRuntimeOperations) Load(context.Context, string) (*runtimeinstall.Operation, error) {
+	return r.operation, r.err
+}
+
+type memoryRuntimePlans struct {
+	authority installplanapp.RuntimePlanAuthority
+	err       error
+}
+
+func (r *memoryRuntimePlans) LoadRuntimePlan(
+	context.Context,
+	install.OperationID,
+	install.PlanDigest,
+) (installplanapp.RuntimePlanAuthority, error) {
+	return r.authority, r.err
 }
 
 type staticDecisionProvider struct {

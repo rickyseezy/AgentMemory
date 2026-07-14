@@ -400,8 +400,13 @@ type Plan struct {
 	decisionCode       DecisionCode
 	digest             Hash
 	canonical          []byte
+	platform           Platform
+	product            string
+	version            string
 	catalogHash        Hash
 	termsHash          Hash
+	downloadBytes      uint64
+	expandedBytes      uint64
 	hostOSVersion      string
 	unrelatedWorkloads uint32
 }
@@ -419,12 +424,27 @@ func (p Plan) Digest() Hash { return p.digest }
 // It is empty only for a fail-closed decision produced from invalid zero facts.
 func (p Plan) CanonicalBytes() []byte { return append([]byte(nil), p.canonical...) }
 
+// Platform returns the signed catalog target used by the decision.
+func (p Plan) Platform() Platform { return p.platform }
+
+// Product returns the exact signed runtime product name.
+func (p Plan) Product() string { return p.product }
+
+// Version returns the exact signed runtime product version.
+func (p Plan) Version() string { return p.version }
+
 // CatalogDigest returns the exact verified catalog bound into the plan.
 func (p Plan) CatalogDigest() Hash { return p.catalogHash }
 
 // TermsDigest returns the exact third-party terms document bound into the
 // verified runtime catalog and canonical plan.
 func (p Plan) TermsDigest() Hash { return p.termsHash }
+
+// DownloadBytes returns the signed acquisition size shown before consent.
+func (p Plan) DownloadBytes() uint64 { return p.downloadBytes }
+
+// ExpandedBytes returns the signed installed-size bound shown before consent.
+func (p Plan) ExpandedBytes() uint64 { return p.expandedBytes }
 
 // HostOSVersion returns the exact independently probed release string bound
 // into the canonical plan.

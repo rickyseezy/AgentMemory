@@ -70,6 +70,7 @@ type VerifiedResource struct {
 	id        string
 	kind      releaseinventory.ResourceKind
 	purpose   releaseinventory.ResourcePurpose
+	mediaType string
 	digest    releaseinventory.Digest
 	size      uint64
 	platform  releaseinventory.Platform
@@ -86,6 +87,9 @@ func (r VerifiedResource) Kind() releaseinventory.ResourceKind { return r.kind }
 // authorize both Kind and Purpose before using a resource.
 func (r VerifiedResource) Purpose() releaseinventory.ResourcePurpose { return r.purpose }
 
+// MediaType returns the independently verified execution format.
+func (r VerifiedResource) MediaType() string { return r.mediaType }
+
 // Digest returns the verified SHA-256 digest.
 func (r VerifiedResource) Digest() releaseinventory.Digest { return r.digest }
 
@@ -98,6 +102,17 @@ func (r VerifiedResource) Platform() releaseinventory.Platform { return r.platfo
 // SourceRef returns the exact digest-pinned source selected from the signed
 // release inventory. It is acquisition metadata and never replaces Digest.
 func (r VerifiedResource) SourceRef() string { return r.sourceRef }
+
+// Authorizes reports whether a descriptor from the exact signed manifest is
+// the same closed resource that passed every release verification gate. It
+// lets downstream adapters recover non-projected manifest metadata without
+// turning a hand-built Resource into verified authority.
+func (r VerifiedResource) Authorizes(candidate releaseinventory.Resource) bool {
+	return r.id != "" && candidate.ID() == r.id && candidate.Kind() == r.kind &&
+		candidate.Purpose() == r.purpose && candidate.MediaType() == r.mediaType &&
+		candidate.Digest().Equal(r.digest) && candidate.Size() == r.size &&
+		candidate.Platform() == r.platform && candidate.SourceRef() == r.sourceRef
+}
 
 // VerifiedInventory is emitted only after every selected subject and evidence
 // resource passes the closed release policy and the anchor CAS succeeds.
@@ -124,6 +139,7 @@ func newVerifiedInventory(
 			id:        resource.ID(),
 			kind:      resource.Kind(),
 			purpose:   resource.Purpose(),
+			mediaType: resource.MediaType(),
 			digest:    resource.Digest(),
 			size:      resource.Size(),
 			platform:  resource.Platform(),

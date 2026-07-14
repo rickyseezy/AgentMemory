@@ -64,8 +64,19 @@ func TestVerifyReleaseProducesClosedInventoryOnlyAfterEveryTrustGate(t *testing.
 	}
 	helper, found := result.Resource("helper")
 	if !found || helper.ID() != "helper" || helper.Kind() != releaseinventory.ResourceKindHelper ||
-		helper.Purpose() != releaseinventory.ResourcePurposeNativeHelper || helper.SourceRef() == "" {
+		helper.Purpose() != releaseinventory.ResourcePurposeNativeHelper || helper.MediaType() == "" ||
+		helper.SourceRef() == "" {
 		t.Fatal("exact verified resource selection lost signed execution authority")
+	}
+	var signedHelper releaseinventory.Resource
+	for _, resource := range signed.Manifest().Resources() {
+		if resource.ID() == "helper" {
+			signedHelper = resource
+			break
+		}
+	}
+	if !helper.Authorizes(signedHelper) || helper.Authorizes(releaseinventory.Resource{}) {
+		t.Fatal("verified resource did not authenticate its exact signed descriptor")
 	}
 	if _, found := result.Resource("future-or-foreign-resource"); found {
 		t.Fatal("verified inventory selected a resource outside its closed target set")
@@ -643,7 +654,6 @@ func releaseFixtureResources(t *testing.T, platform releaseinventory.Platform) [
 		releaseSubjectInput("migration", releaseinventory.ResourceKindMigration, platform),
 		releaseSubjectInput("verifier", releaseinventory.ResourceKindVerifier, platform),
 		releaseSubjectInput("setup-ui", releaseinventory.ResourceKindSetupUI, platform),
-		releaseSubjectInput("install-plan", releaseinventory.ResourceKindInstallPlanTemplate, platform),
 		releaseSubjectInput("runtime-catalog", releaseinventory.ResourceKindRuntimeCatalog, platform),
 	)
 	for _, role := range []releaseinventory.LocalProviderRole{

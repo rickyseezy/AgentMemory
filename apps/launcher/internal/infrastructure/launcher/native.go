@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 
+	agentconfigadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/agentconfig"
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/corehttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
@@ -122,6 +123,7 @@ type nativeComposition struct {
 	factory      *Factory
 	resources    *nativeResources
 	preparations firststartapp.PreparationRepository
+	binder       firststartapp.PreparationBinder
 }
 
 func composeNative(
@@ -174,6 +176,20 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	owners, err := newPlatformOwnerBindingSource()
+	if err != nil || nilAny(owners) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	projection, err := firststartadapter.NewNativeHostProjectionSource(
+		agentconfigadapter.NewLocationResolver(), owners,
+	)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	binder, err := firststartadapter.NewPlanBinder(projection)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operations, err := filesystem.NewInstallOperationRepository(operationJournals, clock, fence)
 	if err != nil {
 		return nativeComposition{}, err
@@ -199,7 +215,7 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	return nativeComposition{
-		factory: factory, resources: resources, preparations: preparations,
+		factory: factory, resources: resources, preparations: preparations, binder: binder,
 	}, nil
 }
 

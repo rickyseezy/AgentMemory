@@ -26,6 +26,12 @@ type MCPFactory interface {
 	BuildMCP(context.Context, agentconfigdomain.AgentHost) (MCPRunner, error)
 }
 
+// BootstrapInitializer creates the durable first-start authority from the
+// verified packaged release. It is called only when no protected pointer exists.
+type BootstrapInitializer interface {
+	EnsureBootstrap(context.Context, agentconfigdomain.AgentHost) error
+}
+
 // RuntimeLifecycle closes process-owned setup listeners and phase resources.
 type RuntimeLifecycle interface {
 	Close(context.Context) error
@@ -53,8 +59,9 @@ type BootstrapRuntimeFactory interface {
 
 // Factory is the production PF-001 MCP composition root.
 type Factory struct {
-	resolver mcpbootstrapapp.BootstrapResolver
-	runtime  BootstrapRuntimeFactory
+	resolver    mcpbootstrapapp.BootstrapResolver
+	runtime     BootstrapRuntimeFactory
+	initializer BootstrapInitializer
 }
 
 // NewFactory refuses a partial composition.
@@ -66,6 +73,24 @@ func NewFactory(
 		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	return &Factory{resolver: resolver, runtime: runtime}, nil
+}
+
+// NewFirstStartFactory constructs the production path that can initialize a
+// pristine host and then immediately resolve the resulting protected state.
+func NewFirstStartFactory(
+	resolver mcpbootstrapapp.BootstrapResolver,
+	runtime BootstrapRuntimeFactory,
+	initializer BootstrapInitializer,
+) (*Factory, error) {
+	if nilCapability(initializer) {
+		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	factory, err := NewFactory(resolver, runtime)
+	if err != nil {
+		return nil, err
+	}
+	factory.initializer = initializer
+	return factory, nil
 }
 
 // BuildMCP authenticates host-specific protected state before constructing any
@@ -81,6 +106,12 @@ func (f *Factory) BuildMCP(
 		return nil, err
 	}
 	resolved, err := f.resolver.ResolveBootstrap(ctx, host)
+	if errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) && !nilCapability(f.initializer) {
+		if initializeError := f.initializer.EnsureBootstrap(ctx, host); initializeError != nil {
+			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+		}
+		resolved, err = f.resolver.ResolveBootstrap(ctx, host)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -369,6 +369,8 @@ func validateComposeFiles(project containerengine.ComposeProject) error {
 type composeFileSnapshot struct {
 	configuration os.FileInfo
 	environment   os.FileInfo
+	configToken   string
+	envToken      string
 	configDigest  [sha256.Size]byte
 }
 
@@ -388,15 +390,20 @@ func snapshotComposeFiles(project containerengine.ComposeProject) (composeFileSn
 	if err != nil || len(contents) == 0 || len(contents) > maximumDockerJSON {
 		return composeFileSnapshot{}, containerengine.ErrInvalidComposeProject
 	}
-	return composeFileSnapshot{
-		configuration: configuration, environment: environment, configDigest: sha256.Sum256(contents),
-	}, nil
+	configToken, configValid := composeNativeIdentity(configuration)
+	envToken, envValid := composeNativeIdentity(environment)
+	if !configValid || !envValid {
+		return composeFileSnapshot{}, containerengine.ErrInvalidComposeProject
+	}
+	return composeFileSnapshot{configuration: configuration, environment: environment,
+		configToken: configToken, envToken: envToken, configDigest: sha256.Sum256(contents)}, nil
 }
 
 func sameComposeFiles(project containerengine.ComposeProject, before composeFileSnapshot) bool {
 	after, err := snapshotComposeFiles(project)
 	return err == nil && os.SameFile(before.configuration, after.configuration) &&
-		os.SameFile(before.environment, after.environment) && before.configDigest == after.configDigest
+		os.SameFile(before.environment, after.environment) && before.configToken == after.configToken &&
+		before.envToken == after.envToken && before.configDigest == after.configDigest
 }
 
 func snapshotPolicySecrets(

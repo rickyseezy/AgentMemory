@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
 import hashlib
 import hmac
 import json
+import os
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
 
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
+from agentmemory.operations.adapters.outbound import protected_file
 from agentmemory.operations.adapters.outbound.egress_attestation import (
     AuthenticatedEgressAttestationCheck,
+    _parse_time,
 )
 from agentmemory.operations.adapters.outbound.key_access import InstallationKeyAccessCheck
 from agentmemory.operations.adapters.outbound.protected_file import (
@@ -86,6 +90,44 @@ def test_protected_file_rejects_multiply_linked_secret(tmp_path: Path) -> None:
     with pytest.raises(OperationError) as raised:
         read_protected_file(target, frozenset({32}))
     assert raised.value.code is ErrorCode.FORBIDDEN
+
+
+@pytest.mark.parametrize("optional_flag", ["O_NOFOLLOW", "O_CLOEXEC"])
+def test_protected_file_preserves_descriptor_policy_without_optional_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    optional_flag: str,
+) -> None:
+    path = tmp_path / "secret"
+    write_secret(path, b"s" * 32)
+    monkeypatch.delattr(os, optional_flag)
+    assert protected_file.read_protected_file(path, frozenset({32})) == b"s" * 32
+
+
+@pytest.mark.parametrize(
+    "reads",
+    [
+        (bytearray(b"s" * 31),),
+        (bytearray(b"s" * 32), bytearray(b"t" * 32)),
+    ],
+)
+def test_protected_file_rejects_descriptor_length_and_content_races(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reads: tuple[bytearray, ...],
+) -> None:
+    path = tmp_path / "secret"
+    write_secret(path, b"s" * 32)
+    remaining = list(reads)
+
+    def next_read(descriptor: int, maximum_length: int) -> bytearray:
+        del descriptor, maximum_length
+        return remaining.pop(0)
+
+    monkeypatch.setattr(protected_file, "_read_descriptor", next_read)
+    with pytest.raises(OperationError) as raised:
+        protected_file.read_protected_file(path, frozenset({32}))
+    assert raised.value.code is ErrorCode.INTEGRITY_VIOLATION
 
 
 def test_protected_document_is_bounded_and_owner_only(tmp_path: Path) -> None:
@@ -190,6 +232,38 @@ async def test_egress_attestation_rejects_tampered_signature(tmp_path: Path) -> 
     check = AuthenticatedEgressAttestationCheck(attestation_file, key_file, FixedClock())
     with pytest.raises(ValueError, match="authentication failed"):
         await check.verify_default_denied(binding())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [b"{", b"[]", b'{"schema_version":1}'],
+)
+async def test_egress_attestation_rejects_invalid_json_and_schema_shapes(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    key_file = tmp_path / "installation-key"
+    attestation_file = tmp_path / "egress.json"
+    write_secret(key_file, b"i" * 32)
+    write_secret(attestation_file, payload)
+    check = AuthenticatedEgressAttestationCheck(attestation_file, key_file, FixedClock())
+    with pytest.raises(ValueError, match="attestation"):
+        await check.verify_default_denied(binding())
+
+
+@pytest.mark.parametrize("raw", [None, "not-a-timeZ"])
+def test_egress_attestation_rejects_non_rfc3339_times(raw: object) -> None:
+    with pytest.raises(ValueError, match="time is invalid"):
+        _parse_time(raw)
+
+
+@pytest.mark.asyncio
+async def test_installation_key_check_rejects_all_zero_material(tmp_path: Path) -> None:
+    key_file = tmp_path / "installation-key"
+    write_secret(key_file, bytes(32))
+    with pytest.raises(RuntimeError, match="all-zero"):
+        await InstallationKeyAccessCheck(key_file, "v1").verify(binding())
 
 
 def test_settings_pin_internal_services_and_derive_selected_port_hosts() -> None:

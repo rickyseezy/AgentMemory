@@ -10,6 +10,7 @@ import (
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/containerengine"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/composeplan"
 )
 
 func TestPF001ExecutionMaterializationRejectsUnsafeFilesAndParserInput(t *testing.T) {
@@ -199,4 +200,76 @@ func TestPF001BoundExecutionRejectsEmptySecretAndRootCollision(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPF001BoundExecutionRejectsEverySecretSubstitutionAndInvalidAuthorityShape(t *testing.T) {
+	t.Parallel()
+	project, rendered := composeFixture(t, "bound-secret-policy")
+	valid := validExecutionSecretValues()
+	for name, mutate := range map[string]func(map[string][]byte){
+		"unknown name": func(values map[string][]byte) {
+			delete(values, executionSecretName)
+			values["foreign-secret"] = make([]byte, 32)
+		},
+		"zero key":  func(values map[string][]byte) { values[executionSecretName] = make([]byte, 32) },
+		"short key": func(values map[string][]byte) { values[executionSecretName] = make([]byte, 31) },
+		"oversized key": func(values map[string][]byte) {
+			values[executionSecretName] = make([]byte, maximumExecutionSecretBytes+1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := validExecutionSecretValues()
+			mutate(values)
+			if execution, err := prepareBoundComposeExecution(context.Background(), project, rendered, values); err == nil {
+				execution.authority.close()
+				t.Fatal("substituted secret set accepted")
+			}
+		})
+	}
+	if execution, err := prepareBoundComposeExecution(
+		context.Background(), project, []byte(strings.Repeat("x", maximumDockerJSON+1)), valid,
+	); err == nil {
+		execution.authority.close()
+		t.Fatal("oversized canonical configuration accepted")
+	}
+	for _, test := range []struct {
+		name  string
+		value []byte
+		valid bool
+	}{
+		{"root key", bytesOf(0x11, 32), true},
+		{"zero", make([]byte, 32), false},
+		{"short", bytesOf(0x11, 31), false},
+		{"unknown", bytesOf(0x11, 32), false},
+		{"egress", []byte("attestation"), true},
+		{"egress empty", nil, false},
+	} {
+		name := executionSecretName
+		if test.name == "unknown" {
+			name = "unknown"
+		} else if strings.HasPrefix(test.name, "egress") {
+			name = composeplan.SecretEgressAttestation
+		}
+		if got := validExecutionSecret(name, test.value); got != test.valid {
+			t.Fatalf("validExecutionSecret(%s)=%v", test.name, got)
+		}
+	}
+	if authority, err := newExecutionMaterializationAuthority(
+		context.Background(), "", nil, "", nil, nil, nil, nil, nil,
+	); authority != nil || !errors.Is(err, containerengine.ErrInvalidComposeProject) {
+		t.Fatalf("empty authority=%v,%v", authority, err)
+	}
+	var absent *executionMaterializationAuthority
+	if err := absent.verify(context.Background()); !errors.Is(err, containerengine.ErrInvalidComposeProject) {
+		t.Fatalf("nil authority verify=%v", err)
+	}
+	absent.close()
+}
+
+func bytesOf(value byte, count int) []byte {
+	result := make([]byte, count)
+	for index := range result {
+		result[index] = value
+	}
+	return result
 }

@@ -29,6 +29,29 @@ func TestCanonicalPlanV1RoundTripsEveryDecisionInput(t *testing.T) {
 	}
 }
 
+func TestPF006RuntimePlanStrictJSONScannerRejectsEveryStructuralEdge(t *testing.T) {
+	t.Parallel()
+	deep := strings.Repeat("[", maximumPlanJSONDepth+2) + "0" + strings.Repeat("]", maximumPlanJSONDepth+2)
+	for name, document := range map[string]string{
+		"deep": deep, "duplicate": `{"a":0,"a":1}`, "truncated object": `{"a":0`,
+		"truncated array": `[0`, "trailing": `{} {}`, "invalid delimiter": `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := rejectPlanDuplicateKeys([]byte(document)); err == nil {
+				t.Fatal("ambiguous JSON accepted")
+			}
+		})
+	}
+	for _, document := range []string{`null`, `true`, `0`, `"value"`, `[]`, `[{},[1,2,3]]`, `{"a":[1,{"b":2}]}`} {
+		if err := rejectPlanDuplicateKeys([]byte(document)); err != nil {
+			t.Fatalf("valid structural JSON %s rejected: %v", document, err)
+		}
+	}
+	if parsePlanAction("foreign") != PlanActionUnknown || parseDecisionCode("foreign") != DecisionCode(255) {
+		t.Fatal("unknown canonical enums were not closed")
+	}
+}
+
 func TestDecodePlanV1RejectsUnsignedNormalizationAndContradictions(t *testing.T) {
 	t.Parallel()
 	plan, err := NewPlanV1(supportedHost(t), NewAbsentRuntimeDiscovery(), certifiedCatalog(t))

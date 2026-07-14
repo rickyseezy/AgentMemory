@@ -124,6 +124,31 @@ func TestPF001HostTargetValidationIsPlatformExact(t *testing.T) {
 	}
 }
 
+func TestPF001ReleasePolicyAllowsParentBoundOwnerStorageSelection(t *testing.T) {
+	t.Parallel()
+	input := hostPlanInput(t)
+	input.StorageTargetMode = StorageTargetOwnerSelected
+	input.StorageTarget = ""
+	plan, err := NewPlan(input)
+	if err != nil || plan.StorageTargetMode() != StorageTargetOwnerSelected || plan.StorageTarget() != "" {
+		t.Fatalf("owner-selected plan=%+v,%v", plan, err)
+	}
+	decoded, err := DecodePlan(plan.CanonicalBytes())
+	if err != nil || !decoded.Digest().Equal(plan.Digest()) {
+		t.Fatalf("owner-selected decode=%+v,%v", decoded, err)
+	}
+	observationInput := observationInput(plan)
+	observationInput.StorageTarget = "/home/another-user/.agentmemory"
+	observation, err := NewObservation(observationInput)
+	if err != nil || plan.Evaluate(observation) != FailureNone {
+		t.Fatalf("owner-selected observation=%v reason=%s", err, plan.Evaluate(observation))
+	}
+	input.StorageTarget = "/release-builder/path"
+	if _, err := NewPlan(input); err == nil {
+		t.Fatal("owner-selected policy accepted a release-machine path")
+	}
+}
+
 func TestPF001HostPlanCanonicalizationIsDeterministicProperty(t *testing.T) {
 	t.Parallel()
 	base := hostPlanInput(t)

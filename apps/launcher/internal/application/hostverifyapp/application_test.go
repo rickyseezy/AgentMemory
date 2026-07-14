@@ -169,7 +169,8 @@ func hostCommandFixture(t *testing.T) (Command, hostverification.Observation) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Command{OperationID: operationID, ParentPlanDigest: parent, SignedPlan: signed}, observation
+	return Command{OperationID: operationID, ParentPlanDigest: parent, SignedPlan: signed,
+		StorageTarget: signed.Plan().StorageTarget()}, observation
 }
 
 func mustObserved(t *testing.T, observation hostverification.Observation) hostverification.ProbeResult {
@@ -207,7 +208,7 @@ type nativeProbe struct {
 	last   hostverification.Plan
 }
 
-func (p *nativeProbe) ProbeHost(_ context.Context, plan hostverification.Plan) (hostverification.ProbeResult, error) {
+func (p *nativeProbe) ProbeHost(_ context.Context, plan hostverification.Plan, _ string) (hostverification.ProbeResult, error) {
 	p.calls++
 	p.last = plan
 	return p.result, p.err

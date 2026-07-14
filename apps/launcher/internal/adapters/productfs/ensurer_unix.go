@@ -447,11 +447,12 @@ func privateDirectoryIdentity(
 	if err := verifyNativeACL(directory); err != nil {
 		return unixObjectIdentity{}, err
 	}
-	if state.Dev < 0 {
+	device, ok := productDeviceIdentity(&state)
+	if !ok {
 		return unixObjectIdentity{}, productinstall.ErrIntegrity
 	}
 	return unixObjectIdentity{
-		device: uint64(state.Dev), // #nosec G115 -- native device identity is proven nonnegative above.
+		device: device,
 		inode:  state.Ino, mode: uint32(state.Mode), owner: state.Uid,
 	}, nil
 }

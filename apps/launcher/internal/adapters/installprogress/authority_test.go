@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
@@ -196,6 +197,78 @@ func TestPF001ProgressDecisionJournalRejectsTamperAndMapsFailures(t *testing.T) 
 	}
 }
 
+func TestPF001ProgressDecisionExecutionFailsClosedAtEveryDurabilityBoundary(t *testing.T) {
+	t.Parallel()
+	seed := newAuthorityFixture(t)
+	application, err := setupprogressapp.NewApplication(seed.binding, seed.authority, seed.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = application.Decide(context.Background(), setupprogressapp.DecisionInput{
+		PlanDigest: seed.binding.PlanDigest().String(), Decision: setupprogressapp.DecisionCancel,
+		IdempotencyKey: decisionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := seed.effect.command
+	if !command.Decision().Valid() {
+		t.Fatal("decision command was not captured")
+	}
+	decide := func(f authorityFixture) error {
+		_, err := f.authority.ApplyDecision(context.Background(), command)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	tests := []struct {
+		name   string
+		mutate func(*authorityFixture)
+		want   error
+	}{
+		{name: "nil journal", mutate: func(f *authorityFixture) {
+			f.authority.decisions = staticDecisionProvider{}
+		}},
+		{name: "effect unavailable", mutate: func(f *authorityFixture) {
+			f.effect.err = errors.New("private effect")
+		}},
+		{name: "effect cancelled", mutate: func(f *authorityFixture) {
+			f.effect.err = context.Canceled
+		}, want: context.Canceled},
+		{name: "append corrupt", mutate: func(f *authorityFixture) {
+			f.journal.appendErr = journalport.ErrCorrupt
+		}, want: setupprogressapp.ErrAuthorityIntegrity},
+		{name: "confirm conflict", mutate: func(f *authorityFixture) {
+			f.journal.confirmErr = journalport.ErrConflict
+		}, want: setupprogressapp.ErrAuthorityConflict},
+		{name: "zero clock", mutate: func(f *authorityFixture) {
+			f.authority.clock = zeroProgressClock{}
+		}, want: setupprogressapp.ErrAuthorityIntegrity},
+		{name: "CAS exhaustion", mutate: func(f *authorityFixture) {
+			f.journal.appendErr = journalport.ErrConflict
+		}, want: setupprogressapp.ErrAuthorityConflict},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newAuthorityFixture(t)
+			test.mutate(&fixture)
+			err := decide(fixture)
+			if err == nil || (test.want != nil && !errors.Is(err, test.want)) || strings.Contains(err.Error(), "private") {
+				t.Fatalf("ApplyDecision() error=%v, want=%v", err, test.want)
+			}
+		})
+	}
+
+	fixture := newAuthorityFixture(t)
+	fixture.authority.operations = &memoryOperations{operation: fixture.operations.operation, err: installapp.ErrOperationIntegrity}
+	if _, err := fixture.authority.CurrentSnapshot(context.Background(), fixture.binding); !errors.Is(err, setupprogressapp.ErrAuthorityIntegrity) {
+		t.Fatalf("integrity mapping error=%v", err)
+	}
+}
+
 func TestPF001ProgressSnapshotCanonicalDecoderRejectsNonCanonicalInput(t *testing.T) {
 	t.Parallel()
 	fixture := newAuthorityFixture(t)
@@ -319,15 +392,25 @@ type cancellingEffect struct {
 	operation *install.Operation
 	plan      install.PlanDigest
 	calls     int
+	err       error
+	command   setupprogressapp.DecisionCommand
 }
 
 func (e *cancellingEffect) ApplySetupDecision(_ context.Context, command setupprogressapp.DecisionCommand) error {
 	e.calls++
+	e.command = command
+	if e.err != nil {
+		return e.err
+	}
 	if command.Decision() != setupprogressapp.DecisionCancel {
 		return errors.New("unexpected decision")
 	}
 	return e.operation.Cancel(e.plan)
 }
+
+type zeroProgressClock struct{}
+
+func (zeroProgressClock) Now() time.Time { return time.Time{} }
 
 type fixedProgressClock struct{}
 

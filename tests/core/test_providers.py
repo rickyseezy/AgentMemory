@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, cast, override
 
 import httpx
 import pytest
@@ -41,6 +41,135 @@ _EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_MODEL = "Qwen/Qwen3-Reranker-0.6B"
 _EXTRACT_MODEL = "Qwen/Qwen3-4B-GGUF-Q4_K_M"
 _REVISION = "0123456789abcdef"
+
+
+@dataclass
+class _ProviderContractStub:
+    attestation: ProviderAttestation
+    vector_dimension: int = EMBEDDING_DIMENSION
+    rankings: tuple[RerankItem, ...] = (
+        RerankItem("relevant", Decimal("0.95")),
+        RerankItem("irrelevant", Decimal("0.05")),
+    )
+    subject: str = "persistent memory"
+
+    async def probe_identity(self) -> ProviderAttestation:
+        return self.attestation
+
+    async def probe(self) -> ProviderAttestation:
+        return self.attestation
+
+    async def embed_document(self, content_id: str, content: str) -> EmbeddingVector:
+        del content
+        return EmbeddingVector(
+            content_id,
+            (0.25,) * self.vector_dimension,
+            self.attestation.model_id,
+            self.attestation.model_revision,
+        )
+
+    async def embed_query(self, content_id: str, content: str) -> EmbeddingVector:
+        return await self.embed_document(content_id, content)
+
+    async def rerank(
+        self, query: str, documents: tuple[tuple[str, str], ...]
+    ) -> tuple[RerankItem, ...]:
+        del query, documents
+        return self.rankings
+
+    async def extract_subject(self, content: str) -> str:
+        del content
+        return self.subject
+
+
+def _provider_contract_stubs() -> tuple[
+    _ProviderContractStub, _ProviderContractStub, _ProviderContractStub
+]:
+    return tuple(
+        _ProviderContractStub(
+            ProviderAttestation(
+                role=role,
+                model_id=f"model-{role}",
+                model_revision=_REVISION,
+                dimension=EMBEDDING_DIMENSION if role == "embedding" else None,
+                supports_cancellation=True,
+                local_only=True,
+            )
+        )
+        for role in ("embedding", "reranking", "extraction")
+    )  # type: ignore[return-value]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_index", "field_name", "invalid_value"),
+    [
+        (0, "role", "wrong"),
+        (0, "dimension", 1),
+        (1, "role", "wrong"),
+        (2, "role", "wrong"),
+        (0, "local_only", False),
+        (1, "local_only", False),
+        (2, "local_only", False),
+    ],
+)
+async def test_local_provider_identity_rejects_each_independent_contract_drift(
+    provider_index: int,
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    providers = list(_provider_contract_stubs())
+    current = providers[provider_index].attestation
+    if field_name == "role":
+        providers[provider_index].attestation = replace(current, role=cast("str", invalid_value))
+    elif field_name == "dimension":
+        providers[provider_index].attestation = replace(
+            current, dimension=cast("int", invalid_value)
+        )
+    else:
+        providers[provider_index].attestation = replace(
+            current, local_only=cast("bool", invalid_value)
+        )
+    with pytest.raises(OperationError, match="identity probe failed"):
+        await LocalProviderIdentityCheck(*providers).verify(binding())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "embedding-role",
+        "reranking-role",
+        "extraction-role",
+        "embedding-dimension",
+        "vector-dimension",
+        "empty-ranking",
+        "wrong-ranking",
+        "wrong-subject",
+    ],
+)
+async def test_local_provider_behavior_rejects_each_independent_contract_drift(
+    drift: str,
+) -> None:
+    embeddings, reranker, extractor = _provider_contract_stubs()
+    if drift == "embedding-role":
+        embeddings.attestation = replace(embeddings.attestation, role="wrong")
+    elif drift == "reranking-role":
+        reranker.attestation = replace(reranker.attestation, role="wrong")
+    elif drift == "extraction-role":
+        extractor.attestation = replace(extractor.attestation, role="wrong")
+    elif drift == "embedding-dimension":
+        embeddings.attestation = replace(embeddings.attestation, dimension=1)
+    elif drift == "vector-dimension":
+        embeddings.vector_dimension = 1
+    elif drift == "empty-ranking":
+        reranker.rankings = ()
+    elif drift == "wrong-ranking":
+        reranker.rankings = (RerankItem("irrelevant", Decimal("0.95")),)
+    elif drift == "wrong-subject":
+        extractor.subject = "something else"
+    with pytest.raises(OperationError, match="behavior probe failed"):
+        await LocalProviderSetCheck(embeddings, reranker, extractor).verify(binding())
 
 
 def _streaming_json(payload: dict[str, object]) -> httpx.Response:

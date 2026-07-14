@@ -335,6 +335,70 @@ func TestPF001CapacityCompensationCanReleaseNeverRecordedReservation(t *testing.
 	}
 }
 
+func TestPF001CapacityEvidenceAccessorsPreserveExactMeasuredAuthority(t *testing.T) {
+	t.Parallel()
+	plan := testPlan(t)
+	host, _ := NewStoragePool("host-pool-1", "host-cas")
+	release, _ := NewStoragePool("release-pool-1", "host-release")
+	target, _ := NewStoragePool("docker-pool-1", "docker-engine")
+	leases, _ := plan.CapacityLeases("install-evidence", host, release, target, "/releases/release-1")
+	expanded := leaseForPurpose(t, leases, LeaseExpanded)
+
+	receipt, err := NewMeasuredLeaseReceipt(
+		expanded.ID(), expanded.Pool(), expanded.Bytes(), expanded.Bytes()+4, "measured-receipt", true,
+	)
+	if err != nil || receipt.LeaseID() != expanded.ID() || receipt.Pool() != expanded.Pool() ||
+		receipt.Bytes() != expanded.Bytes() || receipt.AllocatedBytes() != expanded.Bytes()+4 ||
+		receipt.Token() != "measured-receipt" || !receipt.Present() {
+		t.Fatalf("measured receipt=%+v,%v", receipt, err)
+	}
+	authorization, err := RestoreCapacityConsumeAuthorization(
+		expanded, receipt.Token(), receipt.AllocatedBytes(),
+	)
+	if err != nil || authorization.Lease() != expanded || authorization.ReceiptToken() != receipt.Token() ||
+		authorization.ReceiptAllocatedBytes() != receipt.AllocatedBytes() || !authorization.Valid() {
+		t.Fatalf("restored consume authority=%+v,%v", authorization, err)
+	}
+	if _, err := RestoreCapacityConsumeAuthorization(expanded, receipt.Token(), 1, 2); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("ambiguous allocated-byte restore error=%v", err)
+	}
+
+	missing, _ := NewMeasuredLeaseReceipt(
+		expanded.ID(), expanded.Pool(), expanded.Bytes(), receipt.AllocatedBytes(), receipt.Token(), false,
+	)
+	proof, err := NewMeasuredCapacityMutationProof(
+		missing, expanded.ExpectedTargetDigest(), expanded.Bytes(), expanded.Bytes(), expanded.Owner(),
+	)
+	if err != nil || proof.Receipt() != missing || !proof.TargetDigest().Equal(expanded.ExpectedTargetDigest()) ||
+		proof.UsageBytes() != expanded.Bytes() || proof.AllocatedBytes() != expanded.Bytes() || proof.Owner() != expanded.Owner() {
+		t.Fatalf("measured mutation proof=%+v,%v", proof, err)
+	}
+
+	aggregate, _ := NewCapacityAggregate("install-evidence", plan.Digest(), leases)
+	for _, lease := range leases {
+		measured, _ := NewMeasuredLeaseReceipt(
+			lease.ID(), lease.Pool(), lease.Bytes(), lease.Bytes()+4, "measured-receipt", true,
+		)
+		_, _ = aggregate.RecordReserved(lease, measured)
+	}
+	releases, err := aggregate.BeginReleaseRemainder()
+	if err != nil || len(releases) != len(leases) {
+		t.Fatalf("BeginReleaseRemainder()=%+v,%v", releases, err)
+	}
+	for _, releaseAuthorization := range releases {
+		lease := releaseAuthorization.Lease()
+		if !releaseAuthorization.Valid() || releaseAuthorization.FromState() != LeaseReserved ||
+			releaseAuthorization.Kind() != CapacityReleaseRemainder ||
+			releaseAuthorization.ReceiptToken() != "measured-receipt" ||
+			releaseAuthorization.ReceiptAllocatedBytes() != lease.Bytes()+4 ||
+			!releaseAuthorization.ExpectedTargetDigest().Equal(lease.ExpectedTargetDigest()) ||
+			releaseAuthorization.UsageBytes() != 0 || releaseAuthorization.AllocatedBytes() != 0 ||
+			releaseAuthorization.NewOwner() != "" {
+			t.Fatalf("release authority=%+v", releaseAuthorization)
+		}
+	}
+}
+
 func TestPF001CapacityRestoreRejectsTamperingAndImpossibleStates(t *testing.T) {
 	t.Parallel()
 	plan := testPlan(t)
@@ -345,10 +409,20 @@ func TestPF001CapacityRestoreRejectsTamperingAndImpossibleStates(t *testing.T) {
 	aggregate, _ := NewCapacityAggregate("install-restore", plan.Digest(), leases)
 	snapshot := aggregate.Snapshot()
 	for name, mutate := range map[string]func(*CapacityAggregateSnapshot){
-		"pool":      func(value *CapacityAggregateSnapshot) { value.Leases[0].PoolID = "substituted" },
-		"bytes":     func(value *CapacityAggregateSnapshot) { value.Leases[0].Bytes++ },
-		"state":     func(value *CapacityAggregateSnapshot) { value.Leases[0].State = string(LeaseConsumed) },
-		"duplicate": func(value *CapacityAggregateSnapshot) { value.Leases[1] = value.Leases[0] },
+		"pool":          func(value *CapacityAggregateSnapshot) { value.Leases[0].PoolID = "substituted" },
+		"bytes":         func(value *CapacityAggregateSnapshot) { value.Leases[0].Bytes++ },
+		"state":         func(value *CapacityAggregateSnapshot) { value.Leases[0].State = string(LeaseConsumed) },
+		"unknown state": func(value *CapacityAggregateSnapshot) { value.Leases[0].State = "foreign" },
+		"unknown lease": func(value *CapacityAggregateSnapshot) { value.Leases[0].LeaseID = "foreign" },
+		"duplicate":     func(value *CapacityAggregateSnapshot) { value.Leases[1] = value.Leases[0] },
+		"malformed target digest": func(value *CapacityAggregateSnapshot) {
+			value.Leases[0].TargetDigest = "not-a-digest"
+		},
+		"invalid operation": func(value *CapacityAggregateSnapshot) { value.OperationID = "invalid operation" },
+		"release batch without state": func(value *CapacityAggregateSnapshot) {
+			value.ReleaseBatches = 1
+			value.Version = 1
+		},
 		"version": func(value *CapacityAggregateSnapshot) {
 			value.Version = 0
 			value.Leases[0].State = string(LeaseReserved)

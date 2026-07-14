@@ -39,6 +39,18 @@ const (
 	ArchitectureARM64 Architecture = "arm64"
 )
 
+// StorageTargetMode defines where the concrete probe target is authorized.
+// Exact is retained for already-authored policies; owner_selected lets one
+// immutable release bind a per-user target in the parent installation plan.
+type StorageTargetMode string
+
+const (
+	// StorageTargetExact binds policy and plan to one signed absolute path.
+	StorageTargetExact StorageTargetMode = "exact"
+	// StorageTargetOwnerSelected lets the canonical per-host plan bind the path.
+	StorageTargetOwnerSelected StorageTargetMode = "owner_selected"
+)
+
 // LoopbackFamily identifies an exact local address family.
 type LoopbackFamily string
 
@@ -74,6 +86,7 @@ type Input struct {
 	MinimumCPUCores      uint32
 	MinimumMemoryBytes   uint64
 	MinimumFreeDiskBytes uint64
+	StorageTargetMode    StorageTargetMode
 	StorageTarget        string
 	RequiredPorts        []LoopbackEndpoint
 }
@@ -86,6 +99,7 @@ type canonicalPlan struct {
 	MinimumCPUCores      uint32             `json:"minimum_cpu_cores"`
 	MinimumMemoryBytes   uint64             `json:"minimum_memory_bytes"`
 	MinimumFreeDiskBytes uint64             `json:"minimum_free_disk_bytes"`
+	StorageTargetMode    StorageTargetMode  `json:"storage_target_mode"`
 	StorageTarget        string             `json:"storage_target"`
 	RequiredPorts        []LoopbackEndpoint `json:"required_loopback_ports"`
 }
@@ -100,6 +114,7 @@ type Plan struct {
 	minimumCPUCores      uint32
 	minimumMemoryBytes   uint64
 	minimumFreeDiskBytes uint64
+	storageTargetMode    StorageTargetMode
 	storageTarget        string
 	requiredPorts        []LoopbackEndpoint
 }
@@ -150,10 +165,16 @@ func DecodePlan(raw []byte) (Plan, error) {
 func documentFromInput(input Input) (canonicalPlan, error) {
 	ports := append([]LoopbackEndpoint(nil), input.RequiredPorts...)
 	slices.SortFunc(ports, compareEndpoint)
+	mode := input.StorageTargetMode
+	if mode == "" {
+		mode = StorageTargetExact
+	}
+	validStorage := mode == StorageTargetExact && validTarget(input.Platform.OperatingSystem, input.StorageTarget) ||
+		mode == StorageTargetOwnerSelected && input.StorageTarget == ""
 	if !validIdentifier(input.PolicyID) ||
 		!validIdentifier(input.SigningKeyID) || !validPlatform(input.Platform) ||
 		input.MinimumCPUCores == 0 || input.MinimumMemoryBytes == 0 ||
-		input.MinimumFreeDiskBytes == 0 || !validTarget(input.Platform.OperatingSystem, input.StorageTarget) ||
+		input.MinimumFreeDiskBytes == 0 || !validStorage ||
 		!validEndpoints(ports) {
 		return canonicalPlan{}, ErrIntegrity
 	}
@@ -161,7 +182,7 @@ func documentFromInput(input Input) (canonicalPlan, error) {
 		SchemaVersion: SupportedSchema,
 		PolicyID:      input.PolicyID, SigningKeyID: input.SigningKeyID, Platform: input.Platform,
 		MinimumCPUCores: input.MinimumCPUCores, MinimumMemoryBytes: input.MinimumMemoryBytes,
-		MinimumFreeDiskBytes: input.MinimumFreeDiskBytes, StorageTarget: input.StorageTarget,
+		MinimumFreeDiskBytes: input.MinimumFreeDiskBytes, StorageTargetMode: mode, StorageTarget: input.StorageTarget,
 		RequiredPorts: ports,
 	}, nil
 }
@@ -171,7 +192,7 @@ func planFromDocument(document canonicalPlan, supplied []byte) (Plan, error) {
 		PolicyID: document.PolicyID, SigningKeyID: document.SigningKeyID,
 		Platform: document.Platform, MinimumCPUCores: document.MinimumCPUCores,
 		MinimumMemoryBytes: document.MinimumMemoryBytes, MinimumFreeDiskBytes: document.MinimumFreeDiskBytes,
-		StorageTarget: document.StorageTarget, RequiredPorts: document.RequiredPorts,
+		StorageTargetMode: document.StorageTargetMode, StorageTarget: document.StorageTarget, RequiredPorts: document.RequiredPorts,
 	})
 	if err != nil {
 		return Plan{}, ErrIntegrity
@@ -187,7 +208,8 @@ func planFromDocument(document canonicalPlan, supplied []byte) (Plan, error) {
 		canonical: canonical, digest: install.DigestBytes(canonical),
 		policyID: normalized.PolicyID, signingKeyID: normalized.SigningKeyID, platform: normalized.Platform,
 		minimumCPUCores: normalized.MinimumCPUCores, minimumMemoryBytes: normalized.MinimumMemoryBytes,
-		minimumFreeDiskBytes: normalized.MinimumFreeDiskBytes, storageTarget: normalized.StorageTarget,
+		minimumFreeDiskBytes: normalized.MinimumFreeDiskBytes, storageTargetMode: normalized.StorageTargetMode,
+		storageTarget: normalized.StorageTarget,
 		requiredPorts: append([]LoopbackEndpoint(nil), normalized.RequiredPorts...),
 	}, nil
 }
@@ -326,6 +348,10 @@ func (p Plan) MinimumFreeDiskBytes() uint64 { return p.minimumFreeDiskBytes }
 // StorageTarget returns the exact owner-controlled probe target.
 func (p Plan) StorageTarget() string { return p.storageTarget }
 
+// StorageTargetMode returns whether the target is release-exact or selected
+// and bound by the per-host parent installation plan.
+func (p Plan) StorageTargetMode() StorageTargetMode { return p.storageTargetMode }
+
 // RequiredPorts returns a caller-owned copy of exact loopback endpoints.
 func (p Plan) RequiredPorts() []LoopbackEndpoint {
 	return append([]LoopbackEndpoint(nil), p.requiredPorts...)
@@ -337,7 +363,7 @@ func (p Plan) Valid() bool {
 		PolicyID: p.policyID, SigningKeyID: p.signingKeyID,
 		Platform: p.platform, MinimumCPUCores: p.minimumCPUCores,
 		MinimumMemoryBytes: p.minimumMemoryBytes, MinimumFreeDiskBytes: p.minimumFreeDiskBytes,
-		StorageTarget: p.storageTarget, RequiredPorts: p.requiredPorts,
+		StorageTargetMode: p.storageTargetMode, StorageTarget: p.storageTarget, RequiredPorts: p.requiredPorts,
 	})
 	return err == nil && bytes.Equal(rebuilt.canonical, p.canonical) && rebuilt.digest.Equal(p.digest)
 }

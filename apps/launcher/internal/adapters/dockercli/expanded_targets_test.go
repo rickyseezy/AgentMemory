@@ -165,6 +165,146 @@ func TestPF001DockerCapacityCancellationRoutesUntouchedConsumePendingReservation
 	}
 }
 
+func TestPF001SignedCapacityRoutersExerciseEveryAuthorizedLifecycleBoundary(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// The compatibility DockerCapacity composite delegates the complete
+	// reserve/revalidate/materialize/transfer lifecycle without changing the
+	// signed lease or its measured receipt.
+	runner := newCapacityLeaseRunner(t)
+	reservations, lease := newCapacityLeaseAdapter(t, runner, artifactacquisition.LeaseExpanded)
+	receipt, err := reservations.ReserveLease(ctx, lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, _ := artifactacquisition.NewCapacityAggregate(
+		lease.Owner(), lease.PlanDigest(), []artifactacquisition.CapacityLease{lease},
+	)
+	_, _ = aggregate.RecordReserved(lease, receipt)
+	consume, _, _ := aggregate.BeginConsume(lease.ID())
+	authority := explicitExpandedAuthority(t, consume)
+	expanded := newExpandedTargetAdapter(
+		t, SignedExpandedTargetAuthorityResolver{}, &memoryExpandedTargetRepository{},
+		&fakeExpandedTargetEngine{authority: authority, reservationPresent: true},
+	)
+	capacity, err := NewDockerCapacity(reservations, expanded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay, replayErr := capacity.ReserveLease(ctx, lease); replayErr != nil || replay.Token() != receipt.Token() {
+		t.Fatalf("ReserveLease replay=%+v,%v", replay, replayErr)
+	}
+	if replay, replayErr := capacity.RevalidateLease(ctx, lease); replayErr != nil || !replay.Present() {
+		t.Fatalf("RevalidateLease()=%+v,%v", replay, replayErr)
+	}
+	materialized, err := capacity.MaterializeExpanded(ctx, consume)
+	if err != nil || materialized.UsageBytes() != lease.Bytes() {
+		t.Fatalf("MaterializeExpanded()=%+v,%v", materialized, err)
+	}
+	transferred, err := capacity.TransferLease(ctx, lease, "generation-active")
+	if err != nil || transferred.Owner() != "generation-active" {
+		t.Fatalf("TransferLease()=%+v,%v", transferred, err)
+	}
+
+	// Production CapacityLifecycle routes host-release targets and Docker
+	// headroom through distinct authorities, including normal and rejected
+	// combinations.
+	hostLease, hostConsume := expandedDockerAuthorization(t, "host-release-lifecycle")
+	hostReceipt, _ := artifactacquisition.NewLeaseReceipt(
+		hostLease.ID(), hostLease.Pool(), hostLease.Bytes(), hostConsume.ReceiptToken(), true,
+	)
+	hostAuthority := explicitExpandedAuthority(t, hostConsume)
+	hostExpanded := newExpandedTargetAdapter(
+		t, SignedExpandedTargetAuthorityResolver{}, &memoryExpandedTargetRepository{},
+		&fakeExpandedTargetEngine{authority: hostAuthority, reservationPresent: true},
+	)
+	host := &recordingCapacityPort{receipt: hostReceipt}
+	lifecycle, err := NewCapacityLifecycle(host, reservations, hostExpanded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed, routeErr := lifecycle.ReserveLease(ctx, hostLease); routeErr != nil || observed.Token() != hostReceipt.Token() {
+		t.Fatalf("host ReserveLease()=%+v,%v", observed, routeErr)
+	}
+	if observed, routeErr := lifecycle.RevalidateLease(ctx, hostLease); routeErr != nil || observed.Token() != hostReceipt.Token() {
+		t.Fatalf("host RevalidateLease()=%+v,%v", observed, routeErr)
+	}
+	if _, routeErr := lifecycle.MaterializeExpanded(ctx, hostConsume); routeErr != nil {
+		t.Fatalf("host MaterializeExpanded()=%v", routeErr)
+	}
+	if _, routeErr := lifecycle.TransferLease(ctx, hostLease, "generation-active"); routeErr != nil {
+		t.Fatalf("host TransferLease()=%v", routeErr)
+	}
+
+	dockerRunner := newCapacityLeaseRunner(t)
+	dockerReservations, rollback := newCapacityLeaseAdapter(t, dockerRunner, artifactacquisition.LeaseRollback)
+	dockerLifecycle, err := NewCapacityLifecycle(host, dockerReservations, hostExpanded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerReceipt, err := dockerLifecycle.ReserveLease(ctx, rollback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = dockerLifecycle.RevalidateLease(ctx, rollback); err != nil {
+		t.Fatal(err)
+	}
+	dockerAggregate, _ := artifactacquisition.NewCapacityAggregate(
+		rollback.Owner(), rollback.PlanDigest(), []artifactacquisition.CapacityLease{rollback},
+	)
+	_, _ = dockerAggregate.RecordReserved(rollback, dockerReceipt)
+	_, _, _ = dockerAggregate.BeginTransfer(rollback.ID(), "generation-active")
+	dockerProof, err := dockerLifecycle.TransferLease(ctx, rollback, "generation-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = dockerAggregate.RecordTransferred(rollback.ID(), dockerProof)
+	releases, _ := dockerAggregate.BeginUninstall("generation-active", "installation-active")
+	if settled, releaseErr := dockerLifecycle.ReleaseCapacity(ctx, releases[0]); releaseErr != nil || settled.Present() {
+		t.Fatalf("docker ReleaseCapacity()=%+v,%v", settled, releaseErr)
+	}
+
+	foreignPool, _ := artifactacquisition.NewStoragePool("foreign-pool", "foreign-kind")
+	foreign, _ := artifactacquisition.NewCapacityLease(
+		"install-capacity", artifactacquisition.LeaseRollback, "install-capacity", "", foreignPool, 4096,
+		rollback.PlanDigest(), releaseinventory.Digest{}, 0, releaseinventory.Digest{},
+	)
+	if _, err := dockerLifecycle.ReserveLease(ctx, foreign); !errors.Is(err, artifactapp.ErrReservationUnsupported) {
+		t.Fatalf("foreign ReserveLease() error=%v", err)
+	}
+	if _, err := dockerLifecycle.RevalidateLease(ctx, foreign); !errors.Is(err, artifactapp.ErrReservationUnsupported) {
+		t.Fatalf("foreign RevalidateLease() error=%v", err)
+	}
+	if _, err := dockerLifecycle.TransferLease(ctx, foreign, "generation-active"); !errors.Is(err, artifactapp.ErrReservationUnsupported) {
+		t.Fatalf("foreign TransferLease() error=%v", err)
+	}
+}
+
+type recordingCapacityPort struct {
+	receipt artifactacquisition.LeaseReceipt
+}
+
+func (p *recordingCapacityPort) ReserveLease(context.Context, artifactacquisition.CapacityLease) (artifactacquisition.LeaseReceipt, error) {
+	return p.receipt, nil
+}
+
+func (p *recordingCapacityPort) RevalidateLease(context.Context, artifactacquisition.CapacityLease) (artifactacquisition.LeaseReceipt, error) {
+	return p.receipt, nil
+}
+
+func (p *recordingCapacityPort) TransferLease(
+	context.Context, artifactacquisition.CapacityLease, string,
+) (artifactacquisition.CapacityMutationProof, error) {
+	return artifactacquisition.CapacityMutationProof{}, nil
+}
+
+func (p *recordingCapacityPort) ReleaseCapacity(
+	context.Context, artifactacquisition.CapacityReleaseAuthorization,
+) (artifactacquisition.LeaseReceipt, error) {
+	return p.receipt, nil
+}
+
 type staticExpandedTargetAuthority struct {
 	authority artifactacquisition.ExpandedTargetAuthority
 }

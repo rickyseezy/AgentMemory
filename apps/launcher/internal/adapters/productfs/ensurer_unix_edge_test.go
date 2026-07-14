@@ -70,6 +70,9 @@ func TestPF001ProductFilesystemRejectsInvalidAndWeakenedNativeBoundaries(t *test
 func TestPF001ProductFilesystemNativeDescriptorEdgesFailClosed(t *testing.T) {
 	t.Parallel()
 	uid := uint32(os.Geteuid()) //nolint:gosec // Native UID fixture.
+	if _, valid := productDeviceIdentity(nil); valid {
+		t.Fatal("nil native device identity was accepted")
+	}
 	if _, err := privateDirectoryIdentity(context.Background(), nil, uid); !errors.Is(err, productinstall.ErrIntegrity) {
 		t.Fatalf("nil private directory error = %v", err)
 	}

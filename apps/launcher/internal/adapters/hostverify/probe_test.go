@@ -32,7 +32,7 @@ func TestPF001NativeProbeReturnsOnlyValidatedEvidenceOrClosedFailure(t *testing.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			probe := &NativeProbe{collector: test.collector}
-			result, err := probe.ProbeHost(context.Background(), plan)
+			result, err := probe.ProbeHost(context.Background(), plan, plan.StorageTarget())
 			if err != nil || !result.Valid() || result.Failure() != test.want {
 				t.Fatalf("ProbeHost() = %+v, %v", result, err)
 			}
@@ -43,19 +43,19 @@ func TestPF001NativeProbeReturnsOnlyValidatedEvidenceOrClosedFailure(t *testing.
 		})
 	}
 
-	if _, err := (&NativeProbe{}).ProbeHost(context.Background(), plan); err == nil {
+	if _, err := (&NativeProbe{}).ProbeHost(context.Background(), plan, plan.StorageTarget()); err == nil {
 		t.Fatal("uninitialized probe succeeded")
 	}
-	if _, err := (*NativeProbe)(nil).ProbeHost(context.Background(), plan); err == nil {
+	if _, err := (*NativeProbe)(nil).ProbeHost(context.Background(), plan, plan.StorageTarget()); err == nil {
 		t.Fatal("nil probe succeeded")
 	}
 	var absentContext context.Context
-	if _, err := (&NativeProbe{collector: fixedCollector{}}).ProbeHost(absentContext, plan); !errors.Is(err, context.Canceled) {
+	if _, err := (&NativeProbe{collector: fixedCollector{}}).ProbeHost(absentContext, plan, plan.StorageTarget()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil context error = %v", err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := (&NativeProbe{collector: fixedCollector{}}).ProbeHost(cancelled, plan); !errors.Is(err, context.Canceled) {
+	if _, err := (&NativeProbe{collector: fixedCollector{}}).ProbeHost(cancelled, plan, plan.StorageTarget()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled error = %v", err)
 	}
 	native := NewNativeProbe()
@@ -232,7 +232,7 @@ type fixedCollector struct {
 	reason hostverification.FailureReason
 }
 
-func (c fixedCollector) collect(context.Context, hostverification.Plan) (hostverification.ObservationInput, hostverification.FailureReason) {
+func (c fixedCollector) collect(context.Context, hostverification.Plan, string) (hostverification.ObservationInput, hostverification.FailureReason) {
 	return c.input, c.reason
 }
 
@@ -240,7 +240,7 @@ type closingCollector struct {
 	closed bool
 }
 
-func (*closingCollector) collect(context.Context, hostverification.Plan) (hostverification.ObservationInput, hostverification.FailureReason) {
+func (*closingCollector) collect(context.Context, hostverification.Plan, string) (hostverification.ObservationInput, hostverification.FailureReason) {
 	return hostverification.ObservationInput{}, hostverification.FailureEncryptionUnavailable
 }
 

@@ -35,8 +35,9 @@ type boundComposeExecution struct {
 }
 
 type privateComposeFileSnapshot struct {
-	identity os.FileInfo
-	contents []byte
+	identity      os.FileInfo
+	identityToken string
+	contents      []byte
 }
 
 type executionAncestorAuthority interface {
@@ -490,7 +491,8 @@ func snapshotOpenedComposeFile(
 		return privateComposeFileSnapshot{}, containerengine.ErrInvalidComposeProject
 	}
 	before, err := file.Stat()
-	if err != nil || before.Size() < 0 || before.Size() > int64(limit) {
+	beforeToken, tokenValid := composeNativeIdentity(before)
+	if err != nil || !tokenValid || before.Size() < 0 || before.Size() > int64(limit) {
 		return privateComposeFileSnapshot{}, containerengine.ErrInvalidComposeProject
 	}
 	contents, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
@@ -505,17 +507,19 @@ func snapshotOpenedComposeFile(
 	confirmation, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	defer zeroBytes(confirmation)
 	after, statError := file.Stat()
+	afterToken, afterTokenValid := composeNativeIdentity(after)
 	if err != nil || statError != nil || !bytes.Equal(contents, confirmation) ||
-		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		!afterTokenValid || beforeToken != afterToken || before.Size() != after.Size() ||
+		!before.ModTime().Equal(after.ModTime()) {
 		zeroBytes(contents)
 		return privateComposeFileSnapshot{}, containerengine.ErrInvalidComposeProject
 	}
-	return privateComposeFileSnapshot{identity: before, contents: contents}, nil
+	return privateComposeFileSnapshot{identity: before, identityToken: beforeToken, contents: contents}, nil
 }
 
 func samePrivateComposeFile(left privateComposeFileSnapshot, right privateComposeFileSnapshot) bool {
 	return left.identity != nil && right.identity != nil && os.SameFile(left.identity, right.identity) &&
-		bytes.Equal(left.contents, right.contents)
+		left.identityToken != "" && left.identityToken == right.identityToken && bytes.Equal(left.contents, right.contents)
 }
 
 func zeroBytes(value []byte) {

@@ -188,6 +188,49 @@ func TestPF001CapacityHelperResponseRejectsEveryIncompletePhysicalProof(t *testi
 	}
 }
 
+func TestPF001CapacityHelperJSONScannerAndArgumentParserCloseEveryStructuralEdge(t *testing.T) {
+	t.Parallel()
+	valid := mustHelperRequest(t, helperRequestInput(OperationReserve)).Arguments()
+	for name, arguments := range map[string][]string{
+		"unknown operation":  append([]string{"unknown"}, valid[1:]...),
+		"noncanonical bytes": func() []string { value := append([]string(nil), valid...); value[10] = "04096"; return value }(),
+		"overflow bytes": func() []string {
+			value := append([]string(nil), valid...)
+			value[10] = "18446744073709551616"
+			return value
+		}(),
+		"reserve extra":  append(append([]string(nil), valid...), "extra"),
+		"transfer short": append([]string{string(OperationTransfer)}, valid[1:]...),
+		"delete short":   append([]string{string(OperationDeleteProof)}, valid[1:]...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseArguments(arguments); err == nil {
+				t.Fatal("noncanonical arguments accepted")
+			}
+		})
+	}
+
+	deep := strings.Repeat("[", 18) + "0" + strings.Repeat("]", 18)
+	many := "[" + strings.Repeat("0,", 256) + "0]"
+	longKey := `{"` + strings.Repeat("k", 65) + `":0}`
+	for name, document := range map[string]string{
+		"deep": deep, "too many": many, "empty key": `{"":0}`, "long key": longKey,
+		"duplicate": `{"a":0,"a":1}`, "truncated object": `{"a":0`,
+		"truncated array": `[0`, "trailing": `{} {}`, "invalid delimiter": `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := rejectDuplicateKeys([]byte(document)); err == nil {
+				t.Fatal("ambiguous JSON accepted")
+			}
+		})
+	}
+	for _, document := range []string{`null`, `true`, `0`, `"value"`, `[]`, `[{},[1,2,3]]`, `{"a":[1,{"b":2}]}`} {
+		if err := rejectDuplicateKeys([]byte(document)); err != nil {
+			t.Fatalf("valid structural JSON %s rejected: %v", document, err)
+		}
+	}
+}
+
 func TestPF001CapacityHelperServiceRoutesOnlyClosedOperations(t *testing.T) {
 	t.Parallel()
 	store := &recordingHelperStore{}

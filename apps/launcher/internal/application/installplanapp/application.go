@@ -59,6 +59,7 @@ func (a *Application) ResolveHostVerificationPlan(
 	return installphase.HostVerificationPlan{
 		ParentPlanDigest: digest,
 		SignedHostPlan:   signed,
+		StorageTarget:    plan.HostStorageTarget(),
 		RuntimeOwnership: install.RuntimeOwnershipUndetermined,
 	}, nil
 }
@@ -90,6 +91,10 @@ func (a *Application) ResolveReleasePlan(
 	if err != nil {
 		return installphase.ReleaseVerificationPlan{}, err
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return installphase.ReleaseVerificationPlan{}, err
+	}
 	manifest := plan.SignedRelease().Manifest()
 	manifestDigest, err := install.ParseDigest(manifest.Digest().Hex())
 	if err != nil {
@@ -101,7 +106,7 @@ func (a *Application) ResolveReleasePlan(
 		ManifestDigest:   manifestDigest,
 		ReleaseSequence:  manifest.Sequence(),
 		SignedManifest:   plan.SignedRelease(),
-		RuntimeOwnership: plan.RuntimeOwnership(),
+		RuntimeOwnership: ownership,
 	}, nil
 }
 
@@ -111,6 +116,10 @@ func (a *Application) ResolveArtifactAcquisitionPlan(
 	digest install.PlanDigest,
 ) (installphase.ArtifactAcquisitionPlan, error) {
 	plan, err := a.load(ctx, digest)
+	if err != nil {
+		return installphase.ArtifactAcquisitionPlan{}, err
+	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
 	if err != nil {
 		return installphase.ArtifactAcquisitionPlan{}, err
 	}
@@ -132,7 +141,7 @@ func (a *Application) ResolveArtifactAcquisitionPlan(
 		AcquisitionPlanDigest: acquisitionDigest,
 		AcquisitionPlan:       acquisition,
 		ComposeArtifactID:     plan.ComposeArtifactID(),
-		RuntimeOwnership:      plan.RuntimeOwnership(),
+		RuntimeOwnership:      ownership,
 		SecretProjections:     projections,
 		HostCASCapacity:       artifactapp.CapacityTarget{Kind: artifactapp.CapacityHostCAS, Locator: capacity.HostCAS()},
 		HostReleaseCapacity:   artifactapp.CapacityTarget{Kind: artifactapp.CapacityHostRelease, Locator: capacity.HostRelease()},
@@ -147,6 +156,10 @@ func (a *Application) ResolveNetworkVolumePlan(
 	digest install.PlanDigest,
 ) (installphase.NetworkVolumePlan, error) {
 	plan, err := a.load(ctx, digest)
+	if err != nil {
+		return installphase.NetworkVolumePlan{}, err
+	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
 	if err != nil {
 		return installphase.NetworkVolumePlan{}, err
 	}
@@ -167,7 +180,7 @@ func (a *Application) ResolveNetworkVolumePlan(
 		Release:           manifest.ReleaseID(),
 		CreationOperation: plan.OperationID().String(),
 		Endpoint:          endpoint,
-		RuntimeOwnership:  plan.RuntimeOwnership(),
+		RuntimeOwnership:  ownership,
 		CapacityCommand: artifactapp.CapacityCommand{
 			OperationID: plan.OperationID().String(), ParentPlanDigest: digest,
 			InstallationID: plan.InstallationID(), ReleaseID: manifest.ReleaseID(), GenerationID: plan.GenerationID(),
@@ -195,6 +208,10 @@ func (a *Application) ResolveDirectoryCommand(
 	if operationID.IsZero() || operationID != plan.OperationID() || attempt == 0 {
 		return productinstall.DirectoryCommand{}, ErrPlanIntegrity
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return productinstall.DirectoryCommand{}, err
+	}
 	product := plan.Product()
 	inputs := []struct {
 		purpose productinstall.DirectoryPurpose
@@ -216,7 +233,7 @@ func (a *Application) ResolveDirectoryCommand(
 		directories = append(directories, specification)
 	}
 	command, err := productinstall.NewDirectoryCommand(
-		operationID, digest, attempt, plan.RuntimeOwnership(), directories,
+		operationID, digest, attempt, ownership, directories,
 	)
 	if err != nil {
 		return productinstall.DirectoryCommand{}, ErrPlanIntegrity
@@ -239,6 +256,10 @@ func (a *Application) ResolveSecretCommand(
 	if operationID.IsZero() || operationID != plan.OperationID() || attempt == 0 {
 		return productinstall.SecretCommand{}, ErrPlanIntegrity
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return productinstall.SecretCommand{}, err
+	}
 	product := plan.Product()
 	planSecrets := product.SecretFiles()
 	secrets := make([]productinstall.SecretSpec, 0, len(planSecrets))
@@ -252,7 +273,7 @@ func (a *Application) ResolveSecretCommand(
 		secrets = append(secrets, specification)
 	}
 	command, err := productinstall.NewSecretCommand(
-		operationID, digest, attempt, plan.RuntimeOwnership(), product.SecretDirectory(), secrets,
+		operationID, digest, attempt, ownership, product.SecretDirectory(), secrets,
 	)
 	if err != nil {
 		return productinstall.SecretCommand{}, ErrPlanIntegrity
@@ -278,6 +299,10 @@ func (a *Application) ResolveStackAuthorization(
 	if operationID.IsZero() || operationID != plan.OperationID() || attempt == 0 {
 		return productstack.Authorization{}, ErrPlanIntegrity
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return productstack.Authorization{}, err
+	}
 	endpoint, err := containerengine.NewEndpoint(plan.RuntimeEndpoint())
 	if err != nil {
 		return productstack.Authorization{}, ErrPlanIntegrity
@@ -300,7 +325,7 @@ func (a *Application) ResolveStackAuthorization(
 		return productstack.Authorization{}, ErrPlanIntegrity
 	}
 	authorization, err := productstack.NewAuthorization(
-		operation, operationID, digest, attempt, plan.RuntimeOwnership(), source,
+		operation, operationID, digest, attempt, ownership, source,
 	)
 	if err != nil {
 		return productstack.Authorization{}, ErrPlanIntegrity
@@ -324,6 +349,10 @@ func (a *Application) ResolveBrainBootstrapAuthorization(
 	if operationID.IsZero() || operationID != plan.OperationID() || attempt == 0 {
 		return brainbootstrap.Authorization{}, ErrPlanIntegrity
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return brainbootstrap.Authorization{}, err
+	}
 	product := plan.Product()
 	credentialPath := ""
 	for _, secret := range product.SecretFiles() {
@@ -338,7 +367,7 @@ func (a *Application) ResolveBrainBootstrapAuthorization(
 	}
 	authorization, err := brainbootstrap.NewAuthorization(brainbootstrap.AuthorizationInput{
 		OperationID: operationID, ParentPlan: digest, Attempt: attempt,
-		RuntimeOwnership: plan.RuntimeOwnership(), CoreEndpoint: product.CoreEndpoint(),
+		RuntimeOwnership: ownership, CoreEndpoint: product.CoreEndpoint(),
 		APICredentialPath: credentialPath, InstallationID: plan.InstallationID(),
 		OwnerPrincipalID: product.OwnerPrincipalID(), OwnerGrantID: product.OwnerGrantID(),
 		OwnerSubjectDigest: product.OwnerSubjectDigest(), BrainID: product.InitialBrainID(),
@@ -360,6 +389,10 @@ func (a *Application) ResolveReadinessPlan(
 	if err != nil {
 		return installphase.ReadinessPlan{}, err
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return installphase.ReadinessPlan{}, err
+	}
 	manifest := plan.SignedRelease().Manifest()
 	manifestDigest, err := install.ParseDigest(manifest.Digest().Hex())
 	if err != nil {
@@ -369,7 +402,7 @@ func (a *Application) ResolveReadinessPlan(
 		ctx, plan, plan.OperationID(), install.PhaseEnsureCoreAndGraph,
 	)
 	if err != nil || coreEvidence.VerifiedArtifactDigest().IsZero() ||
-		coreEvidence.RuntimeOwnership() != plan.RuntimeOwnership() {
+		coreEvidence.RuntimeOwnership() != ownership {
 		return installphase.ReadinessPlan{}, ErrPlanIntegrity
 	}
 	credentialPath := ""
@@ -390,7 +423,7 @@ func (a *Application) ResolveReadinessPlan(
 		ComposeDigest:     coreEvidence.VerifiedArtifactDigest(),
 		CoreEndpoint:      plan.Product().CoreEndpoint(),
 		APICredentialPath: credentialPath,
-		RuntimeOwnership:  plan.RuntimeOwnership(),
+		RuntimeOwnership:  ownership,
 	}, nil
 }
 
@@ -408,6 +441,10 @@ func (a *Application) ResolveAgentConfigurationPlan(
 	if operationID.IsZero() || operationID != plan.OperationID() || attempt == 0 {
 		return installphase.AgentConfigurationPlan{}, ErrPlanIntegrity
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return installphase.AgentConfigurationPlan{}, err
+	}
 	projection := plan.AgentConfiguration()
 	location, err := agentconfigport.NewConfigLocation(projection.ConfigLocation())
 	if err != nil {
@@ -421,7 +458,7 @@ func (a *Application) ResolveAgentConfigurationPlan(
 	}
 	result, err := installphase.NewAgentConfigurationPlan(
 		digest, operationID, attempt, location, target,
-		projection.ExpectedManagedEntryDigest(), plan.RuntimeOwnership(),
+		projection.ExpectedManagedEntryDigest(), ownership,
 	)
 	if err != nil {
 		return installphase.AgentConfigurationPlan{}, ErrPlanIntegrity
@@ -498,9 +535,13 @@ func (a *Application) ResolveActivationPlan(
 	if err != nil {
 		return installphase.ActivationPlan{}, err
 	}
+	ownership, err := a.resolvedRuntimeOwnership(ctx, plan)
+	if err != nil {
+		return installphase.ActivationPlan{}, err
+	}
 	operation, readinessEvidence, err := a.loadOperationEvidence(ctx, plan, operationID, install.PhaseVerifyReadiness)
 	if err != nil || !operationAllowsActivation(operation) || !readinessEvidence.RuntimeOwnership().Resolved() ||
-		readinessEvidence.RuntimeOwnership() != plan.RuntimeOwnership() {
+		readinessEvidence.RuntimeOwnership() != ownership {
 		return installphase.ActivationPlan{}, ErrActivationEvidenceUnavailable
 	}
 	receipt, err := a.readinessReceipts.LoadReadinessReceipt(ctx, readinessEvidence.OutputDigest())
@@ -514,7 +555,7 @@ func (a *Application) ResolveActivationPlan(
 	}
 	_, coreEvidence, err := a.loadOperationEvidence(ctx, plan, operationID, install.PhaseEnsureCoreAndGraph)
 	if err != nil || coreEvidence.VerifiedArtifactDigest().IsZero() ||
-		coreEvidence.RuntimeOwnership() != plan.RuntimeOwnership() {
+		coreEvidence.RuntimeOwnership() != ownership {
 		return installphase.ActivationPlan{}, ErrActivationEvidenceUnavailable
 	}
 	composeDigest := coreEvidence.VerifiedArtifactDigest()
@@ -547,7 +588,7 @@ func (a *Application) ResolveActivationPlan(
 		ReadinessReceiptDigest: receipt.Digest(), RuntimeEndpoint: plan.RuntimeEndpoint(),
 		ReleaseSequence: manifest.Sequence(), ResourceInventoryVersion: inventory.Version(),
 		ResourceInventoryDigest: inventoryDigest, SecurityEpoch: plan.SecurityEpoch(),
-		RuntimeOwnership: plan.RuntimeOwnership(),
+		RuntimeOwnership: ownership,
 		CapacityCommand: artifactapp.CapacityCommand{
 			OperationID: operationID.String(), ParentPlanDigest: digest,
 			InstallationID: plan.InstallationID(), ReleaseID: manifest.ReleaseID(), GenerationID: plan.GenerationID(),
@@ -620,6 +661,28 @@ func (a *Application) loadOperationEvidence(
 		}
 	}
 	return nil, install.StepEvidence{}, ErrPlanIntegrity
+}
+
+// resolvedRuntimeOwnership keeps pristine plans immutable: discovery decides
+// ownership once, and every later projection derives it from authenticated
+// EnsureContainerRuntime evidence instead of a release-build assumption.
+func (a *Application) resolvedRuntimeOwnership(
+	ctx context.Context,
+	plan installplan.Plan,
+) (install.RuntimeOwnership, error) {
+	if plan.RuntimeOwnership().Resolved() {
+		return plan.RuntimeOwnership(), nil
+	}
+	if plan.RuntimeOwnership() != install.RuntimeOwnershipUndetermined {
+		return install.RuntimeOwnershipUnknown, ErrPlanIntegrity
+	}
+	_, evidence, err := a.loadOperationEvidence(
+		ctx, plan, plan.OperationID(), install.PhaseEnsureContainerRuntime,
+	)
+	if err != nil || !evidence.RuntimeOwnership().Resolved() {
+		return install.RuntimeOwnershipUnknown, ErrPlanIntegrity
+	}
+	return evidence.RuntimeOwnership(), nil
 }
 
 func runtimeProjection(

@@ -777,6 +777,69 @@ func fixtureSubjectInput(id string, kind ResourceKind, platform Platform, digest
 	return input
 }
 
+func TestPF001ResourceConstructorReachesEveryDeepCrossBindingRejection(t *testing.T) {
+	t.Parallel()
+	digest := digestText("deep-resource")
+	platform := mustPlatform(t, "linux", "amd64")
+	base := fixtureSubjectInput("compose-deep", ResourceKindComposeBundle, platform, digest, 64)
+	base.CycloneDXSBOMResourceID = "compose-deep-cyclonedx"
+	base.SPDXSBOMResourceID = "compose-deep-spdx"
+	base.ProvenanceResourceID = "compose-deep-provenance"
+	base.LicenseResourceID = "compose-deep-licenses"
+	base.VulnerabilityResourceID = "compose-deep-vulnerabilities"
+	if _, err := NewResource(base); err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func() ResourceInput{
+		"unsafe size":               func() ResourceInput { v := base; v.Size = uint64(1 << 53); return v },
+		"missing evidence":          func() ResourceInput { v := base; v.CycloneDXSBOMResourceID = ""; return v },
+		"subject qualification":     func() ResourceInput { v := base; v.QualificationResult = QualificationResultPassed; return v },
+		"non OCI index":             func() ResourceInput { v := base; v.OCIIndexDigest = digest; v.OCIIndexResourceID = "index"; return v },
+		"invalid compose expansion": func() ResourceInput { v := base; v.ExpandedTarget.Bytes++; return v },
+		"non compose expansion": func() ResourceInput {
+			v := base
+			v.Kind = ResourceKindMigration
+			v.Purpose = expectedPurpose(v.Kind)
+			v.MediaType = expectedMediaType(v.Kind)
+			return v
+		},
+	}
+	evidence := ResourceInput{ID: "subject-cyclonedx", Kind: ResourceKindCycloneDXSBOM,
+		Purpose: expectedPurpose(ResourceKindCycloneDXSBOM), MediaType: expectedMediaType(ResourceKindCycloneDXSBOM),
+		Digest: digest, Size: 1, SourceRef: "bundle://subject-cyclonedx", SourceAllowlist: []string{"bundle://subject-cyclonedx"},
+		SubjectResourceID: "subject", SubjectDigest: digest}
+	tests["evidence attestations"] = func() ResourceInput { v := evidence; v.CycloneDXSBOMResourceID = "foreign"; return v }
+	tests["evidence subject"] = func() ResourceInput { v := evidence; v.SubjectResourceID = ""; return v }
+	oci := fixtureSubjectInput("image-deep", ResourceKindOCIImage, platform, digest, 64)
+	oci.CycloneDXSBOMResourceID, oci.SPDXSBOMResourceID = "image-cyclonedx", "image-spdx"
+	oci.ProvenanceResourceID, oci.LicenseResourceID, oci.VulnerabilityResourceID = "image-provenance", "image-licenses", "image-vulnerabilities"
+	tests["OCI index"] = func() ResourceInput { return oci }
+	tests["OCI digest ref"] = func() ResourceInput {
+		v := oci
+		v.OCIIndexDigest = digest
+		v.OCIIndexResourceID = "index"
+		v.SourceRef = "registry.example/image@sha256:" + digestText("other").Hex()
+		v.SourceAllowlist = []string{v.SourceRef}
+		return v
+	}
+	tests["OCI any platform"] = func() ResourceInput {
+		v := oci
+		v.OCIIndexDigest = digest
+		v.OCIIndexResourceID = "index"
+		v.Platform = Platform{}
+		return v
+	}
+	index := oci
+	index.Kind, index.Purpose, index.MediaType = ResourceKindOCIIndex, expectedPurpose(ResourceKindOCIIndex), expectedMediaType(ResourceKindOCIIndex)
+	index.OCIIndexDigest, index.OCIIndexResourceID, index.Platform = Digest{}, "", platform
+	tests["index exact platform"] = func() ResourceInput { return index }
+	for name, build := range tests {
+		if _, err := NewResource(build()); err == nil {
+			t.Fatalf("%s invalid cross-binding accepted", name)
+		}
+	}
+}
+
 func fixtureEvidenceResources(t testing.TB, subject ResourceInput) []Resource {
 	t.Helper()
 	types := []ResourceKind{

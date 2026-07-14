@@ -20,6 +20,10 @@ func TestPF001RecordedReservationRevalidationTracksEveryCrashRecoverableLayout(t
 		len(authorization.Expectations()) != 1 || authorization.Expectations()[0].Stage() != ReservationStageSlot {
 		t.Fatalf("AuthorizeReservationRevalidation()=(%+v,%v)", authorization, err)
 	}
+	expectation := authorization.Expectations()[0]
+	if expectation.Allocation().ArtifactID() != expectation.Artifact().ID() {
+		t.Fatalf("reservation expectation=%+v", expectation)
+	}
 	_, _ = aggregate.BeginArtifact(artifact)
 	authorization, err = aggregate.AuthorizeReservationRevalidation()
 	if err != nil || authorization.Expectations()[0].Stage() != ReservationStageTransferPending {

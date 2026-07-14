@@ -5,6 +5,7 @@ package artifactfs
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,6 +190,85 @@ func TestPF001ArtifactFSOfflineBundleReadsExactVerifiedRanges(t *testing.T) {
 		if _, err := fetcher.Fetch(context.Background(), artifact, artifact.Sources()[0], artifact.Chunks()[0]); !errors.Is(err, artifactapp.ErrFetchIntegrity) {
 			t.Fatalf("symlink bundle error=%v", err)
 		}
+	}
+}
+
+func TestPF001OfflineBundleStreamsExactReleaseResourcesFromRetainedAuthority(t *testing.T) {
+	t.Parallel()
+	base := resolvedTempDir(t)
+	root := filepath.Join(base, "bundle")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "release"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{"bomFormat":"CycloneDX"}`)
+	path := filepath.Join(root, "release", "core.cdx.json")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fetcher, err := NewBundleFetcher(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fetcher.Close() })
+	resource, err := releaseinventory.NewResource(releaseinventory.ResourceInput{
+		ID: "core-cyclonedx", Kind: releaseinventory.ResourceKindCycloneDXSBOM,
+		Purpose:   releaseinventory.ResourcePurposeCycloneDXSBOM,
+		MediaType: releaseinventory.MediaTypeCycloneDX, Digest: releaseinventory.DigestBytes(content),
+		Size: uint64(len(content)), SourceRef: "bundle://release/core.cdx.json",
+		SourceAllowlist:   []string{"bundle://release/core.cdx.json"},
+		SubjectResourceID: "core-image", SubjectDigest: releaseinventory.DigestBytes([]byte("subject")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := fetcher.OpenResource(context.Background(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := io.ReadAll(reader)
+	if err != nil || string(value) != string(content) {
+		t.Fatalf("resource bytes=%q error=%v", value, err)
+	}
+	if err := reader.Close(); err != nil || reader.Close() != nil {
+		t.Fatalf("resource close error=%v", err)
+	}
+
+	for _, input := range []struct {
+		name   string
+		ctx    context.Context
+		source string
+		size   uint64
+		want   error
+	}{
+		{name: "nil context", source: resource.SourceRef(), size: resource.Size(), want: artifactapp.ErrFetchIntegrity},
+		{name: "mutable transport", ctx: context.Background(), source: "https://example.com/core.cdx.json", size: resource.Size(), want: artifactapp.ErrFetchIntegrity},
+		{name: "empty path", ctx: context.Background(), source: "bundle://", size: resource.Size(), want: artifactapp.ErrFetchIntegrity},
+		{name: "absolute path", ctx: context.Background(), source: "bundle:///release/core.cdx.json", size: resource.Size(), want: artifactapp.ErrFetchIntegrity},
+		{name: "zero size", ctx: context.Background(), source: resource.SourceRef(), want: artifactapp.ErrFetchIntegrity},
+		{name: "wrong size", ctx: context.Background(), source: resource.SourceRef(), size: resource.Size() + 1, want: artifactapp.ErrFetchIntegrity},
+		{name: "missing", ctx: context.Background(), source: "bundle://release/missing.json", size: resource.Size(), want: artifactapp.ErrFetchUnavailable},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			opened, openError := fetcher.openExactResource(input.ctx, input.source, input.size)
+			if opened != nil || !errors.Is(openError, input.want) {
+				t.Fatalf("open=%v error=%v, want %v", opened, openError, input.want)
+			}
+		})
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if reader, err := fetcher.openExactResource(cancelled, resource.SourceRef(), resource.Size()); reader != nil || !errors.Is(err, artifactapp.ErrFetchIntegrity) {
+		t.Fatalf("cancelled open=%v error=%v", reader, err)
+	}
+	var absent *bundleResourceReader
+	if _, err := absent.Read(nil); !errors.Is(err, artifactapp.ErrFetchIntegrity) {
+		t.Fatalf("nil reader read error=%v", err)
+	}
+	if err := absent.Close(); !errors.Is(err, artifactapp.ErrFetchIntegrity) {
+		t.Fatalf("nil reader close error=%v", err)
 	}
 }
 

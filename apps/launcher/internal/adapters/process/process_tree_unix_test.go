@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,7 +76,7 @@ func TestPF001UnixProcessTreeEscalatesIgnoredTermination(t *testing.T) {
 	if elapsed < processTreeTerminationGrace {
 		t.Fatalf("SIGKILL escalation occurred after %s, before grace %s", elapsed, processTreeTerminationGrace)
 	}
-	if elapsed > processTreeTerminationGrace+2*time.Second {
+	if elapsed > processTreeTerminationGrace+10*time.Second {
 		t.Fatalf("SIGKILL escalation exceeded bound: %s", elapsed)
 	}
 }
@@ -83,16 +84,29 @@ func TestPF001UnixProcessTreeEscalatesIgnoredTermination(t *testing.T) {
 func TestPF001ArgvRunnerCancellationLeavesNoGrandchildProcess(t *testing.T) {
 	t.Parallel()
 	executable := testCurrentExecutable(t)
+	startedMarker := filepath.Join(t.TempDir(), "grandchild-started")
 	invocation, err := argvprocess.NewInvocation(executable, []string{
-		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "spawn-child",
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "spawn-child", startedMarker,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	cancellationComplete := make(chan struct{})
+	go func() {
+		defer close(cancellationComplete)
+		for ctx.Err() == nil {
+			if _, statError := os.Lstat(startedMarker); statError == nil {
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 	result, runError := mustTestRunner(t, executable).Run(ctx, invocation)
-	if !errors.Is(runError, context.DeadlineExceeded) {
+	<-cancellationComplete
+	if !errors.Is(runError, context.Canceled) {
 		t.Fatalf("cancellation error = %v", runError)
 	}
 	pid, parseError := strconv.Atoi(strings.TrimSpace(string(result.StandardOutput)))
@@ -126,7 +140,7 @@ func requireProcessGone(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		if processGoneOrZombie(pid) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

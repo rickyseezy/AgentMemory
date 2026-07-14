@@ -138,6 +138,8 @@ func (c *Compose) renderReleaseSource(
 type releaseSourceSnapshot struct {
 	configuration os.FileInfo
 	environment   os.FileInfo
+	configToken   string
+	envToken      string
 	digest        releaseinventory.Digest
 }
 
@@ -157,14 +159,18 @@ func snapshotReleaseSource(source containerengine.ComposeReleaseSource) (release
 	environmentInfo, environmentError := os.Lstat(environment)
 	contents, readError := os.ReadFile(configuration) //nolint:gosec // G304: exact absolute owner-controlled path was validated above.
 	digest := releaseinventory.DigestBytes(contents)
+	configToken, configTokenValid := composeNativeIdentity(configurationInfo)
+	envToken, envTokenValid := composeNativeIdentity(environmentInfo)
 	if configurationError != nil || environmentError != nil || readError != nil ||
+		!configTokenValid || !envTokenValid ||
 		configurationInfo.Size() <= 0 || configurationInfo.Size() > maximumDockerJSON ||
 		environmentInfo.Size() != 0 || !privateComposePath(configuration, false) ||
 		!privateComposePath(environment, false) || !digest.Equal(source.SourceDigest()) {
 		return releaseSourceSnapshot{}, containerengine.ErrInvalidComposeProject
 	}
 	return releaseSourceSnapshot{
-		configuration: configurationInfo, environment: environmentInfo, digest: digest,
+		configuration: configurationInfo, environment: environmentInfo,
+		configToken: configToken, envToken: envToken, digest: digest,
 	}, nil
 }
 
@@ -172,7 +178,8 @@ func sameReleaseSource(source containerengine.ComposeReleaseSource, before relea
 	after, err := snapshotReleaseSource(source)
 	return err == nil && before.configuration != nil && before.environment != nil &&
 		os.SameFile(before.configuration, after.configuration) &&
-		os.SameFile(before.environment, after.environment) && before.digest.Equal(after.digest)
+		os.SameFile(before.environment, after.environment) && before.configToken == after.configToken &&
+		before.envToken == after.envToken && before.digest.Equal(after.digest)
 }
 
 var _ containerengine.ReleaseComposePort = (*Compose)(nil)

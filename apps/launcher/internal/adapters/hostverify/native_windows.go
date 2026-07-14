@@ -38,6 +38,7 @@ type nativeCollector struct{ bitLocker *bitLockerWorker }
 func (c *nativeCollector) collect(
 	ctx context.Context,
 	plan hostverification.Plan,
+	storageTarget string,
 ) (hostverification.ObservationInput, hostverification.FailureReason) {
 	if plan.Platform().OperatingSystem != hostverification.OperatingSystemWindows {
 		return hostverification.ObservationInput{}, hostverification.FailureUnsupportedPlatform
@@ -46,7 +47,7 @@ func (c *nativeCollector) collect(
 	if !ok {
 		return hostverification.ObservationInput{}, hostverification.FailurePlatformProofUnavailable
 	}
-	target, _, err := windowssecurity.OpenVerified(ctx, plan.StorageTarget(), true, false, true)
+	target, _, err := windowssecurity.OpenVerified(ctx, storageTarget, true, false, true)
 	if err != nil {
 		return hostverification.ObservationInput{}, hostverification.FailureTargetNotOwnerControlled
 	}
@@ -56,7 +57,7 @@ func (c *nativeCollector) collect(
 	if !ok || cpu == 0 {
 		return hostverification.ObservationInput{}, hostverification.FailureResourceProofUnavailable
 	}
-	path, err := windows.UTF16PtrFromString(plan.StorageTarget())
+	path, err := windows.UTF16PtrFromString(storageTarget)
 	if err != nil {
 		return hostverification.ObservationInput{}, hostverification.FailureResourceProofUnavailable
 	}
@@ -67,7 +68,7 @@ func (c *nativeCollector) collect(
 	if !windows.IsProcessorFeaturePresent(windows.PF_VIRT_FIRMWARE_ENABLED) {
 		return hostverification.ObservationInput{}, hostverification.FailureVirtualizationUnavailable
 	}
-	if c == nil || c.bitLocker == nil || !c.bitLocker.attest(ctx, plan.StorageTarget()) {
+	if c == nil || c.bitLocker == nil || !c.bitLocker.attest(ctx, storageTarget) {
 		return hostverification.ObservationInput{}, hostverification.FailureEncryptionUnavailable
 	}
 	if !attestLoopback(ctx, plan.RequiredPorts()) {
@@ -75,7 +76,7 @@ func (c *nativeCollector) collect(
 	}
 	return hostverification.ObservationInput{
 		Platform: platform, CPUCores: cpu, MemoryBytes: memory, FreeDiskBytes: availableToCaller,
-		StorageTarget: plan.StorageTarget(), Virtualization: hostverification.VirtualizationWindowsFirmware,
+		StorageTarget: storageTarget, Virtualization: hostverification.VirtualizationWindowsFirmware,
 		Encryption: hostverification.EncryptionBitLocker, AvailablePorts: plan.RequiredPorts(),
 	}, hostverification.FailureNone
 }

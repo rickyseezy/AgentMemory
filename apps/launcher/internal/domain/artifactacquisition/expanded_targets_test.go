@@ -20,12 +20,20 @@ func TestPF001ExpandedTargetLifecycleBindsSourceTargetOwnerAndExactUsage(t *test
 	if err != nil || target.State() != ExpandedTargetConsumePending || target.Version() != 0 {
 		t.Fatalf("NewExpandedTargetAggregate()=%+v,%v", target, err)
 	}
+	reserved := expandedObservation(t, authority, lease.Owner(), 0, false)
+	reserved.ReservationPresent = true
+	if changed, reconcileErr := target.ReconcileObservation(reserved); reconcileErr != nil || changed {
+		t.Fatalf("reserved reconciliation=%t,%v", changed, reconcileErr)
+	}
 	consumed := expandedObservation(t, authority, lease.Owner(), 6, true)
-	if changed, recordErr := target.RecordConsumed(consumed); recordErr != nil || !changed {
-		t.Fatalf("RecordConsumed()=%t,%v", changed, recordErr)
+	if changed, recordErr := target.ReconcileObservation(consumed); recordErr != nil || !changed {
+		t.Fatalf("consume reconciliation=%t,%v", changed, recordErr)
 	}
 	if target.MeasuredBytes() != 6 || target.CurrentOwner() != lease.Owner() {
 		t.Fatalf("consumed projection bytes=%d owner=%q", target.MeasuredBytes(), target.CurrentOwner())
+	}
+	if target.AllocatedBytes() != 6 {
+		t.Fatalf("consumed allocated bytes=%d", target.AllocatedBytes())
 	}
 	if changed, replayErr := target.RecordConsumed(consumed); replayErr != nil || changed {
 		t.Fatalf("RecordConsumed replay=%t,%v", changed, replayErr)
@@ -40,6 +48,9 @@ func TestPF001ExpandedTargetLifecycleBindsSourceTargetOwnerAndExactUsage(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if changed, reconcileErr := restored.ReconcileObservation(consumed); reconcileErr != nil || changed {
+		t.Fatalf("consumed reconciliation=%t,%v", changed, reconcileErr)
+	}
 	if changed, beginErr := restored.BeginTransfer("generation-active"); beginErr != nil || !changed {
 		t.Fatalf("BeginTransfer()=%t,%v", changed, beginErr)
 	}
@@ -47,12 +58,15 @@ func TestPF001ExpandedTargetLifecycleBindsSourceTargetOwnerAndExactUsage(t *test
 		restored.NewOwner() != "generation-active" || restored.Authority().TargetStorageID() != authority.TargetStorageID() {
 		t.Fatalf("BeginTransfer replay=%t,%v", changed, beginErr)
 	}
-	transferred := expandedObservation(t, authority, "generation-active", 6, true)
-	if changed, recordErr := restored.RecordTransferred(transferred); recordErr != nil || !changed {
-		t.Fatalf("RecordTransferred()=%t,%v", changed, recordErr)
+	if changed, reconcileErr := restored.ReconcileObservation(consumed); reconcileErr != nil || changed {
+		t.Fatalf("pre-transfer reconciliation=%t,%v", changed, reconcileErr)
 	}
-	if changed, recordErr := restored.RecordTransferred(transferred); recordErr != nil || changed {
-		t.Fatalf("RecordTransferred replay=%t,%v", changed, recordErr)
+	transferred := expandedObservation(t, authority, "generation-active", 6, true)
+	if changed, recordErr := restored.ReconcileObservation(transferred); recordErr != nil || !changed {
+		t.Fatalf("transfer reconciliation=%t,%v", changed, recordErr)
+	}
+	if changed, recordErr := restored.ReconcileObservation(transferred); recordErr != nil || changed {
+		t.Fatalf("transferred reconciliation=%t,%v", changed, recordErr)
 	}
 
 	capacity, _ := NewCapacityAggregate("install-expanded", lease.PlanDigest(), []CapacityLease{lease})
@@ -73,6 +87,9 @@ func TestPF001ExpandedTargetLifecycleBindsSourceTargetOwnerAndExactUsage(t *test
 	if changed, beginErr := restored.BeginRelease(releases[0]); beginErr != nil || changed {
 		t.Fatalf("BeginRelease replay=%t,%v", changed, beginErr)
 	}
+	if _, reconcileErr := restored.ReconcileObservation(transferred); !errors.Is(reconcileErr, ErrInvalidTransition) {
+		t.Fatalf("release-pending reconciliation error=%v", reconcileErr)
+	}
 	released := expandedObservation(t, authority, "generation-active", 6, false)
 	if changed, recordErr := restored.RecordReleased(released); recordErr != nil || !changed {
 		t.Fatalf("RecordReleased()=%t,%v", changed, recordErr)
@@ -82,6 +99,9 @@ func TestPF001ExpandedTargetLifecycleBindsSourceTargetOwnerAndExactUsage(t *test
 	}
 	if changed, recordErr := restored.RecordReleased(released); recordErr != nil || changed {
 		t.Fatalf("RecordReleased replay=%t,%v", changed, recordErr)
+	}
+	if changed, reconcileErr := restored.ReconcileObservation(released); reconcileErr != nil || changed {
+		t.Fatalf("released reconciliation=%t,%v", changed, reconcileErr)
 	}
 	if _, err := RestoreExpandedTargetAggregate(authority, restored.Snapshot()); err != nil {
 		t.Fatalf("restore released target: %v", err)

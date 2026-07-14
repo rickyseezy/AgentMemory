@@ -26,7 +26,6 @@ var (
 	errProjectionNetwork      = errors.New("protected projection failed: network-contract")
 	errProjectionInput        = errors.New("protected projection failed: input-contract")
 	errProjectionMetadata     = errors.New("protected projection failed: process-metadata-contract")
-	errProjectionVolume       = errors.New("protected projection failed: volume-contract")
 	errProjectionVolumeOpen   = errors.New("protected projection failed: volume-open-contract")
 	errProjectionVolumeList   = errors.New("protected projection failed: volume-inventory-contract")
 	errProjectionVolumeWrite  = errors.New("protected projection failed: volume-write-contract")

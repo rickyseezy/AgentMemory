@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
+from starlette.requests import Request
 
 from agentmemory.operations.adapters.inbound.http_api import (
     ApiDependencies,
+    _bootstrap_status,
+    _problem,
+    _request_size_rejection,
     create_app,
     export_openapi_schema,
 )
@@ -222,11 +227,74 @@ async def test_ready_requires_authentication_and_a_fresh_complete_receipt() -> N
     ) as client:
         denied = await client.get("/ready")
         ready = await client.get("/ready", headers={"Authorization": "Bearer valid"})
+        status_response = await client.get("/v1/status", headers={"Authorization": "Bearer valid"})
     assert denied.status_code == 401
     assert denied.headers["content-type"].startswith("application/problem+json")
     assert ready.status_code == 200
     assert ready.json() == {"ready": True}
-    assert runtime_readiness.calls == 1
+    assert status_response.json()["ready"] is True
+    assert runtime_readiness.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_ready_and_status_are_negative_before_first_receipt() -> None:
+    dependencies, _, runtime_readiness = _dependencies(stored_receipt=None)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(dependencies)),
+        base_url="http://127.0.0.1:9411",
+        headers={"Authorization": "Bearer valid"},
+    ) as client:
+        ready = await client.get("/ready")
+        status_response = await client.get("/v1/status")
+    assert ready.status_code == 503
+    assert ready.json() == {"ready": False}
+    assert status_response.json() == {"ready": False, "receipt": None}
+    assert runtime_readiness.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_status"),
+    [([], 411), ([(b"content-length", b"not-a-number")], 400)],
+)
+def test_request_framing_rejects_missing_or_invalid_content_length(
+    headers: list[tuple[bytes, bytes]], expected_status: int
+) -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/bootstrap",
+            "raw_path": b"/v1/bootstrap",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 9411),
+        }
+    )
+    rejection = _request_size_rejection(request)
+    assert rejection is not None
+    assert rejection.status_code == expected_status
+
+
+def test_http_helpers_cover_replay_status_and_generated_correlation() -> None:
+    assert _bootstrap_status(BootstrapDisposition.ALREADY_INITIALIZED) == 200
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/failure",
+            "raw_path": b"/failure",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 9411),
+        }
+    )
+    response = _problem(ErrorCode.VALIDATION, 400, "invalid", request)
+    payload = json.loads(bytes(response.body))
+    assert payload["correlation_id"]
 
 
 @pytest.mark.asyncio

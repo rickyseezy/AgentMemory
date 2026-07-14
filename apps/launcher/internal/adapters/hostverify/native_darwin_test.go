@@ -120,7 +120,7 @@ func TestPF001DarwinNativeCollectorFailsClosedAtEveryObservableBoundary(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, reason := (nativeCollector{}).collect(context.Background(), linuxPlan); reason != hostverification.FailureUnsupportedPlatform {
+	if _, reason := (nativeCollector{}).collect(context.Background(), linuxPlan, linuxPlan.StorageTarget()); reason != hostverification.FailureUnsupportedPlatform {
 		t.Fatalf("cross-platform reason = %q", reason)
 	}
 
@@ -133,7 +133,7 @@ func TestPF001DarwinNativeCollectorFailsClosedAtEveryObservableBoundary(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, reason := (nativeCollector{}).collect(context.Background(), missingPlan); reason != hostverification.FailureTargetNotOwnerControlled {
+	if _, reason := (nativeCollector{}).collect(context.Background(), missingPlan, missingPlan.StorageTarget()); reason != hostverification.FailureTargetNotOwnerControlled {
 		t.Fatalf("missing target reason = %q", reason)
 	}
 	if darwinEncryptionAttested("") {
@@ -166,7 +166,7 @@ func TestPF001DarwinNativeCollectorFailsClosedAtEveryObservableBoundary(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, reason := (nativeCollector{}).collect(context.Background(), localPlan)
+	_, reason := (nativeCollector{}).collect(context.Background(), localPlan, localPlan.StorageTarget())
 	switch reason {
 	case hostverification.FailureNone, hostverification.FailureResourceProofUnavailable,
 		hostverification.FailureVirtualizationUnavailable, hostverification.FailureEncryptionUnavailable,

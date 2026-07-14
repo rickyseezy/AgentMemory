@@ -11,6 +11,7 @@ import (
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
@@ -252,6 +253,38 @@ func TestPF001BoundCancellationUsesExactAggregateCASAuthority(t *testing.T) {
 	}
 }
 
+func TestPF001BoundAcceptAndRetryResumeOnlyTheExactPlanBoundInstaller(t *testing.T) {
+	t.Parallel()
+	binding, operation := nativeCancellationFixture(t)
+	repository := &nativeCancellationRepository{operation: operation}
+	supervisor := &nativeSupervisorStub{}
+	canonical := []byte("canonical plan")
+	control := &boundCancellation{
+		binding: binding, repository: repository, supervisor: supervisor, canonical: canonical,
+	}
+	for _, decision := range []setupprogressapp.Decision{
+		setupprogressapp.DecisionAccept, setupprogressapp.DecisionRetry,
+	} {
+		if err := invokeNativeDecision(t, control, binding, decision,
+			"018f47ab-9a77-7df0-8f4c-3e934c0a7d41"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if supervisor.calls.Load() != 2 || supervisor.command.OperationID != binding.OperationID().String() ||
+		string(supervisor.command.CanonicalPlan) != "canonical plan" {
+		t.Fatalf("resume calls=%d command=%+v", supervisor.calls.Load(), supervisor.command)
+	}
+	canonical[0] = 'X'
+	if string(supervisor.command.CanonicalPlan) != "canonical plan" {
+		t.Fatal("resume command aliased caller plan bytes")
+	}
+	supervisor.err = errors.New("private")
+	if err := invokeNativeDecision(t, control, binding, setupprogressapp.DecisionRetry,
+		"018f47ab-9a77-7df0-8f4c-3e934c0a7d42"); err == nil {
+		t.Fatal("failed supervisor accepted")
+	}
+}
+
 func TestPF001BoundCancellationRejectsEveryInvalidAuthorityResponse(t *testing.T) {
 	t.Parallel()
 	binding, operation := nativeCancellationFixture(t)
@@ -464,11 +497,12 @@ func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.
 	binding, _ := setupprogressapp.NewBinding(resolved.OperationID(), resolved.PlanDigest())
 	progress := progressApplication(t, binding)
 	controller, err := newNativeSetupController(context.Background(), progress)
-	if err != nil || controller == nil {
+	if err == nil && controller != nil {
+		if closeError := controller.Close(context.Background()); closeError != nil {
+			t.Fatalf("native controller Close() error=%v", closeError)
+		}
+	} else if browser, browserError := setuphost.NewBrowserOpener(); browserError == nil || browser != nil {
 		t.Fatalf("newNativeSetupController()=%T,%v", controller, err)
-	}
-	if err := controller.Close(context.Background()); err != nil {
-		t.Fatalf("native controller Close() error=%v", err)
 	}
 	if _, err := newNativeSetupController(context.Background(), nil); err == nil {
 		t.Fatal("nil progress setup controller succeeded")
@@ -601,6 +635,18 @@ type nativeCancellationRepository struct {
 	invalidIntent bool
 	requests      atomic.Int32
 	last          installapp.CancellationRequest
+}
+
+type nativeSupervisorStub struct {
+	command installapp.InstallCommand
+	calls   atomic.Int32
+	err     error
+}
+
+func (s *nativeSupervisorStub) EnsureRunning(_ context.Context, command installapp.InstallCommand) error {
+	s.command = command
+	s.calls.Add(1)
+	return s.err
 }
 
 func (r *nativeCancellationRepository) Load(context.Context, install.OperationID) (*install.Operation, error) {

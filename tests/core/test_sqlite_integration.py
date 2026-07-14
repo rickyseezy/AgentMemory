@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
 import json
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -9,11 +10,16 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
+from agentmemory.operations.adapters.outbound import sqlite_store
 from agentmemory.operations.adapters.outbound.readiness_status import SqliteReadinessStatusQuery
 from agentmemory.operations.adapters.outbound.sqlite_checks import (
     SqliteActiveBrainResolver,
     SqliteReadinessChecks,
     SqliteSemanticSmokeStore,
+)
+from agentmemory.operations.adapters.outbound.sqlite_store import (
+    SqliteObservation,
+    SqliteRuntimePolicy,
 )
 from agentmemory.operations.adapters.outbound.sqlite_uow import (
     SqliteCoreUnitOfWork,
@@ -469,5 +475,130 @@ async def test_sqlite_policy_observation_reports_live_pragmas(tmp_path: Path) ->
                 assert (await connection.exec_driver_sql("PRAGMA foreign_keys")).scalar_one() == 1
                 assert (await connection.exec_driver_sql("PRAGMA synchronous")).scalar_one() == 2
                 assert (await connection.exec_driver_sql("PRAGMA trusted_schema")).scalar_one() == 0
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_sqlite_policy_rejects_version_compile_and_pragma_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = migrated_store(tmp_path)
+    try:
+        observed = await store.observe_and_enforce_policy()
+        store.policy = SqliteRuntimePolicy((99, 0, 0), observed.compile_options)
+        with pytest.raises(OperationError) as version:
+            await store.observe_and_enforce_policy()
+        assert version.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
+
+        store.policy = SqliteRuntimePolicy(
+            (1, 0, 0), observed.compile_options | frozenset({"MISSING_OPTION"})
+        )
+        with pytest.raises(OperationError) as compile_options:
+            await store.observe_and_enforce_policy()
+        assert compile_options.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
+
+        store.policy = SqliteRuntimePolicy((1, 0, 0), frozenset())
+
+        async def drifted_observation(_connection: object) -> SqliteObservation:
+            return replace(observed, journal_mode="delete")
+
+        monkeypatch.setattr(sqlite_store, "_observe", drifted_observation)
+        with pytest.raises(OperationError) as pragma:
+            await store.observe_and_enforce_policy()
+        assert pragma.value.code is ErrorCode.INTEGRITY_VIOLATION
+    finally:
+        await store.close()
+
+
+class _ScalarResult:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one(self) -> object:
+        return self._value
+
+
+class _ScalarConnection:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    async def exec_driver_sql(self, statement: str) -> _ScalarResult:
+        del statement
+        return _ScalarResult(self._value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reader", "value"),
+    [(sqlite_store._scalar_text, 1), (sqlite_store._scalar_int, "1")],
+)
+async def test_sqlite_scalar_readers_reject_cross_typed_results(
+    reader: object,
+    value: object,
+) -> None:
+    with pytest.raises(OperationError, match="type was invalid"):
+        await reader(_ScalarConnection(value), "SELECT value")  # type: ignore[operator]
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_sqlite_readiness_rejects_ambiguous_brain_migrations_audit_and_status(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    try:
+        await _bootstrap(store)
+        checks = SqliteReadinessChecks(store, FixedClock(), tmp_path, tmp_path)
+
+        async with store.engine.begin() as connection:
+            await connection.execute(text("UPDATE brains SET status = 'deletion_pending'"))
+        with pytest.raises(OperationError, match="ambiguous"):
+            await SqliteActiveBrainResolver(store).get()
+
+        async with store.engine.begin() as connection:
+            await connection.execute(text("UPDATE alembic_version SET version_num = 'wrong'"))
+        with pytest.raises(Exception, match="migration_head_mismatch"):
+            await checks.migration_head(binding())
+
+        async with store.engine.begin() as connection:
+            await connection.execute(text("DROP TABLE alembic_version"))
+        with pytest.raises(Exception, match="migration_head_unavailable"):
+            await checks.migration_head(binding())
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_sqlite_readiness_rejects_audit_equivocation_and_non_text_status(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    try:
+        await _bootstrap(store)
+        checks = SqliteReadinessChecks(store, FixedClock(), tmp_path, tmp_path)
+        readiness_binding = binding()
+        await checks.audit_append(readiness_binding)
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE audit_events SET after_hash = :value"),
+                {"value": bytes.fromhex(digest("conflict").value)},
+            )
+        with pytest.raises(OperationError, match="conflicted"):
+            await checks.audit_append(readiness_binding)
+
+        factory = SqliteUnitOfWorkFactory(store, FixedClock())
+        async with factory() as unit_of_work:
+            await unit_of_work.receipts.add(receipt())
+            await unit_of_work.commit()
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE readiness_receipts SET record_json = CAST(x'00' AS BLOB)")
+            )
+        with pytest.raises(OperationError, match="malformed"):
+            await SqliteReadinessStatusQuery(store).latest()
     finally:
         await store.close()

@@ -61,11 +61,19 @@ func TestCanonicalPlanRoundTripsExactImmutableBindings(t *testing.T) {
 	capacity := decoded.Capacity()
 	network := decoded.Network()
 	agent := decoded.AgentConfiguration()
+	product := decoded.Product()
+	secrets := product.SecretFiles()
 	if capacity.HostCAS() == "" || capacity.DockerEngine() == "" || capacity.DockerDataVolume() == "" ||
+		capacity.HostRelease() == "" ||
 		network.InstallationID() != input.InstallationID || network.GenerationID() != input.GenerationID ||
 		network.RuntimeEndpoint() != input.RuntimeEndpoint || agent.ConfigLocation() == "" || agent.EntryID() == "" ||
 		agent.LauncherDigest().IsZero() || agent.LauncherPath() == "" ||
-		!agent.ExpectedManagedEntryDigest().IsZero() || decoded.SignedRelease().TrustRootID() == "" {
+		!agent.ExpectedManagedEntryDigest().IsZero() || decoded.SignedRelease().TrustRootID() == "" ||
+		product.ConfigurationDirectory() == "" || product.RuntimeDirectory() == "" ||
+		product.SecretDirectory() == "" || product.BackupDirectory() == "" ||
+		product.ComposeProjectDirectory() == "" || product.ComposeConfigurationPath() == "" ||
+		product.EmptyEnvironmentPath() == "" || product.EgressAttestationPath() == "" ||
+		secrets[0].Purpose() == "" || secrets[0].Path() == "" {
 		t.Fatal("immutable projection accessor lost a binding")
 	}
 }
@@ -110,7 +118,7 @@ func TestPlanRejectsMissingCrossBindingsAndMutableReleaseReference(t *testing.T)
 		{name: "installation", mutate: func(input *Input) { input.InstallationID = "not-uuid" }},
 		{name: "generation", mutate: func(input *Input) { input.GenerationID = "not-uuid" }},
 		{name: "remote endpoint", mutate: func(input *Input) { input.RuntimeEndpoint = "tcp://remote:2375" }},
-		{name: "unresolved ownership", mutate: func(input *Input) { input.RuntimeOwnership = install.RuntimeOwnershipUndetermined }},
+		{name: "unknown ownership", mutate: func(input *Input) { input.RuntimeOwnership = install.RuntimeOwnershipUnknown }},
 		{name: "host policy", mutate: func(input *Input) { input.SignedHostPlan = hostverification.SignedPlan{} }},
 		{name: "catalog binding", mutate: func(input *Input) { input.RuntimeCatalog.ResourceID = "compose" }},
 		{name: "compose binding", mutate: func(input *Input) { input.Artifacts.ComposeArtifactID = "runtime-catalog" }},
@@ -226,7 +234,7 @@ func TestDecodeRejectsInvalidEncodedEnvelopeAndOwnership(t *testing.T) {
 	}
 	canonical := plan.CanonicalBytes()
 	tests := [][]byte{
-		bytes.Replace(canonical, []byte(`"runtime_ownership":"provisioned_by_agentmemory"`), []byte(`"runtime_ownership":"undetermined"`), 1),
+		bytes.Replace(canonical, []byte(`"runtime_ownership":"provisioned_by_agentmemory"`), []byte(`"runtime_ownership":"unknown"`), 1),
 		bytes.Replace(canonical, []byte(`"signature":"`), []byte(`"signature":"*`), 1),
 		bytes.Replace(canonical, []byte(`"expected_managed_entry_digest":""`), []byte(`"expected_managed_entry_digest":"bad"`), 1),
 		bytes.Replace(canonical, []byte(`"expanded_digest":""`), []byte(`"expanded_digest":"bad"`), 1),
@@ -234,6 +242,49 @@ func TestDecodeRejectsInvalidEncodedEnvelopeAndOwnership(t *testing.T) {
 	for _, raw := range tests {
 		if _, err := DecodeV1(raw); err == nil {
 			t.Fatal("DecodeV1 accepted an invalid envelope or binding")
+		}
+	}
+}
+
+func TestPF001CanonicalInputDecoderExercisesEveryTrustEnvelopeRejection(t *testing.T) {
+	t.Parallel()
+	plan, err := NewV1(validPlanInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := canonicalPlan{}
+	if err := json.Unmarshal(plan.CanonicalBytes(), &base); err != nil {
+		t.Fatal(err)
+	}
+	encode := func(value []byte) string { return base64.StdEncoding.EncodeToString(value) }
+	tests := map[string]func(*canonicalPlan){
+		"operation":       func(d *canonicalPlan) { d.OperationID = "" },
+		"manifest base64": func(d *canonicalPlan) { d.Release.Manifest = "*" },
+		"manifest noncanonical": func(d *canonicalPlan) {
+			raw, _ := base64.StdEncoding.DecodeString(d.Release.Manifest)
+			d.Release.Manifest = encode(append([]byte(" "), raw...))
+		},
+		"manifest malformed":  func(d *canonicalPlan) { d.Release.Manifest = encode([]byte(`{}`)) },
+		"signature base64":    func(d *canonicalPlan) { d.Release.Signature = "*" },
+		"sigstore base64":     func(d *canonicalPlan) { d.Release.SigstoreBundle = "*" },
+		"revocation base64":   func(d *canonicalPlan) { d.Release.RevocationSet = "*" },
+		"trusted time base64": func(d *canonicalPlan) { d.Release.TrustedTimeEvidence = "*" },
+		"signed release":      func(d *canonicalPlan) { d.Release.Signature = encode(nil) },
+		"host plan base64":    func(d *canonicalPlan) { d.HostPolicy.Plan = "*" },
+		"host plan noncanonical": func(d *canonicalPlan) {
+			raw, _ := base64.StdEncoding.DecodeString(d.HostPolicy.Plan)
+			d.HostPolicy.Plan = encode(append([]byte(" "), raw...))
+		},
+		"host plan malformed":   func(d *canonicalPlan) { d.HostPolicy.Plan = encode([]byte(`{}`)) },
+		"host signature base64": func(d *canonicalPlan) { d.HostPolicy.Signature = "*" },
+		"signed host":           func(d *canonicalPlan) { d.HostPolicy.SigningKeyID = "foreign-key" },
+		"product":               func(d *canonicalPlan) { d.Product.SecretFiles = nil },
+	}
+	for name, mutate := range tests {
+		document := base
+		mutate(&document)
+		if _, err := inputFromDocument(document); err == nil {
+			t.Fatalf("%s trust-envelope mutation accepted", name)
 		}
 	}
 }
@@ -320,6 +371,39 @@ func FuzzDecodeCanonicalPlanV1(f *testing.F) {
 	})
 }
 
+func TestPF001InstallPlanStrictJSONScannerAndArithmeticRejectEveryStructuralEdge(t *testing.T) {
+	t.Parallel()
+	deep := strings.Repeat("[", maximumJSONDepth+2) + "0" + strings.Repeat("]", maximumJSONDepth+2)
+	for name, document := range map[string]string{
+		"deep": deep, "duplicate": `{"a":0,"a":1}`, "truncated object": `{"a":0`,
+		"truncated array": `[0`, "trailing": `{} {}`, "invalid delimiter": `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := rejectDuplicateJSONKeys([]byte(document)); err == nil {
+				t.Fatal("ambiguous JSON accepted")
+			}
+		})
+	}
+	for _, document := range []string{`null`, `true`, `0`, `"value"`, `[]`, `[{},[1,2,3]]`, `{"a":[1,{"b":2}]}`} {
+		if err := rejectDuplicateJSONKeys([]byte(document)); err != nil {
+			t.Fatalf("valid structural JSON %s rejected: %v", document, err)
+		}
+	}
+	if value, err := checkedAdd(maximumSafeJSONInt-1, 1); err != nil || value != maximumSafeJSONInt {
+		t.Fatalf("checkedAdd boundary=%d,%v", value, err)
+	}
+	for _, values := range [][2]uint64{
+		{maximumSafeJSONInt + 1, 0}, {0, maximumSafeJSONInt + 1}, {maximumSafeJSONInt, 1},
+	} {
+		if _, err := checkedAdd(values[0], values[1]); !errors.Is(err, ErrIntegrity) {
+			t.Fatalf("checkedAdd(%d,%d)=%v", values[0], values[1], err)
+		}
+	}
+	if _, err := parseOptionalReleaseDigest("bad"); err == nil {
+		t.Fatal("bad optional release digest accepted")
+	}
+}
+
 func validPlanInput(t testing.TB) Input {
 	t.Helper()
 	operation, err := install.NewOperationID("019f5f1f-0000-7abc-8123-0123456789ab")
@@ -385,6 +469,44 @@ func TestPF001PlanBindsAgentHostAcrossCanonicalRoundTrip(t *testing.T) {
 	input.AgentConfiguration.AgentHost = agentconfigdomain.AgentHost("unknown")
 	if _, err := NewV1(input); err == nil {
 		t.Fatal("NewV1 accepted an unknown agent host")
+	}
+}
+
+func TestPF001PlanBindsConcreteOwnerStorageOutsideReleasePolicy(t *testing.T) {
+	t.Parallel()
+	input := validPlanInput(t)
+	policyInput := hostverification.Input{
+		PolicyID: "host-policy-2026-07", SigningKeyID: "host-root-2026",
+		Platform: input.SignedHostPlan.Plan().Platform(), MinimumCPUCores: 4,
+		MinimumMemoryBytes: 8 << 30, MinimumFreeDiskBytes: 40 << 30,
+		StorageTargetMode: hostverification.StorageTargetOwnerSelected,
+		RequiredPorts:     input.SignedHostPlan.Plan().RequiredPorts(),
+	}
+	policy, err := hostverification.NewPlan(policyInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.SignedHostPlan, err = hostverification.NewSignedPlan(
+		policy, policy.SigningKeyID(), bytes.Repeat([]byte{0x24}, 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.HostStorageTarget = "/home/user/.agentmemory"
+	input.RuntimeOwnership = install.RuntimeOwnershipUndetermined
+	plan, err := NewV1(input)
+	if err != nil || plan.HostStorageTarget() != input.HostStorageTarget ||
+		plan.SignedHostPlan().Plan().StorageTarget() != "" ||
+		plan.RuntimeOwnership() != install.RuntimeOwnershipUndetermined {
+		t.Fatalf("owner-selected installation plan=%+v,%v", plan, err)
+	}
+	decoded, err := DecodeV1(plan.CanonicalBytes())
+	if err != nil || decoded.HostStorageTarget() != input.HostStorageTarget {
+		t.Fatalf("decoded target=%q error=%v", decoded.HostStorageTarget(), err)
+	}
+	input.HostStorageTarget = "/home/foreign/.agentmemory"
+	if _, err := NewV1(input); err == nil {
+		t.Fatal("plan accepted product paths outside its concrete storage target")
 	}
 }
 

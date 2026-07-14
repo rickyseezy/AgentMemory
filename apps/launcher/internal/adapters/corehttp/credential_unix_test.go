@@ -12,6 +12,9 @@ import (
 
 func TestPF001NativeCredentialSourceRequiresPrivateStableExact32ByteFile(t *testing.T) {
 	t.Parallel()
+	if _, valid := credentialDeviceIdentity(nil); valid {
+		t.Fatal("nil credential device identity was accepted")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)

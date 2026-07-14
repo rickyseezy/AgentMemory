@@ -11,7 +11,7 @@ import (
 )
 
 type collector interface {
-	collect(context.Context, hostverification.Plan) (hostverification.ObservationInput, hostverification.FailureReason)
+	collect(context.Context, hostverification.Plan, string) (hostverification.ObservationInput, hostverification.FailureReason)
 }
 
 type closeableCollector interface {
@@ -44,6 +44,7 @@ func (p *NativeProbe) Close(ctx context.Context) error {
 func (p *NativeProbe) ProbeHost(
 	ctx context.Context,
 	plan hostverification.Plan,
+	storageTarget string,
 ) (hostverification.ProbeResult, error) {
 	if ctx == nil {
 		return hostverification.ProbeResult{}, context.Canceled
@@ -51,10 +52,13 @@ func (p *NativeProbe) ProbeHost(
 	if err := ctx.Err(); err != nil {
 		return hostverification.ProbeResult{}, err
 	}
-	if p == nil || p.collector == nil || !plan.Valid() {
+	if p == nil || p.collector == nil || !plan.Valid() || storageTarget == "" {
 		return hostverification.ProbeResult{}, errors.New("native host probe is not initialized")
 	}
-	input, reason := p.collector.collect(ctx, plan)
+	if plan.StorageTargetMode() == hostverification.StorageTargetExact && storageTarget != plan.StorageTarget() {
+		return hostverification.ProbeResult{}, errors.New("native host probe target is unauthorized")
+	}
+	input, reason := p.collector.collect(ctx, plan, storageTarget)
 	if err := ctx.Err(); err != nil {
 		return hostverification.ProbeResult{}, err
 	}

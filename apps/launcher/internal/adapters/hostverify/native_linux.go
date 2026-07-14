@@ -28,6 +28,7 @@ type nativeCollector struct{}
 func (nativeCollector) collect(
 	ctx context.Context,
 	plan hostverification.Plan,
+	storageTarget string,
 ) (hostverification.ObservationInput, hostverification.FailureReason) {
 	if plan.Platform().OperatingSystem != hostverification.OperatingSystemLinux {
 		return hostverification.ObservationInput{}, hostverification.FailureUnsupportedPlatform
@@ -36,7 +37,7 @@ func (nativeCollector) collect(
 	if !ok {
 		return hostverification.ObservationInput{}, hostverification.FailurePlatformProofUnavailable
 	}
-	target, ok := openControlledTarget(ctx, plan.StorageTarget())
+	target, ok := openControlledTarget(ctx, storageTarget)
 	if !ok {
 		return hostverification.ObservationInput{}, hostverification.FailureTargetNotOwnerControlled
 	}
@@ -49,7 +50,7 @@ func (nativeCollector) collect(
 		return hostverification.ObservationInput{}, hostverification.FailureVirtualizationUnavailable
 	}
 	encryption, ok := linuxEncryption(target.file)
-	if !ok || !targetIdentityUnchanged(ctx, plan.StorageTarget(), target) {
+	if !ok || !targetIdentityUnchanged(ctx, storageTarget, target) {
 		return hostverification.ObservationInput{}, hostverification.FailureEncryptionUnavailable
 	}
 	if !attestLoopback(ctx, plan.RequiredPorts()) {
@@ -57,7 +58,7 @@ func (nativeCollector) collect(
 	}
 	return hostverification.ObservationInput{
 		Platform: platform, CPUCores: cpu, MemoryBytes: memory, FreeDiskBytes: target.freeBytes,
-		StorageTarget: plan.StorageTarget(), Virtualization: hostverification.VirtualizationKVM,
+		StorageTarget: storageTarget, Virtualization: hostverification.VirtualizationKVM,
 		Encryption: encryption, AvailablePorts: plan.RequiredPorts(),
 	}, hostverification.FailureNone
 }

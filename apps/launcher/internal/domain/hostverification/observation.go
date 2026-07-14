@@ -212,7 +212,7 @@ func (p Plan) Evaluate(observation Observation) FailureReason {
 	if observation.freeDiskBytes < p.minimumFreeDiskBytes {
 		return FailureInsufficientDisk
 	}
-	if observation.storageTarget != p.storageTarget {
+	if p.storageTargetMode == StorageTargetExact && observation.storageTarget != p.storageTarget {
 		return FailureTargetNotOwnerControlled
 	}
 	if !validProofKinds(observation.platform.OperatingSystem, observation.virtualization, observation.encryption) {

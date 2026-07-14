@@ -62,6 +62,29 @@ func TestPF001LauncherCompositionBuildsAndRunsOfficialBootstrapMCP(t *testing.T)
 	}
 }
 
+func TestPF001LauncherFirstStartInitializesThenResolvesExactProtectedAuthority(t *testing.T) {
+	t.Parallel()
+	resolved, runtime := launcherFixture(t)
+	resolver := &resolverStub{err: mcpbootstrapapp.ErrBootstrapNotFound}
+	initializer := &initializerStub{after: func() { resolver.err = nil; resolver.resolved = resolved }}
+	factory, err := NewFirstStartFactory(resolver, &runtimeFactoryStub{runtime: runtime}, initializer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex)
+	if err != nil || runner == nil || initializer.calls.Load() != 1 || resolver.calls.Load() != 2 {
+		t.Fatalf("BuildMCP()=%T,%v initialize=%d resolve=%d", runner, err, initializer.calls.Load(), resolver.calls.Load())
+	}
+	if _, err := NewFirstStartFactory(resolver, &runtimeFactoryStub{}, (*initializerStub)(nil)); !errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
+		t.Fatalf("typed nil initializer error=%v", err)
+	}
+	initializer.err = errors.New("private release path")
+	resolver.err = mcpbootstrapapp.ErrBootstrapNotFound
+	if _, err := factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) {
+		t.Fatalf("initializer failure error=%v", err)
+	}
+}
+
 func TestPF001LauncherFactoryRejectsIncompleteOrSubstitutedComposition(t *testing.T) {
 	t.Parallel()
 	resolved, runtime := launcherFixture(t)
@@ -252,10 +275,26 @@ func progressApplication(t testing.TB, binding setupprogressapp.Binding) *setupp
 type resolverStub struct {
 	resolved mcpbootstrapapp.ResolvedBootstrap
 	err      error
+	calls    atomic.Int32
 }
 
 func (r *resolverStub) ResolveBootstrap(context.Context, agentconfigdomain.AgentHost) (mcpbootstrapapp.ResolvedBootstrap, error) {
+	r.calls.Add(1)
 	return r.resolved, r.err
+}
+
+type initializerStub struct {
+	err   error
+	after func()
+	calls atomic.Int32
+}
+
+func (i *initializerStub) EnsureBootstrap(context.Context, agentconfigdomain.AgentHost) error {
+	i.calls.Add(1)
+	if i.err == nil && i.after != nil {
+		i.after()
+	}
+	return i.err
 }
 
 type runtimeFactoryStub struct {

@@ -244,6 +244,50 @@ func TestDesktopProvisionerFailsClosedOnMissingDependencyAuthorityAndCancellatio
 	}
 }
 
+func TestDesktopProvisionerEveryPhaseRejectsAnUnboundRequestBeforeNativeEffects(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	clock := &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)}
+	dependencies := desktopTestDependencies{
+		authority: authority, host: desktopHostEvidence(t, authority, true),
+		runtime: &desktopRuntimeFake{authority: authority}, consent: &desktopConsentFake{clock: clock},
+		consentRepository: &desktopConsentRepositoryFake{}, artifacts: &desktopArtifactFake{authority: authority},
+		mutation: &desktopMutationFake{clock: clock}, terms: &desktopTermsFake{}, launcher: &desktopLauncherFake{},
+		capabilities: &desktopCapabilitiesFake{}, clock: clock,
+	}
+	provisioner := newDesktopTestProvisioner(t, dependencies)
+	request := runtimeinstallapp.Request{}
+	phases := []struct {
+		name string
+		run  func(context.Context, runtimeinstallapp.Request) (runtimeinstallapp.Output, error)
+	}{
+		{name: "detect host", run: provisioner.DetectHost},
+		{name: "detect runtime", run: provisioner.DetectRuntime},
+		{name: "plan runtime", run: provisioner.PlanRuntime},
+		{name: "await consent", run: provisioner.AwaitRuntimeConsent},
+		{name: "acquire runtime", run: provisioner.AcquireRuntime},
+		{name: "verify artifact", run: provisioner.VerifyRuntimeArtifact},
+		{name: "install prerequisites", run: provisioner.InstallPrerequisites},
+		{name: "install runtime", run: provisioner.InstallRuntime},
+		{name: "await terms", run: provisioner.AwaitThirdPartyTerms},
+		{name: "start runtime", run: provisioner.StartRuntime},
+		{name: "verify capabilities", run: provisioner.VerifyRuntimeCapabilities},
+	}
+	for _, phase := range phases {
+		phase := phase
+		t.Run(phase.name, func(t *testing.T) {
+			if _, err := phase.run(context.Background(), request); !errors.Is(err, ErrProvisionIntegrity) {
+				t.Fatalf("unbound phase error=%v", err)
+			}
+		})
+	}
+	if dependencies.consent.calls != 0 || dependencies.artifacts.acquireCalls != 0 ||
+		dependencies.artifacts.verifyCalls != 0 || len(dependencies.mutation.operations) != 0 ||
+		dependencies.launcher.calls != 0 || dependencies.capabilities.calls != 0 {
+		t.Fatal("unbound requests reached a native effect")
+	}
+}
+
 func TestDesktopProvisionerInternalMappingsPreserveCancellationAndTypedDecisions(t *testing.T) {
 	t.Parallel()
 	provisioner := &DesktopProvisioner{}

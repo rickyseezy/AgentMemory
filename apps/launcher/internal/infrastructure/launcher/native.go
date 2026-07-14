@@ -16,6 +16,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphttp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
@@ -192,6 +193,8 @@ type cancellationRepository interface {
 type boundCancellation struct {
 	binding    setupprogressapp.Binding
 	repository cancellationRepository
+	supervisor firststartapp.InstallationSupervisor
+	canonical  []byte
 }
 
 func (c *boundCancellation) RequestCancellation(ctx context.Context) error {
@@ -234,7 +237,16 @@ func (c *boundCancellation) ApplySetupDecision(
 	case setupprogressapp.DecisionCancel, setupprogressapp.DecisionDecline:
 		return c.RequestCancellation(ctx)
 	case setupprogressapp.DecisionAccept, setupprogressapp.DecisionRetry:
-		return setupprogressapp.ErrAuthorityConflict
+		if nilAny(c.supervisor) || len(c.canonical) == 0 {
+			return setupprogressapp.ErrAuthorityConflict
+		}
+		if err := c.supervisor.EnsureRunning(ctx, installapp.InstallCommand{
+			OperationID:   c.binding.OperationID().String(),
+			CanonicalPlan: append([]byte(nil), c.canonical...),
+		}); err != nil {
+			return errors.New("installation resume authority is unavailable")
+		}
+		return nil
 	default:
 		return setupprogressapp.ErrAuthorityIntegrity
 	}
@@ -249,6 +261,7 @@ type nativeRuntimeFactory struct {
 	resources    *nativeResources
 	decodePlan   runtimePlanDecoder
 	setup        nativeSetupFactory
+	supervisor   firststartapp.InstallationSupervisor
 }
 
 type runtimePlanProjection struct {
@@ -357,7 +370,10 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 	if err != nil {
 		return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
-	cancellation := &boundCancellation{binding: binding, repository: f.operations}
+	cancellation := &boundCancellation{
+		binding: binding, repository: f.operations,
+		supervisor: f.supervisor, canonical: resolved.CanonicalPlan(),
+	}
 	authority, err := installprogress.NewAuthority(
 		binding, plan.totalBytes,
 		f.operations, f.decisions, cancellation, f.clock,

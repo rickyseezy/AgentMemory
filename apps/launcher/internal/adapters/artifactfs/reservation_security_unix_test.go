@@ -512,27 +512,31 @@ func TestPF001BundleFetcherDescriptorsSurviveRootSwapAndCloseIdempotently(t *tes
 	}
 }
 
-func TestPF001ReservationRejectsAllocatedLookingFileWithoutNativeProof(t *testing.T) {
+func TestPF001ReservationReplaysNativeAllocatedSlotAfterInterruptedJournalCommit(t *testing.T) {
 	t.Parallel()
 	root := resolvedTempDir(t)
 	store, err := NewStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !store.reservationSafe {
+		t.Skip("host filesystem cannot prove durable native allocation")
+	}
 	plan := fsPlan(t, []string{"bundle://release/core.bin"})
 	request := fsReservationRequest(t, "false-allocation-proof", plan)
-	headroom := request.RequiredBytes - request.DownloadBytes
-	path := filepath.Join(root, ".reservations", request.ReservationID+".reserve")
-	if err := os.WriteFile(path, make([]byte, headroom), 0o600); err != nil {
+	allocation := request.Allocations[0]
+	path := filepath.Join(root, ".reservations", allocation.SlotID()+".slot")
+	if err := os.WriteFile(path, make([]byte, allocation.Bytes()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(path)
 	allocated, blocksVisible := allocatedFileBytes(info)
-	if err != nil || !blocksVisible || allocated < headroom {
+	if err != nil || !blocksVisible || allocated < allocation.Bytes() {
 		t.Fatalf("fixture is not allocated-looking: info=%+v allocated=%d error=%v", info, allocated, err)
 	}
-	if _, err := store.Reserve(context.Background(), request); !errors.Is(err, artifactapp.ErrReservationOperation) {
-		t.Fatalf("allocated-looking unproven reservation error=%v", err)
+	proof, err := store.Reserve(context.Background(), request)
+	if err != nil || proof.ID() != request.ReservationID || proof.Bytes() != request.RequiredBytes {
+		t.Fatalf("interrupted allocation replay proof=%+v error=%v", proof, err)
 	}
 }
 

@@ -39,6 +39,12 @@ func TestPF001NativeSetupPrincipalIsStableBoundAndCancellable(t *testing.T) {
 
 func TestPF001BrowserOpenerUsesExactExecutableURLAndScrubbedEnvironment(t *testing.T) {
 	production, err := NewBrowserOpener()
+	if errors.Is(err, ErrBrowserUnavailable) {
+		if validateRootOwnedExecutable(nativeBrowserExecutable) == nil {
+			t.Fatal("trusted native browser executable was reported unavailable")
+		}
+		t.Skip("host image does not provide the fixed trusted desktop browser launcher")
+	}
 	if err != nil || production == nil {
 		t.Fatalf("NewBrowserOpener() = %v, %v", production, err)
 	}
@@ -109,6 +115,9 @@ func TestPF001BrowserOpenerRejectsInvalidAuthorityContextAndExecution(t *testing
 		return nil
 	}, os.Environ); !errors.Is(err, ErrBrowserUnavailable) {
 		t.Fatalf("newBrowserOpener(foreign executable) error = %v", err)
+	}
+	if validateRootOwnedExecutable(nativeBrowserExecutable) != nil {
+		t.Skip("host image does not provide the fixed trusted desktop browser launcher")
 	}
 	opener, err := newBrowserOpener(nativeBrowserExecutable, func(context.Context, string, string, []string) error {
 		return errors.New("private process failure")

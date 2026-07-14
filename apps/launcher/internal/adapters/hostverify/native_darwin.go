@@ -15,6 +15,7 @@ type nativeCollector struct{}
 func (nativeCollector) collect(
 	ctx context.Context,
 	plan hostverification.Plan,
+	storageTarget string,
 ) (hostverification.ObservationInput, hostverification.FailureReason) {
 	if plan.Platform().OperatingSystem != hostverification.OperatingSystemMacOS {
 		return hostverification.ObservationInput{}, hostverification.FailureUnsupportedPlatform
@@ -23,7 +24,7 @@ func (nativeCollector) collect(
 	if !ok {
 		return hostverification.ObservationInput{}, hostverification.FailurePlatformProofUnavailable
 	}
-	target, ok := openControlledTarget(ctx, plan.StorageTarget())
+	target, ok := openControlledTarget(ctx, storageTarget)
 	if !ok {
 		return hostverification.ObservationInput{}, hostverification.FailureTargetNotOwnerControlled
 	}
@@ -37,7 +38,7 @@ func (nativeCollector) collect(
 	if hypervisorError != nil || hypervisor != 1 {
 		return hostverification.ObservationInput{}, hostverification.FailureVirtualizationUnavailable
 	}
-	if !darwinEncryptionAttested(plan.StorageTarget()) || !targetIdentityUnchanged(ctx, plan.StorageTarget(), target) {
+	if !darwinEncryptionAttested(storageTarget) || !targetIdentityUnchanged(ctx, storageTarget, target) {
 		return hostverification.ObservationInput{}, hostverification.FailureEncryptionUnavailable
 	}
 	if !attestLoopback(ctx, plan.RequiredPorts()) {
@@ -45,7 +46,7 @@ func (nativeCollector) collect(
 	}
 	return hostverification.ObservationInput{
 		Platform: platform, CPUCores: cpu, MemoryBytes: memory, FreeDiskBytes: target.freeBytes,
-		StorageTarget: plan.StorageTarget(), Virtualization: hostverification.VirtualizationHypervisorFramework,
+		StorageTarget: storageTarget, Virtualization: hostverification.VirtualizationHypervisorFramework,
 		Encryption: hostverification.EncryptionFileVault, AvailablePorts: plan.RequiredPorts(),
 	}, hostverification.FailureNone
 }

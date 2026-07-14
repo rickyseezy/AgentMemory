@@ -46,6 +46,113 @@ func TestPF001InstallApplicationRejectsInvalidCommandsBeforeAcquiringLock(t *tes
 	}
 }
 
+func TestPF001InstallApplicationTerminalAndReservationPoliciesCoverEveryClosedOutcome(t *testing.T) {
+	t.Parallel()
+	newOperation := func() *install.Operation {
+		operationID, _ := install.NewOperationID("019f6f80-1234-7abc-8123-0123456789ab")
+		plan, _ := install.BindPlan([]byte("terminal policy plan"))
+		operation, err := install.NewOperation(operationID, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return operation
+	}
+	advanceToReservation := func(operation *install.Operation) {
+		application := &InstallApplication{}
+		for operation.CurrentPhase() < install.PhaseReserveSpace {
+			if _, _, err := application.applyOutput(operation, completedOutputForPhase(operation.CurrentPhase())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if reason, required := terminalReservationRelease(nil, PhaseOutcomeCancelled); required || reason != ReservationReleaseUnknown {
+		t.Fatal("nil operation acquired a reservation release")
+	}
+	beforeReservation := newOperation()
+	if reason, required := terminalReservationRelease(beforeReservation, PhaseOutcomeCancelled); required || reason != ReservationReleaseUnknown {
+		t.Fatal("pre-reservation operation acquired a release")
+	}
+	for _, test := range []struct {
+		outcome  PhaseOutcome
+		state    install.State
+		reason   ReservationReleaseReason
+		required bool
+	}{
+		{PhaseOutcomeCompleted, install.StateRunning, ReservationReleaseUnknown, false},
+		{PhaseOutcomeCancelled, install.StateCancelled, ReservationReleaseCancelled, true},
+		{PhaseOutcomeUnsupportedHost, install.StateUnsupportedHost, ReservationReleaseRollback, true},
+		{PhaseOutcomeRuntimeConflict, install.StateRuntimeConflict, ReservationReleaseRollback, true},
+		{PhaseOutcomeFailedRecoverable, install.StateFailedRecoverable, ReservationReleaseUnknown, false},
+		{PhaseOutcomeAdministratorRequired, install.StatePausedForAdministrator, ReservationReleaseUnknown, false},
+		{PhaseOutcomeRebootRequired, install.StateRebootPending, ReservationReleaseUnknown, false},
+		{PhaseOutcome(255), install.StateRunning, ReservationReleaseUnknown, false},
+	} {
+		operation := newOperation()
+		advanceToReservation(operation)
+		switch test.state {
+		case install.StateCancelled:
+			_ = operation.Cancel(operation.PlanDigest())
+		case install.StateUnsupportedHost:
+			_ = operation.MarkUnsupportedHost(operation.PlanDigest())
+		case install.StateRuntimeConflict:
+			_ = operation.MarkRuntimeConflict(operation.PlanDigest())
+		case install.StateFailedRecoverable:
+			_ = operation.FailRecoverable(operation.PlanDigest())
+		case install.StatePausedForAdministrator:
+			_ = operation.PauseForAdministrator(operation.PlanDigest())
+		case install.StateRebootPending:
+			checkpoint, _ := install.NewRebootCheckpoint(
+				operation.PlanDigest(), operation.CurrentPhase(), operation.Attempt(),
+				install.DigestBytes([]byte("resume")), mustSafeAction(t, "reboot.resume"),
+			)
+			_ = operation.MarkRebootPending(operation.PlanDigest(), checkpoint)
+		case install.StateUnknown, install.StateRunning, install.StateResumeVerified, install.StateReady:
+		}
+		reason, required := terminalReservationRelease(operation, test.outcome)
+		if reason != test.reason || required != test.required {
+			t.Fatalf("outcome=%v state=%v release=%v,%v", test.outcome, test.state, reason, required)
+		}
+	}
+
+	if _, _, terminal := replayableTerminalResult(nil); terminal {
+		t.Fatal("nil operation was replayable")
+	}
+	for _, state := range []install.State{
+		install.StateUnknown, install.StateRunning, install.StateFailedRecoverable,
+		install.StatePausedForAdministrator, install.StateRebootPending, install.StateResumeVerified,
+	} {
+		operation := newOperation()
+		switch state {
+		case install.StateFailedRecoverable:
+			_ = operation.FailRecoverable(operation.PlanDigest())
+		case install.StatePausedForAdministrator:
+			_ = operation.PauseForAdministrator(operation.PlanDigest())
+		case install.StateUnknown, install.StateRunning, install.StateRebootPending, install.StateResumeVerified,
+			install.StateCancelled, install.StateUnsupportedHost, install.StateRuntimeConflict, install.StateReady:
+		}
+		if _, _, terminal := replayableTerminalResult(operation); terminal {
+			t.Fatalf("state %v was terminal", state)
+		}
+	}
+
+	application := &InstallApplication{}
+	operation := newOperation()
+	if _, _, err := application.applyOutput(operation, PhaseOutput{}); err == nil {
+		t.Fatal("unknown phase output was accepted")
+	}
+	invalid := PhaseOutput{outcome: PhaseOutcome(255)}
+	if _, _, err := application.applyOutput(operation, invalid); err == nil {
+		t.Fatal("out-of-range phase output was accepted")
+	}
+	if _, err := application.dispatch(context.Background(), install.Phase(255), PhaseRequest{}); err == nil {
+		t.Fatal("out-of-range phase dispatch was accepted")
+	}
+	if aggregateContainsRequestedIntent(nil, CancellationIntent{}) {
+		t.Fatal("nil cancellation aggregate was accepted")
+	}
+}
+
 func TestPF001InstallApplicationSanitizesInfrastructureBoundaryFailures(t *testing.T) {
 	t.Parallel()
 

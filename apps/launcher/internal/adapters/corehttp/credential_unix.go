@@ -156,11 +156,12 @@ func credentialFileIdentity(file *os.File) (credentialIdentity, error) {
 	if file == nil || unix.Fstat(int(file.Fd()), &status) != nil {
 		return credentialIdentity{}, errCredentialUnavailable
 	}
-	if status.Dev < 0 {
+	device, ok := credentialDeviceIdentity(&status)
+	if !ok {
 		return credentialIdentity{}, errCredentialIntegrity
 	}
 	return credentialIdentity{
-		device: uint64(status.Dev), // #nosec G115 -- native device identity is proven nonnegative above.
+		device: device,
 		inode:  status.Ino, mode: uint32(status.Mode),
 		owner: status.Uid, links: uint64(status.Nlink), size: status.Size,
 	}, nil

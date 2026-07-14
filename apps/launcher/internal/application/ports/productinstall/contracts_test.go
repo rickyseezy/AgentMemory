@@ -20,7 +20,9 @@ func TestDirectoryCommandIsCanonicalImmutableAndPlanBound(t *testing.T) {
 	specs[0] = DirectorySpec{}
 	resolved := command.Directories()
 	if !command.Valid() || command.BindingDigest().IsZero() || len(resolved) != 6 ||
-		resolved[0].Purpose() != DirectoryBackups {
+		resolved[0].Purpose() != DirectoryBackups || resolved[0].Path() == "" ||
+		command.OperationID() != operationID || !command.ParentPlanDigest().Equal(planDigest) ||
+		command.Attempt() != 2 || command.RuntimeOwnership() != install.RuntimeOwnershipReusedExternal {
 		t.Fatal("directory command did not retain a canonical immutable binding")
 	}
 	resolved[0] = DirectorySpec{}
@@ -109,7 +111,10 @@ func TestSecretCommandAndReceiptRequireEveryPurposeSeparatedKey(t *testing.T) {
 	specs[0] = SecretSpec{}
 	resolved := command.Secrets()
 	if !command.Valid() || command.BindingDigest().IsZero() || len(resolved) != 7 ||
-		resolved[0].Purpose() != installplan.SecretAPICredential {
+		resolved[0].Purpose() != installplan.SecretAPICredential || resolved[0].Path() == "" ||
+		command.OperationID() != operationID || !command.ParentPlanDigest().Equal(planDigest) ||
+		command.Attempt() != 1 || command.RuntimeOwnership() != install.RuntimeOwnershipProvisionedByAgentMemory ||
+		command.SecretDirectory() != "/owner/agentmemory/secrets" {
 		t.Fatal("secret command did not canonicalize all required purposes")
 	}
 	resolved[0] = SecretSpec{}

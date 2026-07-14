@@ -34,6 +34,7 @@ func TestApplicationProjectsEveryStaticPlanBinding(t *testing.T) {
 	host, err := application.ResolveHostVerificationPlan(ctx, plan.Digest())
 	if err != nil || !host.ParentPlanDigest.Equal(plan.Digest()) || !host.SignedHostPlan.Valid() ||
 		!host.SignedHostPlan.Plan().Digest().Equal(plan.SignedHostPlan().Plan().Digest()) ||
+		host.StorageTarget != plan.HostStorageTarget() ||
 		host.RuntimeOwnership != install.RuntimeOwnershipUndetermined {
 		t.Fatalf("host projection = %+v/%v", host, err)
 	}
@@ -149,6 +150,45 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 	}
 	if _, err := application.ResolveActivationPlan(context.Background(), plan.Digest(), foreignOperation); !errors.Is(err, ErrActivationEvidenceUnavailable) {
 		t.Fatalf("foreign activation operation error = %v", err)
+	}
+}
+
+func TestPF001PristineTemplateDerivesRuntimeOwnershipOnlyFromAuthenticatedRuntimeEvidence(t *testing.T) {
+	t.Parallel()
+	template := applicationPlan(t)
+	product := applicationProductInput()
+	agent := template.AgentConfiguration()
+	plan, err := installplan.RebindV1(template, installplan.RebindInput{
+		OperationID: template.OperationID(), InstallationID: template.InstallationID(),
+		GenerationID: template.GenerationID(), RuntimeEndpoint: template.RuntimeEndpoint(),
+		SecurityEpoch: template.SecurityEpoch(), HostStorageTarget: "/home/user/.agentmemory",
+		Product: product,
+		Capacity: installplan.CapacityInput{
+			HostCAS: "/var/lib/agentmemory/cas", HostRelease: product.ReleaseDirectory,
+			DockerEngine: template.RuntimeEndpoint(), DockerDataVolume: "agentmemory-core-data",
+		},
+		AgentConfiguration: installplan.AgentConfigurationInput{
+			AgentHost: agent.AgentHost(), ConfigLocation: agent.ConfigLocation(), EntryID: agent.EntryID(),
+			ExpectedManagedEntryDigest: agent.ExpectedManagedEntryDigest(), LauncherDigest: agent.LauncherDigest(),
+			LauncherPath: agent.LauncherPath(),
+		},
+	})
+	if err != nil || plan.RuntimeOwnership() != install.RuntimeOwnershipUndetermined {
+		t.Fatalf("RebindV1() ownership=%s error=%v", plan.RuntimeOwnership(), err)
+	}
+	fixture := newApplicationFixture(t, plan)
+	application, err := New(fixture.dependencies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := application.ResolveReleasePlan(context.Background(), plan.Digest())
+	if err != nil || release.RuntimeOwnership != install.RuntimeOwnershipProvisionedByAgentMemory {
+		t.Fatalf("runtime ownership=%s error=%v", release.RuntimeOwnership, err)
+	}
+
+	fixture.operations.operation = nil
+	if _, err := application.ResolveReleasePlan(context.Background(), plan.Digest()); !errors.Is(err, ErrPlanIntegrity) {
+		t.Fatalf("missing runtime evidence error=%v", err)
 	}
 }
 
@@ -558,6 +598,8 @@ func applicationOperation(t testing.TB, plan installplan.Plan, readinessDigest i
 		ownership := plan.RuntimeOwnership()
 		if phase == install.PhaseVerifyHost {
 			ownership = install.RuntimeOwnershipUndetermined
+		} else if ownership == install.RuntimeOwnershipUndetermined {
+			ownership = install.RuntimeOwnershipProvisionedByAgentMemory
 		}
 		output := install.DigestBytes([]byte("output:" + phase.String()))
 		if phase == install.PhaseVerifyReadiness {

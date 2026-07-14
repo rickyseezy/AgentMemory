@@ -14,6 +14,8 @@ func TestAuthorizationIsImmutableOperationPlanAttemptAndSignedSourceBound(t *tes
 	authorization := testAuthorization(t, OperationMigrate, 2)
 	if !authorization.Valid() || authorization.Operation() != OperationMigrate ||
 		authorization.Attempt() != 2 || authorization.BindingDigest().IsZero() ||
+		authorization.OperationID().IsZero() || authorization.ParentPlanDigest().IsZero() ||
+		authorization.RuntimeOwnership() != install.RuntimeOwnershipProvisionedByAgentMemory ||
 		authorization.Source().ConfigurationPath() != "/owner/agentmemory/releases/v1/compose/compose.yaml" {
 		t.Fatal("authorization lost its complete signed-source binding")
 	}

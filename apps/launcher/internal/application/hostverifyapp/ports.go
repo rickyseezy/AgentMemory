@@ -26,5 +26,5 @@ type PlanSignatureVerifier interface {
 // NativeHostProbe returns either complete native evidence or one closed
 // rejection. It may not decide whether evidence satisfies policy.
 type NativeHostProbe interface {
-	ProbeHost(context.Context, hostverification.Plan) (hostverification.ProbeResult, error)
+	ProbeHost(context.Context, hostverification.Plan, string) (hostverification.ProbeResult, error)
 }

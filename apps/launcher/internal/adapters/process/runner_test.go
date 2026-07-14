@@ -209,19 +209,6 @@ func mustTestRunner(t *testing.T, executable string) *Runner {
 	return runner
 }
 
-func testCurrentExecutable(t *testing.T) string {
-	t.Helper()
-	path, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return canonical
-}
-
 // TestPF001ArgvRunnerHelper executes only in child test processes.
 func TestPF001ArgvRunnerHelper(_ *testing.T) {
 	separator := -1
@@ -266,6 +253,10 @@ func TestPF001ArgvRunnerHelper(_ *testing.T) {
 			os.Exit(18)
 		}
 		_, _ = os.Stdout.WriteString(strconv.Itoa(child.Process.Pid) + "\n")
+		//nolint:gosec // G703: parent supplies an isolated marker path to the test helper.
+		if len(os.Args) <= separator+2 || os.WriteFile(os.Args[separator+2], []byte("started"), 0o600) != nil {
+			os.Exit(19)
+		}
 		time.Sleep(10 * time.Second)
 	case "spawn-child-and-exit":
 		//nolint:gosec // G702: current signed test executable and fixed child argv.

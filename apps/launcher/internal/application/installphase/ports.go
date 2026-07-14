@@ -26,6 +26,7 @@ import (
 type HostVerificationPlan struct {
 	ParentPlanDigest install.PlanDigest
 	SignedHostPlan   hostverification.SignedPlan
+	StorageTarget    string
 	RuntimeOwnership install.RuntimeOwnership
 }
 

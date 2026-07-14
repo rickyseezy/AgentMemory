@@ -41,12 +41,12 @@ func (p *HostVerificationPhase) VerifyHost(
 	}
 	if !projection.ParentPlanDigest.Equal(request.PlanDigest()) ||
 		projection.RuntimeOwnership != install.RuntimeOwnershipUndetermined ||
-		!projection.SignedHostPlan.Valid() {
+		!projection.SignedHostPlan.Valid() || projection.StorageTarget == "" {
 		return installapp.PhaseOutput{}, phaseError(ErrorCodeInvalidBinding)
 	}
 	verification, err := p.verifier.Verify(ctx, hostverifyapp.Command{
 		OperationID: request.OperationID(), ParentPlanDigest: request.PlanDigest(),
-		SignedPlan: projection.SignedHostPlan,
+		SignedPlan: projection.SignedHostPlan, StorageTarget: projection.StorageTarget,
 	})
 	if err != nil {
 		return installapp.PhaseOutput{}, phaseError(ErrorCodeHostUnavailable)

@@ -142,6 +142,7 @@ type Input struct {
 	RuntimeOwnership   install.RuntimeOwnership
 	SecurityEpoch      uint64
 	SignedHostPlan     hostverification.SignedPlan
+	HostStorageTarget  string
 	SignedRelease      releaseinventory.SignedManifest
 	Product            ProductInput
 	RuntimeCatalog     RuntimeCatalogInput
@@ -311,6 +312,7 @@ type Plan struct {
 	runtimeOwnership   install.RuntimeOwnership
 	securityEpoch      uint64
 	signedHostPlan     hostverification.SignedPlan
+	hostStorageTarget  string
 	signedRelease      releaseinventory.SignedManifest
 	runtimeCatalogID   string
 	runtimeCatalogHash install.Digest
@@ -413,6 +415,7 @@ func planFromDocument(document canonicalPlan, supplied []byte) (Plan, error) {
 		runtimeOwnership:   input.RuntimeOwnership,
 		securityEpoch:      input.SecurityEpoch,
 		signedHostPlan:     input.SignedHostPlan,
+		hostStorageTarget:  input.HostStorageTarget,
 		signedRelease:      input.SignedRelease,
 		runtimeCatalogID:   input.RuntimeCatalog.ResourceID,
 		runtimeCatalogHash: runtimeCatalogHash,
@@ -464,6 +467,10 @@ func (p Plan) SecurityEpoch() uint64 { return p.securityEpoch }
 // selected and parent-bound by these canonical installation-plan bytes.
 func (p Plan) SignedHostPlan() hostverification.SignedPlan { return p.signedHostPlan }
 
+// HostStorageTarget is the per-host owner-controlled probe root bound by the
+// canonical parent plan rather than the release-wide signed compatibility policy.
+func (p Plan) HostStorageTarget() string { return p.hostStorageTarget }
+
 // SignedRelease returns the immutable unverified release envelope.
 func (p Plan) SignedRelease() releaseinventory.SignedManifest { return p.signedRelease }
 
@@ -495,13 +502,22 @@ func (p Plan) Product() ProductProjection { return p.product }
 
 func documentFromInput(input Input) (canonicalPlan, error) {
 	if input.OperationID.IsZero() || !validUUIDv7(input.InstallationID) || !validUUIDv7(input.GenerationID) ||
-		!validLocalEndpoint(input.RuntimeEndpoint) || !input.RuntimeOwnership.Resolved() ||
+		!validLocalEndpoint(input.RuntimeEndpoint) ||
+		(input.RuntimeOwnership != install.RuntimeOwnershipUndetermined && !input.RuntimeOwnership.Resolved()) ||
 		input.SecurityEpoch == 0 || input.SecurityEpoch > maximumSafeJSONInt || !input.SignedHostPlan.Valid() {
 		return canonicalPlan{}, ErrIntegrity
 	}
 	hostPolicy := input.SignedHostPlan.Plan()
 	if !hostPolicy.Valid() || input.SignedHostPlan.SigningKeyID() != hostPolicy.SigningKeyID() ||
 		len(input.SignedHostPlan.Signature()) > maximumEvidenceBytes {
+		return canonicalPlan{}, ErrIntegrity
+	}
+	storageTarget := input.HostStorageTarget
+	if storageTarget == "" && hostPolicy.StorageTargetMode() == hostverification.StorageTargetExact {
+		storageTarget = hostPolicy.StorageTarget()
+	}
+	if _, _, valid := canonicalHostPath(storageTarget); !valid ||
+		hostPolicy.StorageTargetMode() == hostverification.StorageTargetExact && storageTarget != hostPolicy.StorageTarget() {
 		return canonicalPlan{}, ErrIntegrity
 	}
 	manifest := input.SignedRelease.Manifest()
@@ -548,7 +564,7 @@ func documentFromInput(input Input) (canonicalPlan, error) {
 	if input.Artifacts.Capacity.HostRelease != input.Product.ReleaseDirectory {
 		return canonicalPlan{}, ErrIntegrity
 	}
-	if !productMatchesHost(input.Product, hostPolicy.Platform().OperatingSystem, hostPolicy.StorageTarget(), input.RuntimeEndpoint) {
+	if !productMatchesHost(input.Product, hostPolicy.Platform().OperatingSystem, storageTarget, input.RuntimeEndpoint) {
 		return canonicalPlan{}, ErrIntegrity
 	}
 	return canonicalPlan{
@@ -563,9 +579,10 @@ func documentFromInput(input Input) (canonicalPlan, error) {
 		ArtifactAcquisition: canonicalAcquisition,
 		InstallationID:      input.InstallationID,
 		HostPolicy: canonicalHostPolicy{
-			Plan:         base64.StdEncoding.EncodeToString(hostPolicy.CanonicalBytes()),
-			Signature:    base64.StdEncoding.EncodeToString(input.SignedHostPlan.Signature()),
-			SigningKeyID: input.SignedHostPlan.SigningKeyID(),
+			Plan:          base64.StdEncoding.EncodeToString(hostPolicy.CanonicalBytes()),
+			Signature:     base64.StdEncoding.EncodeToString(input.SignedHostPlan.Signature()),
+			SigningKeyID:  input.SignedHostPlan.SigningKeyID(),
+			StorageTarget: storageTarget,
 		},
 		NetworkVolume:    canonicalNetworkVolume{GenerationID: input.GenerationID, RuntimeEndpoint: input.RuntimeEndpoint},
 		OperationID:      input.OperationID.String(),
@@ -665,17 +682,18 @@ func inputFromDocument(document canonicalPlan) (Input, error) {
 		return Input{}, err
 	}
 	return Input{
-		OperationID:      operationID,
-		InstallationID:   document.InstallationID,
-		GenerationID:     document.NetworkVolume.GenerationID,
-		RuntimeEndpoint:  document.NetworkVolume.RuntimeEndpoint,
-		RuntimeOwnership: ownership,
-		SecurityEpoch:    document.SecurityEpoch,
-		SignedHostPlan:   signedHostPlan,
-		SignedRelease:    signed,
-		Product:          product,
-		RuntimeCatalog:   RuntimeCatalogInput{ResourceID: document.Runtime.CatalogResourceID},
-		Artifacts:        artifacts,
+		OperationID:       operationID,
+		InstallationID:    document.InstallationID,
+		GenerationID:      document.NetworkVolume.GenerationID,
+		RuntimeEndpoint:   document.NetworkVolume.RuntimeEndpoint,
+		RuntimeOwnership:  ownership,
+		SecurityEpoch:     document.SecurityEpoch,
+		SignedHostPlan:    signedHostPlan,
+		HostStorageTarget: document.HostPolicy.StorageTarget,
+		SignedRelease:     signed,
+		Product:           product,
+		RuntimeCatalog:    RuntimeCatalogInput{ResourceID: document.Runtime.CatalogResourceID},
+		Artifacts:         artifacts,
 		AgentConfiguration: AgentConfigurationInput{
 			AgentHost:                  document.AgentConfiguration.AgentHost,
 			ConfigLocation:             document.AgentConfiguration.ConfigLocation,
@@ -1152,6 +1170,8 @@ func manifestResource(manifest releaseinventory.Manifest, id string) (releaseinv
 
 func parseOwnership(value string) (install.RuntimeOwnership, bool) {
 	switch value {
+	case install.RuntimeOwnershipUndetermined.String():
+		return install.RuntimeOwnershipUndetermined, true
 	case install.RuntimeOwnershipReusedExternal.String():
 		return install.RuntimeOwnershipReusedExternal, true
 	case install.RuntimeOwnershipProvisionedByAgentMemory.String():
@@ -1330,9 +1350,10 @@ type canonicalPlan struct {
 }
 
 type canonicalHostPolicy struct {
-	Plan         string `json:"plan"`
-	Signature    string `json:"signature"`
-	SigningKeyID string `json:"signing_key_id"`
+	Plan          string `json:"plan"`
+	Signature     string `json:"signature"`
+	SigningKeyID  string `json:"signing_key_id"`
+	StorageTarget string `json:"storage_target"`
 }
 
 type canonicalProduct struct {

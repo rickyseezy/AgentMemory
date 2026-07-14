@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 import hashlib
 import os
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -72,6 +73,36 @@ def test_capability_rejects_links(tmp_path: Path) -> None:
     os.link(target, hardlink)
     with pytest.raises(PermissionError):
         read_capability(target)
+
+
+def test_capability_read_supports_platform_without_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _private_file(tmp_path / "capability", b"c" * 32)
+    monkeypatch.delattr(os, "O_NOFOLLOW")
+    assert read_capability(path) == b"c" * 32
+
+
+def test_capability_read_rejects_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _private_file(tmp_path / "capability", b"c" * 32)
+    descriptor = os.open(path, os.O_RDONLY)
+    observed = os.fstat(descriptor)
+    os.close(descriptor)
+    changed = SimpleNamespace(
+        st_dev=observed.st_dev,
+        st_ino=observed.st_ino + 1,
+        st_size=observed.st_size,
+    )
+    observations = iter((observed, changed))
+
+    def changed_fstat(_descriptor: int) -> os.stat_result | SimpleNamespace:
+        return next(observations)
+
+    monkeypatch.setattr(os, "fstat", changed_fstat)
+    with pytest.raises(PermissionError, match="changed"):
+        read_capability(path)
 
 
 def _bind_model(monkeypatch: pytest.MonkeyPatch, path: Path, role: ProviderRole) -> None:
@@ -149,3 +180,62 @@ def test_model_artifact_rejects_digest_size_mode_and_links(
                 5,
             )
         )
+
+
+def test_model_artifact_supports_platform_without_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    content = b"model"
+    path = _private_file(tmp_path / "model.gguf", content)
+    _bind_model(monkeypatch, path, ProviderRole.EXTRACTION)
+    monkeypatch.delattr(os, "O_NOFOLLOW")
+    binding = ModelArtifactBinding(
+        ProviderRole.EXTRACTION, hashlib.sha256(content).hexdigest(), len(content)
+    )
+    assert verify_model_artifact(binding) == binding.sha256
+
+
+@pytest.mark.parametrize("mode", ["early-eof", "trailing-byte", "identity-drift"])
+def test_model_artifact_rejects_stream_and_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    content = b"model"
+    path = _private_file(tmp_path / "model.gguf", content)
+    _bind_model(monkeypatch, path, ProviderRole.EXTRACTION)
+    binding = ModelArtifactBinding(
+        ProviderRole.EXTRACTION, hashlib.sha256(content).hexdigest(), len(content)
+    )
+    real_read = os.read
+    if mode == "early-eof":
+
+        def early_eof(_descriptor: int, _size: int) -> bytes:
+            return b""
+
+        monkeypatch.setattr(os, "read", early_eof)
+    elif mode == "trailing-byte":
+        calls = iter((content, b"x"))
+
+        def trailing_byte(_descriptor: int, _size: int) -> bytes:
+            return next(calls)
+
+        monkeypatch.setattr(os, "read", trailing_byte)
+    else:
+        descriptor = os.open(path, os.O_RDONLY)
+        observed = os.fstat(descriptor)
+        os.close(descriptor)
+        changed = SimpleNamespace(
+            st_dev=observed.st_dev,
+            st_ino=observed.st_ino + 1,
+            st_size=observed.st_size,
+        )
+        observations = iter((observed, changed))
+
+        def changed_fstat(_descriptor: int) -> os.stat_result | SimpleNamespace:
+            return next(observations)
+
+        monkeypatch.setattr(os, "fstat", changed_fstat)
+        monkeypatch.setattr(os, "read", real_read)
+    with pytest.raises(PermissionError, match=r"drifted|changed"):
+        verify_model_artifact(binding)

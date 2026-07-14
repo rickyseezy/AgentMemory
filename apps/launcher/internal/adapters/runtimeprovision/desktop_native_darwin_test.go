@@ -165,6 +165,14 @@ func TestDarwinDesktopNativeConstructorsAndInvalidBoundariesFailClosed(t *testin
 	if _, err := host.ProbeDesktopHost(cancelled, authority); !errors.Is(err, ErrUnsupportedHost) {
 		t.Fatalf("cancelled host error = %v", err)
 	}
+	actualHome, homeError := os.UserHomeDir()
+	if homeError != nil {
+		t.Fatal(homeError)
+	}
+	actualAuthority := desktopDarwinAuthorityAtHome(t, authority, actualHome)
+	if evidence, probeError := host.ProbeDesktopHost(context.Background(), actualAuthority); probeError == nil && evidence.Supports(actualAuthority) != nil {
+		t.Fatal("native host probe returned unbound evidence")
+	}
 
 	if _, err := NewNativeDesktopArtifactVerifier(DesktopArtifactVerifierDependencies{}); err == nil {
 		t.Fatal("artifact verifier accepted missing provenance")
@@ -185,6 +193,24 @@ func TestDarwinDesktopNativeConstructorsAndInvalidBoundariesFailClosed(t *testin
 	}
 	if _, err := verifier.VerifyDesktopArtifact(context.Background(), authority); err == nil {
 		t.Fatal("missing retained DMG was verified")
+	}
+	artifact := []byte("not-a-real-signed-disk-image")
+	artifactHome := filepath.Join(t.TempDir(), "artifact-home")
+	if err := os.MkdirAll(filepath.Join(artifactHome, "Library", "Caches", "AgentMemory", "runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifactAuthority := desktopDarwinAuthorityAtHome(t, authority, artifactHome, artifact)
+	if err := os.WriteFile(artifactAuthority.ArtifactPath(), artifact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifactVerifier, err := NewNativeDesktopArtifactVerifier(DesktopArtifactVerifierDependencies{
+		Provenance: &desktopArtifactFake{authority: artifactAuthority},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := artifactVerifier.VerifyDesktopArtifact(context.Background(), artifactAuthority); !errors.Is(err, ErrProvisionIntegrity) {
+		t.Fatalf("unsigned disk image error=%v", err)
 	}
 	if file, err := openDarwinDesktopArtifact(authority); err == nil || file != nil {
 		t.Fatal("missing signed artifact was opened")
@@ -573,10 +599,15 @@ func desktopDarwinAuthorityAtHome(
 	t testing.TB,
 	base runtimeport.DesktopAuthority,
 	home string,
+	artifact ...[]byte,
 ) runtimeport.DesktopAuthority {
 	t.Helper()
 	publisher := base.Publisher()
 	terms := base.Terms()
+	artifactDigest, artifactBytes := base.ArtifactSHA256(), base.ArtifactBytes()
+	if len(artifact) == 1 {
+		artifactDigest, artifactBytes = runtimeinstall.Sum(artifact[0]), uint64(len(artifact[0]))
+	}
 	authority, err := runtimeport.NewDesktopAuthority(runtimeport.DesktopAuthorityInput{
 		PlanDigest: base.PlanDigest(), CatalogDigest: base.CatalogDigest(), Platform: base.Platform(),
 		Architecture: base.Architecture(), PrincipalID: "uid:" + strconv.Itoa(os.Geteuid()), UserName: base.UserName(),
@@ -587,7 +618,7 @@ func desktopDarwinAuthorityAtHome(
 		MinimumFreeDisk: base.MinimumFreeDisk(), RuntimeVersion: base.RuntimeVersion(), EngineVersion: base.EngineVersion(),
 		ComposeVersion: base.ComposeVersion(), Endpoint: "unix://" + home + "/.docker/run/docker.sock",
 		ArtifactPath:   filepath.Join(home, "Library", "Caches", "AgentMemory", "runtime", "Docker.dmg"),
-		ArtifactSHA256: base.ArtifactSHA256(), ArtifactBytes: base.ArtifactBytes(),
+		ArtifactSHA256: artifactDigest, ArtifactBytes: artifactBytes,
 		ArtifactSourceURL: base.ArtifactSourceURL(),
 		Publisher: runtimeport.DesktopPublisherInput{
 			Kind: publisher.Kind(), Identity: publisher.Identity(), SigningKeyIdentity: publisher.SigningKeyIdentity(),

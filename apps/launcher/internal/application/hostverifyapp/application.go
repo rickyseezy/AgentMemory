@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/hostverification"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
@@ -36,7 +37,8 @@ func (a *Application) Verify(ctx context.Context, command Command) (Verification
 	if err := ctx.Err(); err != nil {
 		return Verification{}, verificationError(ErrorCodeCancelled)
 	}
-	if command.OperationID.IsZero() || command.ParentPlanDigest.IsZero() || !command.SignedPlan.Valid() {
+	if command.OperationID.IsZero() || command.ParentPlanDigest.IsZero() || !command.SignedPlan.Valid() ||
+		command.StorageTarget == "" {
 		return Verification{}, verificationError(ErrorCodeIntegrity)
 	}
 	plan := command.SignedPlan.Plan()
@@ -52,7 +54,10 @@ func (a *Application) Verify(ctx context.Context, command Command) (Verification
 		}
 		return Verification{}, verificationError(ErrorCodeDependency)
 	}
-	probe, err := a.probe.ProbeHost(ctx, plan)
+	if plan.StorageTargetMode() == hostverification.StorageTargetExact && command.StorageTarget != plan.StorageTarget() {
+		return Verification{}, verificationError(ErrorCodeIntegrity)
+	}
+	probe, err := a.probe.ProbeHost(ctx, plan, command.StorageTarget)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return Verification{}, verificationError(ErrorCodeCancelled)

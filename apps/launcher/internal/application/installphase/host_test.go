@@ -117,7 +117,7 @@ func hostPhaseFixture(
 		t.Fatal(err)
 	}
 	projection := HostVerificationPlan{
-		ParentPlanDigest: parent, SignedHostPlan: signed,
+		ParentPlanDigest: parent, SignedHostPlan: signed, StorageTarget: plan.StorageTarget(),
 		RuntimeOwnership: install.RuntimeOwnershipUndetermined,
 	}
 	var probe hostverification.ProbeResult
@@ -163,7 +163,7 @@ func (acceptingHostSignature) VerifyHostPlanSignature(context.Context, hostverif
 
 type fixedHostProbe struct{ result hostverification.ProbeResult }
 
-func (p fixedHostProbe) ProbeHost(context.Context, hostverification.Plan) (hostverification.ProbeResult, error) {
+func (p fixedHostProbe) ProbeHost(context.Context, hostverification.Plan, string) (hostverification.ProbeResult, error) {
 	return p.result, nil
 }
 

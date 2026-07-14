@@ -13,6 +13,7 @@ type Command struct {
 	OperationID      install.OperationID
 	ParentPlanDigest install.PlanDigest
 	SignedPlan       hostverification.SignedPlan
+	StorageTarget    string
 }
 
 // Verification is immutable certification evidence or one expected rejection.
@@ -40,6 +41,7 @@ func newVerification(
 	writeString(command.OperationID.String())
 	writeString(command.ParentPlanDigest.String())
 	writeString(plan.Digest().String())
+	writeString(command.StorageTarget)
 	writeString(observationDigest.String())
 	writeString(string(reason))
 	return Verification{

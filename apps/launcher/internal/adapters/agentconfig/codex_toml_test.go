@@ -40,6 +40,10 @@ func VerifyManagedEntry(contents []byte, target Target) error {
 
 func TestPF001CodexMergePreservesUnmanagedTOMLExactly(t *testing.T) {
 	t.Parallel()
+	policy := CodexPolicy{}
+	if !policy.Supports(AgentHostCodex) || policy.Supports(domain.AgentHost("unknown")) {
+		t.Fatal("Codex policy host support drifted")
+	}
 	target := testCodexTarget(t, "/Applications/AgentMemory 世界/agentmemory", strings.Repeat("a", 64))
 	original := []byte("# user comment\nmodel = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"other\"\nargs = [\"--keep\"]")
 
@@ -56,8 +60,18 @@ func TestPF001CodexMergePreservesUnmanagedTOMLExactly(t *testing.T) {
 	if err := ValidateDocumentFor(AgentHostCodex, plan.AfterContent()); err != nil {
 		t.Fatalf("ValidateDocumentFor() error = %v", err)
 	}
+	if err := policy.Validate(plan.AfterContent()); err != nil {
+		t.Fatalf("CodexPolicy.Validate() error = %v", err)
+	}
+	policyPlan, err := policy.PlanMerge(original, true, target, Digest{})
+	if err != nil || !bytes.Equal(policyPlan.AfterContent(), plan.AfterContent()) {
+		t.Fatalf("CodexPolicy.PlanMerge()=%+v,%v", policyPlan, err)
+	}
 	if err := VerifyManagedEntry(plan.AfterContent(), target); err != nil {
 		t.Fatalf("VerifyManagedEntry() error = %v", err)
+	}
+	if err := policy.VerifyManagedEntry(plan.AfterContent(), target); err != nil {
+		t.Fatalf("CodexPolicy.VerifyManagedEntry() error = %v", err)
 	}
 }
 

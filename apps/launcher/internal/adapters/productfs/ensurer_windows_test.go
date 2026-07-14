@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/windowssecurity"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productinstall"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/installplan"
@@ -24,11 +25,11 @@ func TestPF001WindowsProductFilesystemCreatesProtectedIdempotentState(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(fixture); err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = os.RemoveAll(fixture) })
 	root := filepath.Join(fixture, "AgentMemory")
+	if err := windowssecurity.CreatePrivateDirectory(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
 	ensurer := NewEnsurer()
 	directories := windowsDirectoryCommand(t, root)
 	first, err := ensurer.EnsureDirectories(context.Background(), directories)

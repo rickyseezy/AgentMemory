@@ -134,6 +134,9 @@ func (s *Store) Reserve(ctx context.Context, request artifactapp.ReservationRequ
 		targets = append(targets, reservationTarget{leaf: allocation.SlotID() + ".slot", bytes: allocation.Bytes()})
 	}
 	missing, err := s.missingReservationBytes(targets)
+	if errors.Is(err, artifactapp.ErrStoreIntegrity) {
+		return artifactacquisition.ReservationProof{}, artifactapp.ErrStoreIntegrity
+	}
 	if err != nil {
 		return artifactacquisition.ReservationProof{}, artifactapp.ErrReservationOperation
 	}
@@ -148,6 +151,9 @@ func (s *Store) Reserve(ctx context.Context, request artifactapp.ReservationRequ
 			}
 			if errors.Is(err, artifactapp.ErrReservationUnsupported) {
 				return artifactacquisition.ReservationProof{}, errors.Join(artifactapp.ErrReservationOperation, artifactapp.ErrReservationUnsupported)
+			}
+			if errors.Is(err, artifactapp.ErrStoreIntegrity) {
+				return artifactacquisition.ReservationProof{}, artifactapp.ErrStoreIntegrity
 			}
 			return artifactacquisition.ReservationProof{}, artifactapp.ErrReservationOperation
 		}

@@ -82,7 +82,11 @@ func TestPF001ExecutionMaterializationReusesOnlyIdenticalNoReplaceFiles(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = first.Close() }()
+	// Production materialization is serialized by the machine-global install
+	// lock and releases the write authority before a durable replay begins.
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
 	second, err := ensureExecutionFile(
 		context.Background(), directoryHandle, "bound-secret", path, contents, false,
 	)

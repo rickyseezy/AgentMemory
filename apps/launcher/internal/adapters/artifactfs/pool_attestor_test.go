@@ -135,6 +135,7 @@ func TestPF001ProductionReservationRejectsSnapshotInvalidatedPoolBeforeSideEffec
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	safe, err := reservationFilesystemSafeDescriptor(store.rootDirectory)
 	if err != nil {
 		t.Fatal(err)

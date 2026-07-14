@@ -255,6 +255,9 @@ func TestPF001ComposeTargetEngineFailsClosedAndRetiresUntouchedReservation(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The production phase contract creates the protected release layout before
+	// Compose materialization. Inspection must remain read-only within that layout.
+	makeSecureTestDirectory(t, fixture.releaseRoot)
 	aggregate, _ := artifactacquisition.NewCapacityAggregate(
 		fixture.lease.Owner(), fixture.lease.PlanDigest(), []artifactacquisition.CapacityLease{fixture.lease},
 	)

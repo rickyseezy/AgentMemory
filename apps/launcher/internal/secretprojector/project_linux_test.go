@@ -27,7 +27,7 @@ func TestPF001LinuxProjectionRunsClosedContractAndIsReplaySafe(t *testing.T) {
 	if err := os.WriteFile(input, value, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(input, 0o400); err != nil { //nolint:gosec // G302: the fixed input contract requires read-only owner access.
+	if err := os.Chmod(input, 0o400); err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(outputRoot, contract[0].purpose)
@@ -46,7 +46,7 @@ func TestPF001LinuxProjectionRunsClosedContractAndIsReplaySafe(t *testing.T) {
 		}
 	}
 	projected := filepath.Join(output, file.name)
-	contents, err := os.ReadFile(projected)
+	contents, err := os.ReadFile(projected) //nolint:gosec // G304: projected is a test-owned path under t.TempDir.
 	if err != nil || !bytes.Equal(contents, value) {
 		t.Fatalf("projected contents = %x, %v", contents, err)
 	}

@@ -3,9 +3,12 @@
 package process
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/windowssecurity"
 )
 
 func testCurrentExecutable(t *testing.T) string {
@@ -32,7 +35,20 @@ func testCurrentExecutable(t *testing.T) string {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
 	isolated := filepath.Join(directory, "test-program.exe")
-	if err := os.WriteFile(isolated, contents, 0o700); err != nil {
+	file, err := windowssecurity.CreatePrivateFile(context.Background(), isolated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, writeError := file.Write(contents)
+	if writeError != nil || written != len(contents) {
+		_ = file.Close()
+		t.Fatalf("copy executable bytes=%d err=%v", written, writeError)
+	}
+	if err := windowssecurity.Flush(file); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return isolated

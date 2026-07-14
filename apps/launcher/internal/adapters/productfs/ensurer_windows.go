@@ -370,5 +370,5 @@ func classifyWindowsFilesystemError(err error) error {
 }
 
 func windowsUnavailable(err error) error {
-	return fmt.Errorf("%w: native Windows filesystem operation failed: %v", productinstall.ErrUnavailable, err)
+	return fmt.Errorf("%w: native Windows filesystem operation failed: %w", productinstall.ErrUnavailable, err)
 }

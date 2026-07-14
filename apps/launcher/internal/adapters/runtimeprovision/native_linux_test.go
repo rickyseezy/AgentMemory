@@ -78,7 +78,7 @@ func TestLinuxNativeHostProbesUseFixedTrustedSurfaces(t *testing.T) {
 		t.Fatal("missing Linux owner filesystem/runtime directory was accepted")
 	}
 	unsafeFile := filepath.Join(directory, "unsafe-root-input")
-	if err := os.WriteFile(unsafeFile, []byte("unsafe"), 0o666); err != nil {
+	if err := os.WriteFile(unsafeFile, []byte("unsafe"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(unsafeFile, 0o666); err != nil { //nolint:gosec // G302: deliberate unsafe root-input fixture.

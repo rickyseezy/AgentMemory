@@ -456,8 +456,10 @@ func filesystemSignedManifest(t testing.TB) releaseinventory.SignedManifest {
 	imageInput.OCIIndexDigest = indexDigest
 	imageInput.OCIIndexResourceID = "image-index"
 	image := filesystemMustResource(t, imageInput)
-	subjects := []releaseinventory.Resource{compose, runtimeCatalog, index, image}
-	for _, input := range filesystemQualifiedSubjectInputs(platform) {
+	qualified := filesystemQualifiedSubjectInputs(platform)
+	subjects := make([]releaseinventory.Resource, 0, 4+len(qualified))
+	subjects = append(subjects, compose, runtimeCatalog, index, image)
+	for _, input := range qualified {
 		subjects = append(subjects, filesystemMustResource(t, input))
 	}
 	resources := make([]releaseinventory.Resource, 0, len(subjects)*6)

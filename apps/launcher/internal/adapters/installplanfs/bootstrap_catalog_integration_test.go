@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	firststartadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/firststart"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 )
@@ -47,6 +49,25 @@ func TestPF001OuterDistributionCatalogAuthorizesExactInnerProductPlan(t *testing
 		!verified.DistributionManifestDigest().Equal(fixture.distribution.Manifest().Digest()) ||
 		verified.Resource().Kind() != releaseinventory.ResourceKindInstallPlanTemplate {
 		t.Fatal("verified bootstrap template lost a two-level catalog binding")
+	}
+	retained, err := appreleaseverify.NewVerifiedDistributionCatalog(fixture.source, application, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packagedCatalog, err := firststartadapter.NewDistributionTemplateCatalog(retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packaged, err := packagedCatalog.Current(t.Context())
+	if err != nil || !packaged.Valid() || !packaged.Resource().Digest().Equal(verified.Resource().Digest()) {
+		t.Fatalf("retained current template=%+v error=%v", packaged, err)
+	}
+	exact, err := packagedCatalog.Exact(t.Context(), verified.Resource().Digest())
+	if err != nil || !exact.Valid() || !bytes.Equal(exact.Template().Canonical(), fixture.template) {
+		t.Fatalf("retained exact template=%+v error=%v", exact, err)
+	}
+	if _, err := packagedCatalog.Exact(t.Context(), releaseinventory.DigestBytes([]byte("foreign"))); !errors.Is(err, firststartapp.ErrIntegrity) {
+		t.Fatalf("retained catalog fell forward: %v", err)
 	}
 	copyBytes := verified.CanonicalPlan()
 	copyBytes[0] ^= 0xff
@@ -162,9 +183,13 @@ func bootstrapCatalogFixture(t testing.TB) bootstrapCatalogTestFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	distributionRaw, err := releaseinventory.EncodeSignedManifestV1(distribution)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return bootstrapCatalogTestFixture{
 		distribution: distribution, product: product, template: templateRaw,
-		source: &bootstrapCatalogSource{contents: map[string][]byte{
+		source: &bootstrapCatalogSource{envelope: distributionRaw, contents: map[string][]byte{
 			"install-plan": templateRaw, "product-manifest": productRaw,
 		}},
 		ports: &bootstrapCatalogPorts{platform: platform, now: time.Date(2026, time.July, 2, 0, 0, 0, 0, time.UTC)},
@@ -186,8 +211,16 @@ func bootstrapCatalogSubject(t testing.TB, input releaseinventory.ResourceInput)
 }
 
 type bootstrapCatalogSource struct {
+	envelope []byte
 	contents map[string][]byte
 	err      error
+}
+
+func (s *bootstrapCatalogSource) ReadDistributionEnvelope(_ context.Context) ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return append([]byte(nil), s.envelope...), nil
 }
 
 func (s *bootstrapCatalogSource) OpenResource(_ context.Context, resource releaseinventory.Resource) (io.ReadCloser, error) {

@@ -153,6 +153,7 @@ func selectBootstrapResources(
 	var template releaseinventory.Resource
 	var product releaseinventory.Resource
 	for _, resource := range resources {
+		//nolint:exhaustive // Every non-bootstrap kind is deliberately ignored.
 		switch resource.Kind() {
 		case releaseinventory.ResourceKindInstallPlanTemplate:
 			if template.ID() != "" || resource.Platform() != platform {

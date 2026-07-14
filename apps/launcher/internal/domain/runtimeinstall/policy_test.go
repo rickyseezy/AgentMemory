@@ -132,7 +132,7 @@ func TestPF001RuntimePlanDigestChangesForMaterialInputAndIsDeterministic(t *test
 		"stable",
 		catalog.CatalogSequence()+1,
 		mustHash(t, "changed-catalog"),
-		catalog.TermsDigest(),
+		runtimeTermsFixture(catalog.Platform(), catalog.TermsDigest()),
 		catalog.DownloadBytes(),
 		catalog.ExpandedBytes(),
 	)
@@ -190,7 +190,7 @@ func certifiedCatalog(t *testing.T) CertifiedRuntime {
 		"stable",
 		42,
 		mustHash(t, "catalog"),
-		mustHash(t, "terms"),
+		runtimeTermsFixture(PlatformDarwin, mustHash(t, "terms")),
 		2*gib,
 		8*gib,
 	)

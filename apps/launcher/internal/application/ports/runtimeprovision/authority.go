@@ -250,12 +250,11 @@ func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 }
 
 func validLinuxTerms(input LinuxAuthorityInput) bool {
-	if !validIdentity(input.TermsID) || !validPackageVersion(input.TermsVersion) ||
+	if input.TermsID != runtimeinstall.DockerEngineTermsID || !validPackageVersion(input.TermsVersion) ||
 		input.TermsPresentation != "agentmemory" {
 		return false
 	}
-	wanted := "https://www.docker.com/legal/" + input.TermsID
-	return input.TermsURL == wanted || input.TermsURL == wanted+"/"
+	return input.TermsURL == "https://docs.docker.com/engine/"
 }
 
 func newRepository(input RepositoryInput, distribution string, codename string) (Repository, error) {

@@ -143,7 +143,8 @@ func TestPF001RuntimeValueConstructorsRejectEveryIncompleteInvariant(t *testing.
 	}
 
 	validCatalog := func(platform Platform, architecture Architecture, product, version, channel string, sequence uint64, catalog, terms Hash, download, expanded uint64) error {
-		_, err := NewCertifiedRuntime(platform, architecture, product, version, channel, sequence, catalog, terms, download, expanded)
+		_, err := NewCertifiedRuntime(platform, architecture, product, version, channel, sequence, catalog,
+			runtimeTermsFixture(platform, terms), download, expanded)
 		return err
 	}
 	goodCatalog, goodTerms := mustHash(t, "catalog"), mustHash(t, "terms")

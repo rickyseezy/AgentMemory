@@ -87,6 +87,17 @@ The release owner must separately confirm whether any installer payload may be
 redistributed in AgentMemory's offline bundle; otherwise the certified flow
 must acquire it from the signed vendor source under the recorded terms.
 
+Linux cells must not reuse the Docker Desktop agreement. The signed catalog
+must bind the actual Docker Engine/package license disclosure and the exact
+repository/package notices applicable to the distributed binaries. Docker's
+[Engine documentation](https://docs.docker.com/engine/) describes the
+standalone open-source Engine, while Docker's
+[Terms of Service](https://www.docker.com/legal/docker-terms-use/) preserves
+the licenses attached to open-source components. The release owner must retain
+the exact component-license inventory and independently approve any offline
+redistribution; an open-source component license does not automatically grant
+redistribution authority for every bundled vendor artifact.
+
 ## Native certification hosts
 
 The release owner must provide pristine, supported, non-virtualized or

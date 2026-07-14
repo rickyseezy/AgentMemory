@@ -24,8 +24,8 @@ func TestVerifiedCatalogProjectsExactLinuxAuthority(t *testing.T) {
 		authority.Repository().URL() != "https://download.docker.com/linux/ubuntu/" ||
 		len(authority.Packages()) != 7 || authority.Packages()[6].Name() != "uidmap" ||
 		authority.ArtifactDigest() != runtimeinstall.Hash(catalog.Manifest().Artifact().SHA256()) ||
-		authority.TermsID() != "docker-subscription-service-agreement" ||
-		authority.TermsURL() != "https://www.docker.com/legal/docker-subscription-service-agreement" ||
+		authority.TermsID() != runtimeinstall.DockerEngineTermsID ||
+		authority.TermsURL() != "https://docs.docker.com/engine/" ||
 		authority.TermsPresentation() != "agentmemory" || authority.InvokingUID() != 1000 ||
 		authority.Endpoint() != "unix:///run/user/1000/docker.sock" {
 		t.Fatal("verified Linux authority projection is incomplete")
@@ -166,7 +166,10 @@ func differentLinuxPlan(t testing.TB) runtimeinstall.Plan {
 	}
 	certified, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "docker_engine", "28.3.2",
-		"stable", 42, runtimeinstall.Sum([]byte("different catalog")), runtimeinstall.Sum([]byte("different terms")),
+		"stable", 42, runtimeinstall.Sum([]byte("different catalog")), runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
+			Digest: runtimeinstall.Sum([]byte("different terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
+		},
 		1, 2,
 	)
 	if err != nil {
@@ -306,8 +309,8 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 		},
 		CapabilityProbes: capabilities,
 		Terms: runtimecatalog.TermsPolicyInput{
-			ID: "docker-subscription-service-agreement", Version: "2025.07.02",
-			URL:          runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "www.docker.com", PathPrefix: "/legal/docker-subscription-service-agreement"},
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0",
+			URL:          runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "docs.docker.com", PathPrefix: "/engine/"},
 			Digest:       runtimecatalog.DigestBytes([]byte("terms")),
 			Presentation: runtimecatalog.TermsPresentationAgentMemory,
 		},

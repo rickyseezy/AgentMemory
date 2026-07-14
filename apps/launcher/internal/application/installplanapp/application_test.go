@@ -485,7 +485,10 @@ func newApplicationFixture(t testing.TB, plan installplan.Plan) *applicationFixt
 	}
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "docker-engine", "28.0.0", "stable", 42,
-		catalogHash, runtimeinstall.Sum([]byte("accepted terms")), 1024, 4096,
+		catalogHash, runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
+			Digest: runtimeinstall.Sum([]byte("accepted terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
+		}, 1024, 4096,
 	)
 	if err != nil {
 		t.Fatal(err)

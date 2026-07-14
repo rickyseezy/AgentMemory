@@ -713,7 +713,7 @@ func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (ru
 	}
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		platform, architecture, "docker_desktop", "4.70.0", "stable", 7,
-		runtimeinstall.Sum([]byte("desktop-catalog-"+platform.String())), runtimeinstall.Sum([]byte("docker-terms")),
+		runtimeinstall.Sum([]byte("desktop-catalog-"+platform.String())), desktopTerms(runtimeinstall.Sum([]byte("docker-terms"))),
 		500<<20, 2<<30,
 	)
 	if err != nil {

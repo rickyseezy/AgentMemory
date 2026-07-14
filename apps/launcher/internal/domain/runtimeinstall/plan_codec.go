@@ -51,7 +51,11 @@ func NewPlanV1(host HostCapabilities, discovery RuntimeDiscovery, catalog Certif
 		product:            catalog.product,
 		version:            catalog.version,
 		catalogHash:        catalog.catalogDigest,
-		termsHash:          catalog.termsDigest,
+		termsHash:          catalog.terms.digest,
+		termsID:            catalog.terms.id,
+		termsVersion:       catalog.terms.version,
+		termsURL:           catalog.terms.url,
+		termsPresentation:  catalog.terms.presentation,
 		downloadBytes:      catalog.downloadBytes,
 		expandedBytes:      catalog.expandedBytes,
 		hostOSVersion:      host.osVersion,
@@ -132,16 +136,20 @@ func runtimePlanDocument(
 	return canonicalRuntimePlan{
 		Action: action.String(),
 		Catalog: canonicalRuntimeCatalog{
-			Architecture:    catalog.architecture.String(),
-			CatalogDigest:   catalog.catalogDigest.String(),
-			CatalogSequence: catalog.catalogSequence,
-			Channel:         catalog.channel,
-			DownloadBytes:   catalog.downloadBytes,
-			ExpandedBytes:   catalog.expandedBytes,
-			Platform:        catalog.platform.String(),
-			Product:         catalog.product,
-			TermsDigest:     catalog.termsDigest.String(),
-			Version:         catalog.version,
+			Architecture:      catalog.architecture.String(),
+			CatalogDigest:     catalog.catalogDigest.String(),
+			CatalogSequence:   catalog.catalogSequence,
+			Channel:           catalog.channel,
+			DownloadBytes:     catalog.downloadBytes,
+			ExpandedBytes:     catalog.expandedBytes,
+			Platform:          catalog.platform.String(),
+			Product:           catalog.product,
+			TermsDigest:       catalog.terms.digest.String(),
+			TermsID:           catalog.terms.id,
+			TermsPresentation: catalog.terms.presentation,
+			TermsURL:          catalog.terms.url,
+			TermsVersion:      catalog.terms.version,
+			Version:           catalog.version,
 		},
 		DecisionCode: code.String(),
 		Discovery: canonicalRuntimeDiscovery{
@@ -214,7 +222,11 @@ func runtimeFactsFromDocument(
 	}
 	catalog, err := NewCertifiedRuntime(
 		catalogPlatform, catalogArchitecture, document.Catalog.Product, document.Catalog.Version,
-		document.Catalog.Channel, document.Catalog.CatalogSequence, catalogDigest, termsDigest,
+		document.Catalog.Channel, document.Catalog.CatalogSequence, catalogDigest, RuntimeTermsInput{
+			ID: document.Catalog.TermsID, Version: document.Catalog.TermsVersion,
+			URL: document.Catalog.TermsURL, Digest: termsDigest,
+			Presentation: document.Catalog.TermsPresentation,
+		},
 		document.Catalog.DownloadBytes, document.Catalog.ExpandedBytes,
 	)
 	if err != nil {
@@ -269,7 +281,10 @@ func validCatalogFacts(catalog CertifiedRuntime) bool {
 	}
 	restored, err := NewCertifiedRuntime(
 		catalog.platform, catalog.architecture, catalog.product, catalog.version, catalog.channel,
-		catalog.catalogSequence, catalog.catalogDigest, catalog.termsDigest,
+		catalog.catalogSequence, catalog.catalogDigest, RuntimeTermsInput{
+			ID: catalog.terms.id, Version: catalog.terms.version, URL: catalog.terms.url,
+			Digest: catalog.terms.digest, Presentation: catalog.terms.presentation,
+		},
 		catalog.downloadBytes, catalog.expandedBytes,
 	)
 	return err == nil && restored.catalogDigest == catalog.catalogDigest
@@ -487,16 +502,20 @@ type canonicalRuntimePlan struct {
 }
 
 type canonicalRuntimeCatalog struct {
-	Architecture    string `json:"architecture"`
-	CatalogDigest   string `json:"catalog_digest"`
-	CatalogSequence uint64 `json:"catalog_sequence"`
-	Channel         string `json:"channel"`
-	DownloadBytes   uint64 `json:"download_bytes"`
-	ExpandedBytes   uint64 `json:"expanded_bytes"`
-	Platform        string `json:"platform"`
-	Product         string `json:"product"`
-	TermsDigest     string `json:"terms_digest"`
-	Version         string `json:"version"`
+	Architecture      string `json:"architecture"`
+	CatalogDigest     string `json:"catalog_digest"`
+	CatalogSequence   uint64 `json:"catalog_sequence"`
+	Channel           string `json:"channel"`
+	DownloadBytes     uint64 `json:"download_bytes"`
+	ExpandedBytes     uint64 `json:"expanded_bytes"`
+	Platform          string `json:"platform"`
+	Product           string `json:"product"`
+	TermsDigest       string `json:"terms_digest"`
+	TermsID           string `json:"terms_id"`
+	TermsPresentation string `json:"terms_presentation"`
+	TermsURL          string `json:"terms_url"`
+	TermsVersion      string `json:"terms_version"`
+	Version           string `json:"version"`
 }
 
 type canonicalRuntimeDiscovery struct {

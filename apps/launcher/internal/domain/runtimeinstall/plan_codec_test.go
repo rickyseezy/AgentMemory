@@ -21,6 +21,10 @@ func TestCanonicalPlanV1RoundTripsEveryDecisionInput(t *testing.T) {
 		decoded.Digest() != Sum(plan.CanonicalBytes()) || decoded.Digest() != plan.Digest() ||
 		decoded.CatalogDigest() != certifiedCatalog(t).CatalogDigest() ||
 		decoded.TermsDigest() != certifiedCatalog(t).TermsDigest() ||
+		decoded.TermsID() != certifiedCatalog(t).TermsID() ||
+		decoded.TermsVersion() != certifiedCatalog(t).TermsVersion() ||
+		decoded.TermsURL() != certifiedCatalog(t).TermsURL() ||
+		decoded.TermsPresentation() != certifiedCatalog(t).TermsPresentation() ||
 		decoded.HostOSVersion() != supportedHost(t).OSVersion() || decoded.UnrelatedWorkloads() != 0 {
 		t.Fatal("decoded runtime plan lost an exact derived binding")
 	}
@@ -72,6 +76,9 @@ func TestDecodePlanV1RejectsUnsignedNormalizationAndContradictions(t *testing.T)
 		{name: "unknown nested", raw: bytes.Replace(canonical, []byte(`"architecture":`), []byte(`"ambient_path":"docker","architecture":`), 1), want: ErrPlanUnknownField},
 		{name: "unsupported schema", raw: bytes.Replace(canonical, []byte(`"schema_version":1`), []byte(`"schema_version":2`), 1), want: ErrPlanUnsupportedSchema},
 		{name: "contradictory action", raw: bytes.Replace(canonical, []byte(`"action":"install_certified"`), []byte(`"action":"block"`), 1), want: ErrPlanIntegrity},
+		{name: "substituted terms identity", raw: bytes.Replace(canonical, []byte(`"terms_id":"docker-subscription-service-agreement"`), []byte(`"terms_id":"docker-engine-open-source-licenses"`), 1), want: ErrPlanIntegrity},
+		{name: "substituted terms URL", raw: bytes.Replace(canonical, []byte(`"terms_url":"https://www.docker.com/legal/docker-subscription-service-agreement/"`), []byte(`"terms_url":"https://docs.docker.com/engine/"`), 1), want: ErrPlanIntegrity},
+		{name: "substituted presentation", raw: bytes.Replace(canonical, []byte(`"terms_presentation":"agentmemory_then_native"`), []byte(`"terms_presentation":"foreign"`), 1), want: ErrPlanIntegrity},
 		{name: "unsafe integer", raw: bytes.Replace(canonical, []byte(`"catalog_sequence":42`), []byte(`"catalog_sequence":9007199254740992`), 1), want: ErrPlanIntegrity},
 	}
 	for _, test := range tests {
@@ -113,12 +120,13 @@ func TestNewPlanV1RejectsOutOfVocabularyTypedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog, err := NewCertifiedRuntime(
-		Platform(255), ArchitectureAMD64, "docker", "28.0.0", "stable", 42,
-		Sum([]byte("catalog")), Sum([]byte("terms")), 1024, 4096,
+		PlatformDarwin, ArchitectureAMD64, "docker", "28.0.0", "stable", 42,
+		Sum([]byte("catalog")), runtimeTermsFixture(PlatformDarwin, Sum([]byte("terms"))), 1024, 4096,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	catalog.platform = Platform(255)
 	for _, input := range []struct {
 		host      HostCapabilities
 		discovery RuntimeDiscovery
@@ -172,7 +180,7 @@ func TestDecodePlanV1CoversEveryClosedPlatformAndDiscoveryToken(t *testing.T) {
 			}
 			catalog, err := NewCertifiedRuntime(
 				test.platform, test.architecture, "docker", "28.0.0", "stable", 42,
-				Sum([]byte("catalog:"+test.name)), Sum([]byte("terms")), 1024, 4096,
+				Sum([]byte("catalog:"+test.name)), runtimeTermsFixture(test.platform, Sum([]byte("terms"))), 1024, 4096,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -228,7 +236,7 @@ func FuzzDecodePlanV1(f *testing.F) {
 	}
 	catalog, err := NewCertifiedRuntime(
 		PlatformDarwin, ArchitectureARM64, "docker-desktop", "4.40.0", "stable", 42,
-		Sum([]byte("catalog")), Sum([]byte("terms")), 1024, 2048,
+		Sum([]byte("catalog")), runtimeTermsFixture(PlatformDarwin, Sum([]byte("terms"))), 1024, 2048,
 	)
 	if err != nil {
 		f.Fatal(err)

@@ -226,7 +226,11 @@ func nativeRuntimeCertifiedCatalog(t testing.TB) runtimeinstall.CertifiedRuntime
 	t.Helper()
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformDarwin, runtimeinstall.ArchitectureARM64, "docker_desktop", "28.3.2", "stable", 42,
-		runtimeinstall.Sum([]byte("inner manifest")), runtimeinstall.Sum([]byte("terms")), 700_000_000, 2_000_000_000,
+		runtimeinstall.Sum([]byte("inner manifest")), runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
+			URL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
+			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+		}, 700_000_000, 2_000_000_000,
 	)
 	if err != nil {
 		t.Fatal(err)

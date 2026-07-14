@@ -135,7 +135,7 @@ func brokerPlan(t testing.TB, platform runtimeinstall.Platform, architecture run
 	}
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		platform, architecture, "docker_desktop", "4.70.0", "stable", 7,
-		runtimeinstall.Sum([]byte("catalog-"+platform.String())), runtimeinstall.Sum([]byte("terms")),
+		runtimeinstall.Sum([]byte("catalog-"+platform.String())), brokerRuntimeTerms(platform, runtimeinstall.Sum([]byte("terms"))),
 		500<<20, 2<<30,
 	)
 	if err != nil {
@@ -146,6 +146,20 @@ func brokerPlan(t testing.TB, platform runtimeinstall.Platform, architecture run
 		t.Fatal(err)
 	}
 	return plan
+}
+
+func brokerRuntimeTerms(platform runtimeinstall.Platform, digest runtimeinstall.Hash) runtimeinstall.RuntimeTermsInput {
+	if platform == runtimeinstall.PlatformLinux {
+		return runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
+			Digest: digest, Presentation: runtimeinstall.TermsPresentationAgentMemory,
+		}
+	}
+	return runtimeinstall.RuntimeTermsInput{
+		ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
+		URL: "https://www.docker.com/legal/docker-subscription-service-agreement/", Digest: digest,
+		Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+	}
 }
 
 func brokerLinuxAuthority(t testing.TB) runtimeport.LinuxAuthority {
@@ -170,8 +184,8 @@ func brokerLinuxAuthority(t testing.TB) runtimeport.LinuxAuthority {
 	probe := runtimeinstall.Sum([]byte("probe"))
 	authority, err := runtimeport.NewLinuxAuthority(runtimeport.LinuxAuthorityInput{
 		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), TermsDigest: plan.TermsDigest(),
-		TermsID: "docker-subscription-service-agreement", TermsVersion: "2025.07.02",
-		TermsURL: "https://www.docker.com/legal/docker-subscription-service-agreement/", TermsPresentation: "agentmemory",
+		TermsID: runtimeinstall.DockerEngineTermsID, TermsVersion: "apache-2.0",
+		TermsURL: "https://docs.docker.com/engine/", TermsPresentation: "agentmemory",
 		ArtifactDigest: runtimeinstall.Sum([]byte("artifact")), SigningKeyID: "agentmemory-runtime-root-2026",
 		Architecture: runtimeinstall.ArchitectureAMD64, Distribution: "ubuntu", VersionID: "24.04", Codename: "noble",
 		MinimumKernel: "6.8.0", MinimumCPUs: 4, MinimumTotalMemory: 16 << 30,

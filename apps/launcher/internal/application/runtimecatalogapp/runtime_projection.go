@@ -18,7 +18,8 @@ func (c VerifiedCatalog) CertifiedRuntime() (runtimeinstall.CertifiedRuntime, er
 		return runtimeinstall.CertifiedRuntime{}, err
 	}
 	manifestDigest := runtimeinstall.Hash(c.manifest.Digest())
-	termsDigest := runtimeinstall.Hash(c.manifest.Terms().Digest())
+	terms := c.manifest.Terms()
+	termsURL := terms.URL().Scheme() + "://" + terms.URL().Host() + terms.URL().PathPrefix()
 	return runtimeinstall.NewCertifiedRuntime(
 		platform,
 		architecture,
@@ -27,7 +28,10 @@ func (c VerifiedCatalog) CertifiedRuntime() (runtimeinstall.CertifiedRuntime, er
 		string(c.manifest.Runtime().Channel()),
 		c.manifest.CatalogSequence(),
 		manifestDigest,
-		termsDigest,
+		runtimeinstall.RuntimeTermsInput{
+			ID: terms.ID(), Version: terms.Version(), URL: termsURL,
+			Digest: runtimeinstall.Hash(terms.Digest()), Presentation: string(terms.Presentation()),
+		},
 		c.manifest.Artifact().DownloadBytes(),
 		c.manifest.Artifact().ExpandedBytes(),
 	)

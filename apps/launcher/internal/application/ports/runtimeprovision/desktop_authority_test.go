@@ -147,7 +147,11 @@ func desktopTestPlan(
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		platform, architecture, "docker_desktop", "4.70.0", "stable", 7,
 		runtimeinstall.Sum([]byte("desktop-catalog-"+platform.String())),
-		runtimeinstall.Sum([]byte("docker-terms")), 500<<20, 2<<30,
+		runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
+			URL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
+			Digest: runtimeinstall.Sum([]byte("docker-terms")), Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+		}, 500<<20, 2<<30,
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -356,6 +356,10 @@ func (a *Authority) runtimeConsent(
 	if !ok {
 		return setupprogressapp.ConsentInput{}, setupprogressapp.ErrAuthorityIntegrity
 	}
+	termsTitle, termsURL, ok := runtimeConsentTerms(plan)
+	if !ok {
+		return setupprogressapp.ConsentInput{}, setupprogressapp.ErrAuthorityIntegrity
+	}
 	changes := []string{change}
 	if (plan.Platform() == runtimeinstall.PlatformDarwin || plan.Platform() == runtimeinstall.PlatformWindows) &&
 		(plan.Action() == runtimeinstall.PlanActionInstallCertified ||
@@ -363,12 +367,38 @@ func (a *Authority) runtimeConsent(
 		changes = append(changes, "Confirm you are authorized and licensed to use Docker Desktop")
 	}
 	return setupprogressapp.ConsentInput{
-		TermsTitle:  "Docker Subscription Service Agreement",
-		TermsURL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
+		TermsTitle:  termsTitle,
+		TermsURL:    termsURL,
 		TermsDigest: plan.TermsDigest().String(), DownloadBytes: plan.DownloadBytes(),
 		ExpandedBytes: plan.ExpandedBytes(), RequiresElevation: elevation,
 		MayRequireReboot: reboot, Changes: changes,
 	}, nil
+}
+
+func runtimeConsentTerms(plan runtimeinstall.Plan) (string, string, bool) {
+	if plan.TermsVersion() == "" || plan.TermsDigest().IsZero() {
+		return "", "", false
+	}
+	switch plan.Platform() {
+	case runtimeinstall.PlatformDarwin, runtimeinstall.PlatformWindows:
+		if plan.TermsID() != runtimeinstall.DockerDesktopTermsID ||
+			(plan.TermsURL() != "https://www.docker.com/legal/docker-subscription-service-agreement" &&
+				plan.TermsURL() != "https://www.docker.com/legal/docker-subscription-service-agreement/") ||
+			(plan.TermsPresentation() != runtimeinstall.TermsPresentationAgentMemory &&
+				plan.TermsPresentation() != runtimeinstall.TermsPresentationAgentMemoryThenNative) {
+			return "", "", false
+		}
+		return "Docker Subscription Service Agreement", plan.TermsURL(), true
+	case runtimeinstall.PlatformLinux:
+		if plan.TermsID() != runtimeinstall.DockerEngineTermsID ||
+			plan.TermsURL() != "https://docs.docker.com/engine/" ||
+			plan.TermsPresentation() != runtimeinstall.TermsPresentationAgentMemory {
+			return "", "", false
+		}
+		return "Docker Engine open-source licenses", plan.TermsURL(), true
+	case runtimeinstall.PlatformUnknown:
+	}
+	return "", "", false
 }
 
 func runtimeConsentChange(plan runtimeinstall.Plan) (string, bool, bool, bool) {

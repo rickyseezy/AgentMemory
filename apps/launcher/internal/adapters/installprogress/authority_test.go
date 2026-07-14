@@ -138,6 +138,8 @@ func TestPF001ProgressProjectsAuthenticatedRuntimeConsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
+		`"termsTitle":"Docker Subscription Service Agreement"`,
+		`"termsUrl":"https://www.docker.com/legal/docker-subscription-service-agreement/"`,
 		`"termsDigest":"` + authority.Plan().TermsDigest().String() + `"`,
 		`"downloadBytes":700000000`, `"expandedBytes":2000000000`,
 		`"requiresElevation":true`, `"mayRequireReboot":false`,
@@ -146,6 +148,38 @@ func TestPF001ProgressProjectsAuthenticatedRuntimeConsent(t *testing.T) {
 		if !strings.Contains(string(canonical), required) {
 			t.Fatalf("canonical consent %s missing %s", canonical, required)
 		}
+	}
+}
+
+func TestPF001RuntimeConsentUsesSignedLinuxLicenseDisclosure(t *testing.T) {
+	t.Parallel()
+	host, err := runtimeinstall.NewHostCapabilities(
+		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "6.8.0", true,
+		true, true, true, 8, 32<<30, 24<<30, 80<<30,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := runtimeinstall.NewCertifiedRuntime(
+		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "docker_engine", "29.6.1", "stable", 43,
+		runtimeinstall.Sum([]byte("linux-catalog")), runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
+			Digest: runtimeinstall.Sum([]byte("engine-license")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
+		}, 700000000, 2000000000,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := runtimeinstall.NewPlanV1(host, runtimeinstall.NewAbsentRuntimeDiscovery(), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	title, termsURL, valid := runtimeConsentTerms(plan)
+	if !valid || title != "Docker Engine open-source licenses" || termsURL != "https://docs.docker.com/engine/" {
+		t.Fatalf("Linux disclosure=(%q,%q,%t)", title, termsURL, valid)
+	}
+	if strings.Contains(title+termsURL, "subscription-service-agreement") {
+		t.Fatalf("Linux disclosure reused Docker Desktop agreement: %q %q", title, termsURL)
 	}
 }
 
@@ -247,6 +281,9 @@ func TestPF001RuntimeProgressProjectionCoversEveryClosedStateAndFailure(t *testi
 	}
 	if _, _, _, ok := runtimeConsentChange(runtimeinstall.Plan{}); ok {
 		t.Fatal("zero runtime plan produced consent")
+	}
+	if _, _, ok := runtimeConsentTerms(runtimeinstall.Plan{}); ok {
+		t.Fatal("zero runtime plan produced terms")
 	}
 }
 
@@ -514,7 +551,11 @@ func runtimeConsentAuthority(
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformDarwin, runtimeinstall.ArchitectureARM64,
 		"docker_desktop", "28.3.2", "stable", 42,
-		runtimeinstall.Sum([]byte("catalog")), runtimeinstall.Sum([]byte("terms")),
+		runtimeinstall.Sum([]byte("catalog")), runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
+			URL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
+			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+		},
 		700000000, 2000000000,
 	)
 	if err != nil {

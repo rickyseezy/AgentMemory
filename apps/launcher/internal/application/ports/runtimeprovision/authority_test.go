@@ -192,7 +192,10 @@ func testPlan(t *testing.T) runtimeinstall.Plan {
 	catalogDigest := runtimeinstall.Sum([]byte("catalog"))
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "docker_engine", "29.6.1",
-		"stable", 7, catalogDigest, runtimeinstall.Sum([]byte("terms")), 1, 2,
+		"stable", 7, catalogDigest, runtimeinstall.RuntimeTermsInput{
+			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
+			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
+		}, 1, 2,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -224,8 +227,8 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 	}
 	return LinuxAuthorityInput{
 		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), TermsDigest: plan.TermsDigest(),
-		TermsID: "docker-subscription-service-agreement", TermsVersion: "2025.07.02",
-		TermsURL:          "https://www.docker.com/legal/docker-subscription-service-agreement/",
+		TermsID: runtimeinstall.DockerEngineTermsID, TermsVersion: "apache-2.0",
+		TermsURL:          "https://docs.docker.com/engine/",
 		TermsPresentation: "agentmemory",
 		ArtifactDigest:    runtimeinstall.Sum([]byte("artifact")),
 		SigningKeyID:      "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,

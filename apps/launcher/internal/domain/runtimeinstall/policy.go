@@ -233,9 +233,86 @@ type CertifiedRuntime struct {
 	channel         string
 	catalogSequence uint64
 	catalogDigest   Hash
-	termsDigest     Hash
+	terms           RuntimeTerms
 	downloadBytes   uint64
 	expandedBytes   uint64
+}
+
+const (
+	// DockerDesktopTermsID is the only certified Docker Desktop agreement.
+	DockerDesktopTermsID = "docker-subscription-service-agreement"
+	// DockerEngineTermsID identifies the independently installed open-source
+	// Engine license disclosure; it is not the Docker Desktop agreement.
+	DockerEngineTermsID = "docker-engine-open-source-licenses"
+
+	// TermsPresentationAgentMemory requires AgentMemory's authenticated visible consent surface.
+	TermsPresentationAgentMemory = "agentmemory"
+	// TermsPresentationAgentMemoryThenNative additionally permits a mandatory vendor-native terms surface.
+	TermsPresentationAgentMemoryThenNative = "agentmemory_then_native"
+)
+
+// RuntimeTermsInput is the exact signed legal/license disclosure embedded in
+// the executable runtime plan.
+type RuntimeTermsInput struct {
+	ID           string
+	Version      string
+	URL          string
+	Digest       Hash
+	Presentation string
+}
+
+// RuntimeTerms is an immutable, catalog-authenticated disclosure.
+type RuntimeTerms struct {
+	id           string
+	version      string
+	url          string
+	digest       Hash
+	presentation string
+}
+
+func newRuntimeTerms(platform Platform, input RuntimeTermsInput) (RuntimeTerms, error) {
+	if !validRuntimeTermsVersion(input.Version) || input.Digest.IsZero() {
+		return RuntimeTerms{}, errors.New("runtime terms authority is invalid")
+	}
+	switch platform {
+	case PlatformDarwin, PlatformWindows:
+		if input.ID != DockerDesktopTermsID ||
+			(input.URL != "https://www.docker.com/legal/docker-subscription-service-agreement" &&
+				input.URL != "https://www.docker.com/legal/docker-subscription-service-agreement/") ||
+			(input.Presentation != TermsPresentationAgentMemory &&
+				input.Presentation != TermsPresentationAgentMemoryThenNative) {
+			return RuntimeTerms{}, errors.New("docker desktop terms authority is invalid")
+		}
+	case PlatformLinux:
+		if input.ID != DockerEngineTermsID || input.URL != "https://docs.docker.com/engine/" ||
+			input.Presentation != TermsPresentationAgentMemory {
+			return RuntimeTerms{}, errors.New("docker engine license authority is invalid")
+		}
+	case PlatformUnknown:
+		return RuntimeTerms{}, errors.New("runtime terms platform is invalid")
+	default:
+		return RuntimeTerms{}, errors.New("runtime terms platform is invalid")
+	}
+	return RuntimeTerms{
+		id: input.ID, version: input.Version, url: input.URL,
+		digest: input.Digest, presentation: input.Presentation,
+	}, nil
+}
+
+func validRuntimeTermsVersion(version string) bool {
+	if version == "" || len(version) > 128 || strings.TrimSpace(version) != version {
+		return false
+	}
+	for _, character := range version {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '.' || character == '-' || character == '_' || character == '+' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // NewCertifiedRuntime validates an immutable signed-catalog selection.
@@ -247,7 +324,7 @@ func NewCertifiedRuntime(
 	channel string,
 	catalogSequence uint64,
 	catalogDigest Hash,
-	termsDigest Hash,
+	termsInput RuntimeTermsInput,
 	downloadBytes uint64,
 	expandedBytes uint64,
 ) (CertifiedRuntime, error) {
@@ -258,7 +335,8 @@ func NewCertifiedRuntime(
 		strings.TrimSpace(version) == "" || strings.TrimSpace(version) != version || channel != "stable" {
 		return CertifiedRuntime{}, errors.New("catalog requires a product, exact version, and stable channel")
 	}
-	if catalogSequence == 0 || catalogDigest.IsZero() || termsDigest.IsZero() {
+	terms, termsError := newRuntimeTerms(platform, termsInput)
+	if catalogSequence == 0 || catalogDigest.IsZero() || termsError != nil {
 		return CertifiedRuntime{}, errors.New("catalog sequence and trust digests are required")
 	}
 	if downloadBytes == 0 || expandedBytes < downloadBytes {
@@ -272,7 +350,7 @@ func NewCertifiedRuntime(
 		channel:         channel,
 		catalogSequence: catalogSequence,
 		catalogDigest:   catalogDigest,
-		termsDigest:     termsDigest,
+		terms:           terms,
 		downloadBytes:   downloadBytes,
 		expandedBytes:   expandedBytes,
 	}, nil
@@ -291,7 +369,19 @@ func (c CertifiedRuntime) CatalogSequence() uint64 { return c.catalogSequence }
 func (c CertifiedRuntime) CatalogDigest() Hash { return c.catalogDigest }
 
 // TermsDigest returns the exact third-party terms binding.
-func (c CertifiedRuntime) TermsDigest() Hash { return c.termsDigest }
+func (c CertifiedRuntime) TermsDigest() Hash { return c.terms.digest }
+
+// TermsID returns the exact signed disclosure identity.
+func (c CertifiedRuntime) TermsID() string { return c.terms.id }
+
+// TermsVersion returns the exact signed disclosure revision.
+func (c CertifiedRuntime) TermsVersion() string { return c.terms.version }
+
+// TermsURL returns the exact signed HTTPS disclosure location.
+func (c CertifiedRuntime) TermsURL() string { return c.terms.url }
+
+// TermsPresentation returns the signed visible/native presentation policy.
+func (c CertifiedRuntime) TermsPresentation() string { return c.terms.presentation }
 
 // DownloadBytes returns the declared acquisition size.
 func (c CertifiedRuntime) DownloadBytes() uint64 { return c.downloadBytes }
@@ -405,6 +495,10 @@ type Plan struct {
 	version            string
 	catalogHash        Hash
 	termsHash          Hash
+	termsID            string
+	termsVersion       string
+	termsURL           string
+	termsPresentation  string
 	downloadBytes      uint64
 	expandedBytes      uint64
 	hostOSVersion      string
@@ -439,6 +533,18 @@ func (p Plan) CatalogDigest() Hash { return p.catalogHash }
 // TermsDigest returns the exact third-party terms document bound into the
 // verified runtime catalog and canonical plan.
 func (p Plan) TermsDigest() Hash { return p.termsHash }
+
+// TermsID returns the signed legal/license disclosure identity.
+func (p Plan) TermsID() string { return p.termsID }
+
+// TermsVersion returns the exact disclosure revision.
+func (p Plan) TermsVersion() string { return p.termsVersion }
+
+// TermsURL returns the exact signed HTTPS disclosure location.
+func (p Plan) TermsURL() string { return p.termsURL }
+
+// TermsPresentation returns the signed display policy.
+func (p Plan) TermsPresentation() string { return p.termsPresentation }
 
 // DownloadBytes returns the signed acquisition size shown before consent.
 func (p Plan) DownloadBytes() uint64 { return p.downloadBytes }

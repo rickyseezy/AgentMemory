@@ -21,7 +21,7 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
 		len(trust.Provenance.BuildIdentities) != 1 || len(trust.Provenance.RecipeDigests) != 1 ||
 		len(trust.Qualification.PublicKeys) != 1 || len(trust.Qualification.LicensePolicySigners) != 1 ||
-		len(trust.Qualification.VulnerabilityPolicySigners) != 1 {
+		len(trust.Qualification.VulnerabilityPolicySigners) != 1 || len(trust.Publishers) != 1 {
 		t.Fatalf("trust=%+v error=%v", trust, err)
 	}
 	manifest := trust.ManifestKeys["release-root"]
@@ -60,6 +60,10 @@ func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testi
 				document.Qualification.LicensePolicySigners[digest] = "foreign"
 			}
 		},
+		"publisher policy": func(document *nativeReleaseTrustDocument) { document.Publishers = nil },
+		"duplicate publisher": func(document *nativeReleaseTrustDocument) {
+			document.Publishers["agentmemory-native-2026"] = []string{"agentmemory.publisher", "agentmemory.publisher"}
+		},
 	}
 	for name, mutate := range tests {
 		name, mutate := name, mutate
@@ -84,7 +88,7 @@ func TestPF001NativeReleaseTrustRejectsAmbiguousOrNoncanonicalTransport(t *testi
 	wires := map[string]string{
 		"empty":               "",
 		"invalid base64":      "%%%",
-		"noncanonical base64": strings.TrimRight(valid, "="),
+		"noncanonical base64": valid + "=",
 		"unknown field": base64.StdEncoding.EncodeToString(
 			[]byte(strings.Replace(string(raw), `"schemaVersion":1`, `"schemaVersion":1,"future":true`, 1)),
 		),
@@ -139,6 +143,7 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 			LicensePolicySigners:       map[string]string{license: "qualification-root"},
 			VulnerabilityPolicySigners: map[string]string{vulnerability: "qualification-root"},
 		},
+		Publishers: map[string][]string{"agentmemory-native-2026": {"agentmemory.publisher"}},
 	}
 }
 

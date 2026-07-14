@@ -29,6 +29,7 @@ type nativeReleaseTrustDocument struct {
 	Offline       nativeOfflineTrustDocument  `json:"offline"`
 	Provenance    nativeProvenanceDocument    `json:"provenance"`
 	Qualification nativeQualificationDocument `json:"qualification"`
+	Publishers    map[string][]string         `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -117,6 +118,7 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 			PublicKeys: qualificationKeys, LicensePolicySigners: license,
 			VulnerabilityPolicySigners: vulnerabilities,
 		},
+		Publishers: copyNativePublisherPolicy(document.Publishers),
 	}
 	// Reuse every production policy constructor here. A syntactically valid
 	// document cannot become release authority unless all semantic allowlists
@@ -133,7 +135,20 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if _, err := releaseverifyadapter.NewQualificationTrustPolicy(trust.Qualification); err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	if _, err := releaseverifyadapter.NewNativePublisherPolicyVerifier(trust.Publishers); err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	return trust, nil
+}
+
+func copyNativePublisherPolicy(
+	values map[string][]string,
+) releaseverifyadapter.NativePublisherPolicyInput {
+	result := make(releaseverifyadapter.NativePublisherPolicyInput, len(values))
+	for policyID, identities := range values {
+		result[policyID] = append([]string(nil), identities...)
+	}
+	return result
 }
 
 func decodeNativeReleaseKeys(values map[string]string) (map[string]ed25519.PublicKey, error) {

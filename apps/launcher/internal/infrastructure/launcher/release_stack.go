@@ -28,14 +28,14 @@ type nativeReleaseTrustMaterial struct {
 	Offline       releaseverifyadapter.OfflineTrustPolicyInput
 	Provenance    releaseverifyadapter.ProvenanceTrustPolicyInput
 	Qualification releaseverifyadapter.QualificationTrustPolicyInput
+	Publishers    releaseverifyadapter.NativePublisherPolicyInput
 }
 
 type nativeReleaseStackDependencies struct {
-	Source          nativeReleaseContentSource
-	Clock           appreleaseverify.Clock
-	NativePublisher appreleaseverify.NativePublisherVerifier
-	AntiRollback    appreleaseverify.AntiRollbackRepository
-	Trust           nativeReleaseTrustMaterial
+	Source       nativeReleaseContentSource
+	Clock        appreleaseverify.Clock
+	AntiRollback appreleaseverify.AntiRollbackRepository
+	Trust        nativeReleaseTrustMaterial
 }
 
 // nativeReleaseStack retains the complete release verifier and exposes only
@@ -49,8 +49,7 @@ type nativeReleaseStack struct {
 // the launcher. Every constructor below fails closed; there is no permissive
 // verifier for development or offline installation.
 func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeReleaseStack, error) {
-	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) ||
-		nilAny(dependencies.NativePublisher) || nilAny(dependencies.AntiRollback) {
+	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) || nilAny(dependencies.AntiRollback) {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	signature, err := releaseverifyadapter.NewEd25519KeyIDVerifier(dependencies.Trust.ManifestKeys)
@@ -83,6 +82,10 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 	if err != nil {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
+	publishers, err := releaseverifyadapter.NewNativePublisherPolicyVerifier(dependencies.Trust.Publishers)
+	if err != nil {
+		return nativeReleaseStack{}, firststartapp.ErrIntegrity
+	}
 	digests, err := releaseverifyadapter.NewSHA256ResourceDigestVerifier(dependencies.Source)
 	if err != nil {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
@@ -99,7 +102,7 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 		Clock: dependencies.Clock, Platform: nativeReleasePlatform{}, Protocol: nativeReleaseProtocol{},
 		Signature: signature, TrustEvidence: offline, ResourceDigest: digests,
 		SBOM: sboms, Provenance: provenance, License: qualification, Vulnerability: qualification,
-		NativePublisher: dependencies.NativePublisher, OCIIndex: oci, AntiRollback: dependencies.AntiRollback,
+		NativePublisher: publishers, OCIIndex: oci, AntiRollback: dependencies.AntiRollback,
 	})
 	if err != nil {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity

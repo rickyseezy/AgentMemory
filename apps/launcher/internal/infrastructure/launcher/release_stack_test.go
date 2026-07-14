@@ -37,7 +37,6 @@ func TestPF001NativeReleaseStackRejectsEveryMissingOrInvalidTrustAuthority(t *te
 	base := nativeReleaseStackFixture(t)
 	var nilSource *nativeReleaseSourceStub
 	var nilClock *nativeReleaseClock
-	var nilPublisher *nativeReleasePorts
 	var nilAnchor *nativeReleasePorts
 	for _, test := range []struct {
 		name   string
@@ -45,12 +44,12 @@ func TestPF001NativeReleaseStackRejectsEveryMissingOrInvalidTrustAuthority(t *te
 	}{
 		{name: "source", mutate: func(d *nativeReleaseStackDependencies) { d.Source = nilSource }},
 		{name: "clock", mutate: func(d *nativeReleaseStackDependencies) { d.Clock = nilClock }},
-		{name: "publisher", mutate: func(d *nativeReleaseStackDependencies) { d.NativePublisher = nilPublisher }},
 		{name: "anchor", mutate: func(d *nativeReleaseStackDependencies) { d.AntiRollback = nilAnchor }},
 		{name: "manifest keys", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.ManifestKeys = nil }},
 		{name: "offline policy", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.Offline.TrustDomain = "" }},
 		{name: "provenance policy", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.Provenance.BuildIdentities = nil }},
 		{name: "qualification policy", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.Qualification.PublicKeys = nil }},
+		{name: "publisher policy", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.Publishers = nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := base
@@ -101,8 +100,7 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 	vulnerability := releaseinventory.DigestBytes([]byte("vulnerability-policy"))
 	ports := &nativeReleasePorts{}
 	return nativeReleaseStackDependencies{
-		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()},
-		NativePublisher: ports, AntiRollback: ports,
+		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()}, AntiRollback: ports,
 		Trust: nativeReleaseTrustMaterial{
 			ManifestKeys: map[string]ed25519.PublicKey{"release-root": manifestPublic},
 			Offline: releaseverifyadapter.OfflineTrustPolicyInput{
@@ -120,6 +118,9 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 				PublicKeys:                 map[string]ed25519.PublicKey{"qualification": qualificationPublic},
 				LicensePolicySigners:       map[releaseinventory.Digest]string{license: "qualification"},
 				VulnerabilityPolicySigners: map[releaseinventory.Digest]string{vulnerability: "qualification"},
+			},
+			Publishers: releaseverifyadapter.NativePublisherPolicyInput{
+				"agentmemory-native-2026": {"agentmemory.publisher"},
 			},
 		},
 	}
@@ -140,10 +141,6 @@ type nativeReleaseClock struct{ now time.Time }
 func (c *nativeReleaseClock) Now() time.Time { return c.now }
 
 type nativeReleasePorts struct{}
-
-func (*nativeReleasePorts) VerifyNativePublisher(context.Context, releaseinventory.Resource) error {
-	return nil
-}
 
 func (*nativeReleasePorts) LoadReleaseAnchor(context.Context, releaseinventory.ReleaseChannel) (appreleaseverify.ReleaseAnchor, error) {
 	return appreleaseverify.ReleaseAnchor{}, appreleaseverify.ErrReleaseAnchorNotFound

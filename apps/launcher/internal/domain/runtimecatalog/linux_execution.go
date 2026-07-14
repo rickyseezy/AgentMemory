@@ -51,6 +51,34 @@ const (
 	LinuxRepositoryArtifactPackageIndex LinuxRepositoryArtifactRole = "package_index"
 )
 
+// LinuxRepositoryMetadataAuthentication is the closed publisher-authentication
+// mode for native repository metadata. Package signatures remain mandatory for
+// every DNF package regardless of this mode.
+type LinuxRepositoryMetadataAuthentication string
+
+const (
+	// LinuxRepositoryMetadataAuthenticationInline identifies APT InRelease
+	// metadata whose OpenPGP signature is carried in the metadata object.
+	LinuxRepositoryMetadataAuthenticationInline LinuxRepositoryMetadataAuthentication = "inline"
+	// LinuxRepositoryMetadataAuthenticationDetached identifies DNF repomd.xml
+	// metadata with a separately retained publisher signature.
+	LinuxRepositoryMetadataAuthenticationDetached LinuxRepositoryMetadataAuthentication = "detached"
+	// LinuxRepositoryMetadataAuthenticationPackageSignatures identifies a DNF
+	// repository that does not publish signed metadata. Its metadata is pinned by
+	// the signed AgentMemory catalog and every selected RPM must authenticate to
+	// the repository's exact publisher key.
+	LinuxRepositoryMetadataAuthenticationPackageSignatures LinuxRepositoryMetadataAuthentication = "package_signatures"
+)
+
+func (m LinuxRepositoryMetadataAuthentication) validFor(manager LinuxPackageManager) bool {
+	if manager == LinuxPackageManagerAPT {
+		return m == LinuxRepositoryMetadataAuthenticationInline
+	}
+	return manager == LinuxPackageManagerDNF &&
+		(m == LinuxRepositoryMetadataAuthenticationDetached ||
+			m == LinuxRepositoryMetadataAuthenticationPackageSignatures)
+}
+
 // LinuxRepositoryArtifactInput is one exact official trust-chain resource.
 type LinuxRepositoryArtifactInput struct {
 	Role          LinuxRepositoryArtifactRole
@@ -82,44 +110,50 @@ func (a LinuxRepositoryArtifact) Source() SourceLocation { return a.source }
 // LinuxRepositoryInput binds the exact official repository state consumed by
 // the unprivileged acquisition adapter and later installed by the helper.
 type LinuxRepositoryInput struct {
-	ID                    string
-	URL                   OfficialSourceInput
-	Suite                 string
-	Component             string
-	SigningKeyFingerprint string
-	SigningKeyDigest      Digest
-	ConfigurationDigest   Digest
-	MetadataDigest        Digest
-	VerificationArtifacts []LinuxRepositoryArtifactInput
+	ID                     string
+	URL                    OfficialSourceInput
+	Suite                  string
+	Component              string
+	SigningKeyFingerprint  string
+	SigningKeyDigest       Digest
+	ConfigurationDigest    Digest
+	MetadataDigest         Digest
+	MetadataAuthentication LinuxRepositoryMetadataAuthentication
+	VerificationArtifacts  []LinuxRepositoryArtifactInput
 }
 
 // LinuxRepository is immutable signed repository authority.
 type LinuxRepository struct {
-	id                    string
-	url                   SourceLocation
-	suite                 string
-	component             string
-	signingKeyFingerprint string
-	signingKeyDigest      Digest
-	configurationDigest   Digest
-	metadataDigest        Digest
-	verification          []LinuxRepositoryArtifact
+	id                     string
+	url                    SourceLocation
+	suite                  string
+	component              string
+	signingKeyFingerprint  string
+	signingKeyDigest       Digest
+	configurationDigest    Digest
+	metadataDigest         Digest
+	metadataAuthentication LinuxRepositoryMetadataAuthentication
+	verification           []LinuxRepositoryArtifact
 }
 
 func newLinuxRepository(
 	input LinuxRepositoryInput,
 	codename string,
 	manager LinuxPackageManager,
+	primary bool,
 ) (LinuxRepository, error) {
 	url, err := NewSourceLocation(input.URL)
 	if err != nil || !strings.HasSuffix(input.URL.PathPrefix, "/") || !validIdentifier(input.ID) ||
-		!validIdentifier(input.Suite) || input.Suite != codename || input.Component != "stable" ||
+		!validIdentifier(input.Suite) || !validIdentifier(input.Component) ||
+		(primary && (input.Suite != codename || input.Component != "stable")) ||
+		(!primary && input.Suite != codename && !strings.HasPrefix(input.Suite, codename+"-")) ||
 		!validUpperHexFingerprint(input.SigningKeyFingerprint) || input.SigningKeyDigest.IsZero() ||
+		!input.MetadataAuthentication.validFor(manager) ||
 		input.ConfigurationDigest.IsZero() || input.MetadataDigest.IsZero() {
 		return LinuxRepository{}, ErrManifestIntegrity
 	}
 	verification, err := newLinuxRepositoryArtifacts(
-		input.VerificationArtifacts, manager, url, codename, input.Component,
+		input.VerificationArtifacts, manager, input.MetadataAuthentication, url, input.Suite, input.Component,
 	)
 	if err != nil || len(verification) == 0 || !verification[0].sha256.Equal(input.SigningKeyDigest) ||
 		!LinuxRepositoryMetadataDigest(input.VerificationArtifacts).Equal(input.MetadataDigest) {
@@ -129,7 +163,8 @@ func newLinuxRepository(
 		id: input.ID, url: url, suite: input.Suite, component: input.Component,
 		signingKeyFingerprint: input.SigningKeyFingerprint,
 		signingKeyDigest:      input.SigningKeyDigest, configurationDigest: input.ConfigurationDigest,
-		metadataDigest: input.MetadataDigest, verification: verification,
+		metadataDigest: input.MetadataDigest, metadataAuthentication: input.MetadataAuthentication,
+		verification: verification,
 	}, nil
 }
 
@@ -157,6 +192,11 @@ func (r LinuxRepository) ConfigurationDigest() Digest { return r.configurationDi
 // MetadataDigest returns the pinned authenticated metadata-set digest.
 func (r LinuxRepository) MetadataDigest() Digest { return r.metadataDigest }
 
+// MetadataAuthentication returns the exact signed repository-metadata policy.
+func (r LinuxRepository) MetadataAuthentication() LinuxRepositoryMetadataAuthentication {
+	return r.metadataAuthentication
+}
+
 // VerificationArtifacts returns the fixed-order native trust-chain inputs.
 func (r LinuxRepository) VerificationArtifacts() []LinuxRepositoryArtifact {
 	return append([]LinuxRepositoryArtifact(nil), r.verification...)
@@ -165,6 +205,7 @@ func (r LinuxRepository) VerificationArtifacts() []LinuxRepositoryArtifact {
 func newLinuxRepositoryArtifacts(
 	inputs []LinuxRepositoryArtifactInput,
 	manager LinuxPackageManager,
+	metadataAuthentication LinuxRepositoryMetadataAuthentication,
 	repository SourceLocation,
 	codename string,
 	component string,
@@ -174,7 +215,8 @@ func newLinuxRepositoryArtifacts(
 		LinuxRepositoryArtifactSignedMetadata,
 		LinuxRepositoryArtifactPackageIndex,
 	}
-	if manager == LinuxPackageManagerDNF {
+	if manager == LinuxPackageManagerDNF &&
+		metadataAuthentication == LinuxRepositoryMetadataAuthenticationDetached {
 		expected = []LinuxRepositoryArtifactRole{
 			LinuxRepositoryArtifactSigningKey,
 			LinuxRepositoryArtifactSignedMetadata,
@@ -190,7 +232,8 @@ func newLinuxRepositoryArtifacts(
 		source, err := NewSourceLocation(input.Source)
 		if err != nil || input.Role != expected[index] || input.DownloadBytes == 0 ||
 			input.DownloadBytes > maximumLinuxRepositoryArtifactBytes(input.Role) || input.SHA256.IsZero() ||
-			source.Scheme() != repository.Scheme() || source.Host() != repository.Host() ||
+			source.Scheme() != repository.Scheme() ||
+			(input.Role != LinuxRepositoryArtifactSigningKey && source.Host() != repository.Host()) ||
 			!linuxRepositoryArtifactPathValid(manager, input.Role, source.PathPrefix(), repository.PathPrefix(), codename, component) {
 			return nil, ErrManifestIntegrity
 		}
@@ -198,7 +241,7 @@ func newLinuxRepositoryArtifacts(
 			role: input.Role, downloadBytes: input.DownloadBytes, sha256: input.SHA256, source: source,
 		})
 	}
-	if manager == LinuxPackageManagerDNF &&
+	if manager == LinuxPackageManagerDNF && len(result) == 4 &&
 		result[2].source.PathPrefix() != result[1].source.PathPrefix()+".asc" {
 		return nil, ErrManifestIntegrity
 	}
@@ -222,7 +265,7 @@ func linuxRepositoryArtifactPathValid(
 ) bool {
 	base := strings.TrimSuffix(repositoryPath, "/")
 	if role == LinuxRepositoryArtifactSigningKey {
-		return path == base+"/gpg"
+		return strings.HasSuffix(path, "/gpg") || strings.HasSuffix(path, ".gpg")
 	}
 	if manager == LinuxPackageManagerAPT {
 		switch role {
@@ -242,11 +285,11 @@ func linuxRepositoryArtifactPathValid(
 	}
 	switch role {
 	case LinuxRepositoryArtifactSignedMetadata:
-		return strings.HasSuffix(path, "/"+component+"/repodata/repomd.xml")
+		return path == base+"/repodata/repomd.xml"
 	case LinuxRepositoryArtifactMetadataSignature:
-		return strings.HasSuffix(path, "/"+component+"/repodata/repomd.xml.asc")
+		return path == base+"/repodata/repomd.xml.asc"
 	case LinuxRepositoryArtifactPackageIndex:
-		return strings.Contains(path, "/"+component+"/repodata/") && strings.HasSuffix(path, "-primary.xml.gz")
+		return strings.HasPrefix(path, base+"/repodata/") && strings.HasSuffix(path, "-primary.xml.gz")
 	case LinuxRepositoryArtifactSigningKey:
 		return false
 	}
@@ -290,10 +333,43 @@ type LinuxPackageInput struct {
 	Name                string
 	Version             string
 	Purpose             LinuxPackagePurpose
+	RepositoryID        string
 	DownloadBytes       uint64
 	SHA256              Digest
 	NativeReceiptDigest Digest
 	Source              OfficialSourceInput
+}
+
+// LinuxNativePackageReceiptDigest binds the exact package-index fields that a
+// native repository verifier must authenticate before the package is eligible
+// for a privileged transaction. Catalog producers must use this canonical
+// receipt; arbitrary opaque receipt digests are rejected.
+func LinuxNativePackageReceiptDigest(manager LinuxPackageManager, input LinuxPackageInput) Digest {
+	if !manager.valid() || input.Name == "" || input.Version == "" || input.RepositoryID == "" || input.DownloadBytes == 0 ||
+		input.SHA256.IsZero() || input.Source.Scheme == "" || input.Source.Host == "" ||
+		input.Source.PathPrefix == "" {
+		return Digest{}
+	}
+	document := struct {
+		DownloadBytes uint64              `json:"download_bytes"`
+		Manager       LinuxPackageManager `json:"manager"`
+		Name          string              `json:"name"`
+		RepositoryID  string              `json:"repository_id"`
+		SHA256        string              `json:"sha256"`
+		Source        canonicalSource     `json:"source"`
+		Version       string              `json:"version"`
+	}{
+		DownloadBytes: input.DownloadBytes, Manager: manager, Name: input.Name, RepositoryID: input.RepositoryID,
+		SHA256: input.SHA256.Hex(), Version: input.Version,
+		Source: canonicalSource{
+			Scheme: input.Source.Scheme, Host: input.Source.Host, PathPrefix: input.Source.PathPrefix,
+		},
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return Digest{}
+	}
+	return DigestBytes(encoded)
 }
 
 // LinuxPackage is immutable acquisition and native publisher authority.
@@ -301,6 +377,7 @@ type LinuxPackage struct {
 	name                string
 	version             string
 	purpose             LinuxPackagePurpose
+	repositoryID        string
 	downloadBytes       uint64
 	sha256              Digest
 	nativeReceiptDigest Digest
@@ -315,6 +392,9 @@ func (p LinuxPackage) Version() string { return p.version }
 
 // Purpose returns the closed semantic package role.
 func (p LinuxPackage) Purpose() LinuxPackagePurpose { return p.purpose }
+
+// RepositoryID returns the signed repository that authenticates this package.
+func (p LinuxPackage) RepositoryID() string { return p.repositoryID }
 
 // DownloadBytes returns the exact package artifact size.
 func (p LinuxPackage) DownloadBytes() uint64 { return p.downloadBytes }
@@ -338,6 +418,7 @@ type LinuxExecutionPolicyInput struct {
 	MinimumKernel             string
 	MinimumAvailableMemory    uint64
 	Repository                LinuxRepositoryInput
+	VerificationRepositories  []LinuxRepositoryInput
 	Packages                  []LinuxPackageInput
 	PackageSetDigest          Digest
 	RollbackHeadroomBytes     uint64
@@ -362,6 +443,7 @@ type LinuxExecutionPolicy struct {
 	minimumKernel             string
 	minimumAvailableMemory    uint64
 	repository                LinuxRepository
+	verificationRepositories  []LinuxRepository
 	packages                  []LinuxPackage
 	packageSetDigest          Digest
 	rollbackHeadroomBytes     uint64
@@ -393,20 +475,30 @@ func newLinuxExecutionPolicy(
 		!validLinuxProbeImage(input.ProbeImage, input.ProbeImageDigest) {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
-	repository, err := newLinuxRepository(input.Repository, input.Codename, input.PackageManager)
+	repository, err := newLinuxRepository(input.Repository, input.Codename, input.PackageManager, true)
 	if err != nil || !repositoryMatchesManager(repository, input.PackageManager) ||
 		!repositoryArtifactsAuthorized(repository.verification, artifact) {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
-	packages, err := newLinuxPackages(input.PackageManager, input.Packages, artifact)
+	verificationRepositories, err := newLinuxVerificationRepositories(
+		input.VerificationRepositories, input.Codename, input.PackageManager, repository, artifact,
+	)
+	if err != nil {
+		return LinuxExecutionPolicy{}, ErrManifestIntegrity
+	}
+	repositories := make(map[string]LinuxRepository, len(verificationRepositories)+1)
+	repositories[repository.id] = repository
+	for _, verificationRepository := range verificationRepositories {
+		repositories[verificationRepository.id] = verificationRepository
+	}
+	packages, err := newLinuxPackages(input.PackageManager, input.Packages, artifact, repositories, repository.id)
 	reserved, reserveOverflow := checkedLinuxBytes(
 		artifact.downloadBytes, input.RollbackHeadroomBytes, input.AcquisitionSafetyBytes,
 	)
-	packageAndTrustBytes, packageAndTrustOverflow := checkedLinuxBytes(
-		packageDownloadBytes(packages), repositoryArtifactDownloadBytes(repository.verification),
-	)
+	trustBytes, trustOverflow := linuxRepositorySetDownloadBytes(repository, verificationRepositories)
+	packageAndTrustBytes, packageAndTrustOverflow := checkedLinuxBytes(packageDownloadBytes(packages), trustBytes)
 	if err != nil || !LinuxPackageSetDigest(input.Packages).Equal(input.PackageSetDigest) ||
-		!input.PackageSetDigest.Equal(artifact.sha256) || packageAndTrustOverflow ||
+		!input.PackageSetDigest.Equal(artifact.sha256) || trustOverflow || packageAndTrustOverflow ||
 		packageAndTrustBytes != artifact.downloadBytes ||
 		reserveOverflow || reserved != artifact.reserveBytes {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
@@ -415,7 +507,8 @@ func newLinuxExecutionPolicy(
 		packageManager: input.PackageManager, packageManagerVersion: input.PackageManagerVersion,
 		codename: input.Codename, minimumKernel: input.MinimumKernel,
 		minimumAvailableMemory: input.MinimumAvailableMemory, repository: repository,
-		packages: packages, packageSetDigest: input.PackageSetDigest,
+		verificationRepositories: verificationRepositories,
+		packages:                 packages, packageSetDigest: input.PackageSetDigest,
 		rollbackHeadroomBytes:     input.RollbackHeadroomBytes,
 		acquisitionSafetyBytes:    input.AcquisitionSafetyBytes,
 		subordinateIDCount:        input.SubordinateIDCount,
@@ -426,6 +519,47 @@ func newLinuxExecutionPolicy(
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest,
 	}, nil
+}
+
+func newLinuxVerificationRepositories(
+	inputs []LinuxRepositoryInput,
+	codename string,
+	manager LinuxPackageManager,
+	primary LinuxRepository,
+	artifact ArtifactPolicy,
+) ([]LinuxRepository, error) {
+	if len(inputs) != 1 || !sort.SliceIsSorted(inputs, func(left, right int) bool {
+		return inputs[left].ID < inputs[right].ID
+	}) {
+		return nil, ErrManifestIntegrity
+	}
+	result := make([]LinuxRepository, 0, len(inputs))
+	for index, input := range inputs {
+		repository, err := newLinuxRepository(input, codename, manager, false)
+		if err != nil || repository.id == primary.id ||
+			index > 0 && inputs[index-1].ID == input.ID ||
+			!verificationRepositoryMatchesManager(repository, manager) ||
+			!repositoryArtifactsAuthorized(repository.verification, artifact) {
+			return nil, ErrManifestIntegrity
+		}
+		result = append(result, repository)
+	}
+	return result, nil
+}
+
+func linuxRepositorySetDownloadBytes(
+	primary LinuxRepository,
+	verification []LinuxRepository,
+) (uint64, bool) {
+	total := repositoryArtifactDownloadBytes(primary.verification)
+	for _, repository := range verification {
+		var overflow bool
+		total, overflow = checkedLinuxBytes(total, repositoryArtifactDownloadBytes(repository.verification))
+		if overflow {
+			return 0, true
+		}
+	}
+	return total, false
 }
 
 func repositoryArtifactsAuthorized(
@@ -458,6 +592,8 @@ func newLinuxPackages(
 	manager LinuxPackageManager,
 	inputs []LinuxPackageInput,
 	artifact ArtifactPolicy,
+	repositories map[string]LinuxRepository,
+	primaryRepositoryID string,
 ) ([]LinuxPackage, error) {
 	if len(inputs) != 7 || !sort.SliceIsSorted(inputs, func(left, right int) bool {
 		return inputs[left].Name < inputs[right].Name
@@ -478,18 +614,24 @@ func newLinuxPackages(
 	result := make([]LinuxPackage, 0, len(inputs))
 	for index, input := range inputs {
 		purpose, present := wanted[input.Name]
+		repository, repositoryPresent := repositories[input.RepositoryID]
 		source, sourceError := NewSourceLocation(input.Source)
 		if !present || purpose != input.Purpose || !input.Purpose.valid() ||
+			!repositoryPresent || !validIdentifier(input.RepositoryID) ||
+			(input.Purpose == LinuxPackagePurposeRuntime && input.RepositoryID != primaryRepositoryID) ||
+			(input.Purpose == LinuxPackagePurposePrerequisite && input.RepositoryID == primaryRepositoryID) ||
 			!validLinuxPackageVersion(input.Version) || input.DownloadBytes == 0 ||
 			input.DownloadBytes > maximumSafeJSONInteger || input.SHA256.IsZero() ||
-			input.NativeReceiptDigest.IsZero() || sourceError != nil ||
+			input.NativeReceiptDigest.IsZero() ||
+			!LinuxNativePackageReceiptDigest(manager, input).Equal(input.NativeReceiptDigest) || sourceError != nil ||
 			strings.HasSuffix(input.Source.PathPrefix, "/") || !artifactAuthorizesSource(artifact, source) ||
+			!repository.url.authorizes(source) ||
 			index > 0 && inputs[index-1].Name == input.Name {
 			return nil, ErrManifestIntegrity
 		}
 		delete(wanted, input.Name)
 		result = append(result, LinuxPackage{
-			name: input.Name, version: input.Version, purpose: input.Purpose,
+			name: input.Name, version: input.Version, purpose: input.Purpose, repositoryID: input.RepositoryID,
 			downloadBytes: input.DownloadBytes, sha256: input.SHA256,
 			nativeReceiptDigest: input.NativeReceiptDigest, source: source,
 		})
@@ -516,6 +658,34 @@ func repositoryMatchesManager(repository LinuxRepository, manager LinuxPackageMa
 			strings.HasPrefix(path, "/linux/debian/")) ||
 			manager == LinuxPackageManagerDNF && (strings.HasPrefix(path, "/linux/fedora/") ||
 				strings.HasPrefix(path, "/linux/centos/")))
+}
+
+func verificationRepositoryMatchesManager(repository LinuxRepository, manager LinuxPackageManager) bool {
+	host := repository.url.Host()
+	path := repository.url.PathPrefix()
+	if manager == LinuxPackageManagerAPT {
+		switch host {
+		case "archive.ubuntu.com", "ports.ubuntu.com", "security.ubuntu.com":
+			return strings.HasPrefix(path, "/ubuntu/")
+		case "deb.debian.org":
+			return strings.HasPrefix(path, "/debian/")
+		case "security.debian.org":
+			return strings.HasPrefix(path, "/debian-security/")
+		default:
+			return false
+		}
+	}
+	if manager != LinuxPackageManagerDNF {
+		return false
+	}
+	switch host {
+	case "download.fedoraproject.org", "dl.fedoraproject.org":
+		return strings.HasPrefix(path, "/pub/fedora/linux/")
+	case "mirror.stream.centos.org":
+		return strings.HasPrefix(path, "/")
+	default:
+		return false
+	}
 }
 
 func validLinuxPackageVersion(value string) bool {
@@ -577,6 +747,7 @@ func LinuxPackageSetDigest(inputs []LinuxPackageInput) Digest {
 		Name          string              `json:"name"`
 		Purpose       LinuxPackagePurpose `json:"purpose"`
 		Receipt       string              `json:"receipt_digest"`
+		RepositoryID  string              `json:"repository_id"`
 		SHA256        string              `json:"sha256"`
 		Source        canonicalSource     `json:"source"`
 		Version       string              `json:"version"`
@@ -585,7 +756,7 @@ func LinuxPackageSetDigest(inputs []LinuxPackageInput) Digest {
 	for _, input := range inputs {
 		document = append(document, canonicalPackage{
 			DownloadBytes: input.DownloadBytes, Name: input.Name, Purpose: input.Purpose,
-			Receipt: input.NativeReceiptDigest.Hex(), SHA256: input.SHA256.Hex(),
+			Receipt: input.NativeReceiptDigest.Hex(), RepositoryID: input.RepositoryID, SHA256: input.SHA256.Hex(),
 			Source:  canonicalSource{Scheme: input.Source.Scheme, Host: input.Source.Host, PathPrefix: input.Source.PathPrefix},
 			Version: input.Version,
 		})
@@ -624,7 +795,8 @@ func repositoryArtifactDownloadBytes(artifacts []LinuxRepositoryArtifact) uint64
 func linuxExecutionInputZero(input LinuxExecutionPolicyInput) bool {
 	return input.PackageManager == "" && input.PackageManagerVersion == "" && input.Codename == "" &&
 		input.MinimumKernel == "" && input.MinimumAvailableMemory == 0 && linuxRepositoryInputZero(input.Repository) &&
-		len(input.Packages) == 0 && input.PackageSetDigest.IsZero() && input.SubordinateIDCount == 0 &&
+		len(input.VerificationRepositories) == 0 && len(input.Packages) == 0 &&
+		input.PackageSetDigest.IsZero() && input.SubordinateIDCount == 0 &&
 		input.RollbackHeadroomBytes == 0 && input.AcquisitionSafetyBytes == 0 &&
 		!input.SELinuxEnforcingSupported && input.ServiceID == "" && input.ServiceUnitDigest.IsZero() &&
 		input.RootlessToolPath == "" && input.RootlessToolDigest.IsZero() && input.ProbeImage == "" &&
@@ -744,6 +916,12 @@ func (p LinuxExecutionPolicy) MinimumAvailableMemory() uint64 { return p.minimum
 // Repository returns immutable official repository authority.
 func (p LinuxExecutionPolicy) Repository() LinuxRepository { return p.repository }
 
+// VerificationRepositories returns the additional signed repositories needed
+// to authenticate distribution-owned prerequisite packages.
+func (p LinuxExecutionPolicy) VerificationRepositories() []LinuxRepository {
+	return append([]LinuxRepository(nil), p.verificationRepositories...)
+}
+
 // Packages returns a defensive copy of the full retained package set.
 func (p LinuxExecutionPolicy) Packages() []LinuxPackage {
 	return append([]LinuxPackage(nil), p.packages...)
@@ -794,10 +972,33 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 	inputs := make([]LinuxPackageInput, 0, len(p.packages))
 	for _, pkg := range p.packages {
 		inputs = append(inputs, LinuxPackageInput{
-			Name: pkg.name, Version: pkg.version, Purpose: pkg.purpose,
+			Name: pkg.name, Version: pkg.version, Purpose: pkg.purpose, RepositoryID: pkg.repositoryID,
 			DownloadBytes: pkg.downloadBytes, SHA256: pkg.sha256,
 			NativeReceiptDigest: pkg.nativeReceiptDigest,
 			Source:              OfficialSourceInput{Scheme: pkg.source.scheme, Host: pkg.source.host, PathPrefix: pkg.source.pathPrefix},
+		})
+	}
+	verificationRepositories := make([]LinuxRepositoryInput, 0, len(p.verificationRepositories))
+	for _, repository := range p.verificationRepositories {
+		verificationInputs := make([]LinuxRepositoryArtifactInput, 0, len(repository.verification))
+		for _, resource := range repository.verification {
+			verificationInputs = append(verificationInputs, LinuxRepositoryArtifactInput{
+				Role: resource.role, DownloadBytes: resource.downloadBytes, SHA256: resource.sha256,
+				Source: OfficialSourceInput{
+					Scheme: resource.source.scheme, Host: resource.source.host, PathPrefix: resource.source.pathPrefix,
+				},
+			})
+		}
+		verificationRepositories = append(verificationRepositories, LinuxRepositoryInput{
+			ID: repository.id,
+			URL: OfficialSourceInput{
+				Scheme: repository.url.scheme, Host: repository.url.host, PathPrefix: repository.url.pathPrefix,
+			},
+			Suite: repository.suite, Component: repository.component,
+			SigningKeyFingerprint: repository.signingKeyFingerprint,
+			SigningKeyDigest:      repository.signingKeyDigest, ConfigurationDigest: repository.configurationDigest,
+			MetadataAuthentication: repository.metadataAuthentication,
+			MetadataDigest:         repository.metadataDigest, VerificationArtifacts: verificationInputs,
 		})
 	}
 	verification := make([]LinuxRepositoryArtifactInput, 0, len(p.repository.verification))
@@ -817,13 +1018,15 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 			ID:    p.repository.id,
 			URL:   OfficialSourceInput{Scheme: p.repository.url.scheme, Host: p.repository.url.host, PathPrefix: p.repository.url.pathPrefix},
 			Suite: p.repository.suite, Component: p.repository.component,
-			SigningKeyFingerprint: p.repository.signingKeyFingerprint,
-			SigningKeyDigest:      p.repository.signingKeyDigest,
-			ConfigurationDigest:   p.repository.configurationDigest,
-			MetadataDigest:        p.repository.metadataDigest,
-			VerificationArtifacts: verification,
+			SigningKeyFingerprint:  p.repository.signingKeyFingerprint,
+			SigningKeyDigest:       p.repository.signingKeyDigest,
+			ConfigurationDigest:    p.repository.configurationDigest,
+			MetadataAuthentication: p.repository.metadataAuthentication,
+			MetadataDigest:         p.repository.metadataDigest,
+			VerificationArtifacts:  verification,
 		},
-		Packages: inputs, PackageSetDigest: p.packageSetDigest,
+		VerificationRepositories: verificationRepositories,
+		Packages:                 inputs, PackageSetDigest: p.packageSetDigest,
 		RollbackHeadroomBytes:     p.rollbackHeadroomBytes,
 		AcquisitionSafetyBytes:    p.acquisitionSafetyBytes,
 		SubordinateIDCount:        p.subordinateIDCount,
@@ -834,5 +1037,6 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 		ProbeContractVersion:   p.probeContractVersion,
 		CapabilityPolicyDigest: p.capabilityPolicyDigest,
 	}, artifact)
-	return err == nil && len(validated.packages) == len(p.packages)
+	return err == nil && len(validated.packages) == len(p.packages) &&
+		len(validated.verificationRepositories) == len(p.verificationRepositories)
 }

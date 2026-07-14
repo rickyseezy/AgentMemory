@@ -60,6 +60,10 @@ func adapterLinuxAuthorityForIdentity(
 		{Name: "uidmap", Version: "1:4.13+dfsg1-4", Purpose: runtimeport.PackagePurposePrerequisite},
 	}
 	for index := range packages {
+		packages[index].RepositoryID = "docker-stable"
+		if packages[index].Purpose == runtimeport.PackagePurposePrerequisite {
+			packages[index].RepositoryID = "ubuntu-noble-updates"
+		}
 		packages[index].NativeReceiptDigest = runtimeinstall.Sum([]byte(packages[index].Name + packages[index].Version))
 	}
 	authority, err := runtimeport.NewLinuxAuthority(runtimeport.LinuxAuthorityInput{

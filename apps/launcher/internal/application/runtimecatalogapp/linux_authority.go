@@ -134,7 +134,7 @@ func linuxAuthorityPackages(packages []runtimecatalog.LinuxPackage) ([]runtimepo
 			return nil, runtimeport.ErrAuthorityInvalid
 		}
 		result = append(result, runtimeport.PackageInput{
-			Name: pkg.Name(), Version: pkg.Version(), Purpose: purpose,
+			Name: pkg.Name(), Version: pkg.Version(), Purpose: purpose, RepositoryID: pkg.RepositoryID(),
 			NativeReceiptDigest: runtimeinstall.Hash(pkg.NativeReceiptDigest()),
 		})
 	}

@@ -3,10 +3,12 @@ module github.com/rickyseezy/AgentMemory
 go 1.26.5
 
 require (
+	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/go-ole/go-ole v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/sigstore/sigstore-go v1.2.2
+	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/sys v0.47.0
 )
 
@@ -15,6 +17,7 @@ require (
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/digitorus/pkcs7 v0.0.0-20230818184609-3a137a874352 // indirect

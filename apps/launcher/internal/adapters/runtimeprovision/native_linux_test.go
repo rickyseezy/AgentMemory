@@ -148,7 +148,7 @@ func TestLinuxNativeHostProbeCollectsTheInvokingPrincipal(t *testing.T) {
 	packages := make([]runtimeport.PackageInput, 0, len(template.Packages()))
 	for _, item := range template.Packages() {
 		packages = append(packages, runtimeport.PackageInput{
-			Name: item.Name(), Version: item.Version(), Purpose: item.Purpose(),
+			Name: item.Name(), Version: item.Version(), Purpose: item.Purpose(), RepositoryID: item.RepositoryID(),
 			NativeReceiptDigest: item.NativeReceiptDigest(),
 		})
 	}

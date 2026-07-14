@@ -49,6 +49,14 @@ func TestPF001ExecutableAuthorityIsRoleAndSignedPlanBound(t *testing.T) {
 	if rootless, rootlessError := NewExecutableAuthority(rootlessInput); rootlessError != nil || !rootless.Valid() {
 		t.Fatalf("rootless setup authority rejected: %v", rootlessError)
 	}
+	rpmKeysInput := input
+	rpmKeysInput.CanonicalID = "rpmkeys"
+	rpmKeysInput.CanonicalPath = "/verified/rpmkeys"
+	rpmKeysInput.Role = ExecutableRoleRPMKeys
+	if rpmKeys, rpmKeysError := NewExecutableAuthority(rpmKeysInput); rpmKeysError != nil || !rpmKeys.Valid() ||
+		rpmKeys.Role() != ExecutableRoleRPMKeys {
+		t.Fatalf("RPM keys authority rejected: %v", rpmKeysError)
+	}
 	launcherInput := input
 	launcherInput.CanonicalID = "agentmemory-launcher"
 	launcherInput.CanonicalPath = "/verified/agentmemory"

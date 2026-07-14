@@ -199,7 +199,7 @@ func ExpectedPrivilegeState(authority LinuxAuthority, operation PrivilegeOperati
 	packages := authority.Packages()
 	packageBindings := make([]string, 0, len(packages))
 	for _, pkg := range packages {
-		packageBindings = append(packageBindings, pkg.Name()+"="+pkg.Version()+"@"+pkg.NativeReceiptDigest().String())
+		packageBindings = append(packageBindings, pkg.RepositoryID()+":"+pkg.Name()+"="+pkg.Version()+"@"+pkg.NativeReceiptDigest().String())
 	}
 	repository := authority.Repository()
 	document := struct {
@@ -250,17 +250,18 @@ func ExpectedPackageStateDigest(authority LinuxAuthority) (runtimeinstall.Hash, 
 		return runtimeinstall.Hash{}, ErrPrivilegeIntegrity
 	}
 	type packageBinding struct {
-		Name    string `json:"name"`
-		Purpose string `json:"purpose"`
-		Receipt string `json:"receipt_digest"`
-		Version string `json:"version"`
+		Name       string `json:"name"`
+		Purpose    string `json:"purpose"`
+		Receipt    string `json:"receipt_digest"`
+		Repository string `json:"repository_id"`
+		Version    string `json:"version"`
 	}
 	packages := authority.Packages()
 	document := make([]packageBinding, 0, len(packages))
 	for _, pkg := range packages {
 		document = append(document, packageBinding{
 			Name: pkg.Name(), Purpose: string(pkg.Purpose()), Receipt: pkg.NativeReceiptDigest().String(),
-			Version: pkg.Version(),
+			Repository: pkg.RepositoryID(), Version: pkg.Version(),
 		})
 	}
 	encoded, err := json.Marshal(document)

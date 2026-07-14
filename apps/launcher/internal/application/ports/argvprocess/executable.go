@@ -19,13 +19,17 @@ const (
 	// ExecutableRoleRootlessSetup authorizes only the publisher-verified
 	// docker-ce-rootless-extras setup tool under its closed adapter.
 	ExecutableRoleRootlessSetup ExecutableRole = "rootless-setup"
+	// ExecutableRoleRPMKeys authorizes only publisher-verified RPM signature
+	// verification in an isolated, operation-owned key database.
+	ExecutableRoleRPMKeys ExecutableRole = "rpmkeys"
 	// ExecutableRoleAgentMemoryLauncher authorizes only the signed host launcher.
 	ExecutableRoleAgentMemoryLauncher ExecutableRole = "agentmemory-launcher"
 )
 
 func (r ExecutableRole) valid() bool {
 	return r == ExecutableRoleDockerCLI || r == ExecutableRoleComposePlugin ||
-		r == ExecutableRoleRootlessSetup || r == ExecutableRoleAgentMemoryLauncher
+		r == ExecutableRoleRootlessSetup || r == ExecutableRoleRPMKeys ||
+		r == ExecutableRoleAgentMemoryLauncher
 }
 
 // ExecutableAuthorityInput is populated only from an authenticated signed

@@ -64,38 +64,40 @@ type canonicalPublisher struct {
 }
 
 type canonicalLinuxExecution struct {
-	AcquisitionSafetyBytes    uint64                   `json:"acquisition_safety_bytes"`
-	CapabilityPolicyDigest    string                   `json:"capability_policy_digest"`
-	Codename                  string                   `json:"codename"`
-	MinimumAvailableMemory    uint64                   `json:"minimum_available_memory"`
-	MinimumKernel             string                   `json:"minimum_kernel"`
-	PackageManager            LinuxPackageManager      `json:"package_manager"`
-	PackageManagerVersion     string                   `json:"package_manager_version"`
-	PackageSetDigest          string                   `json:"package_set_digest"`
-	Packages                  []canonicalLinuxPackage  `json:"packages"`
-	ProbeContractVersion      string                   `json:"probe_contract_version"`
-	ProbeImage                string                   `json:"probe_image"`
-	ProbeImageDigest          string                   `json:"probe_image_digest"`
-	Repository                canonicalLinuxRepository `json:"repository"`
-	RollbackHeadroomBytes     uint64                   `json:"rollback_headroom_bytes"`
-	RootlessToolDigest        string                   `json:"rootless_tool_digest"`
-	RootlessToolPath          string                   `json:"rootless_tool_path"`
-	SELinuxEnforcingSupported bool                     `json:"selinux_enforcing_supported"`
-	ServiceID                 string                   `json:"service_id"`
-	ServiceUnitDigest         string                   `json:"service_unit_digest"`
-	SubordinateIDCount        uint32                   `json:"subordinate_id_count"`
+	AcquisitionSafetyBytes    uint64                     `json:"acquisition_safety_bytes"`
+	CapabilityPolicyDigest    string                     `json:"capability_policy_digest"`
+	Codename                  string                     `json:"codename"`
+	MinimumAvailableMemory    uint64                     `json:"minimum_available_memory"`
+	MinimumKernel             string                     `json:"minimum_kernel"`
+	PackageManager            LinuxPackageManager        `json:"package_manager"`
+	PackageManagerVersion     string                     `json:"package_manager_version"`
+	PackageSetDigest          string                     `json:"package_set_digest"`
+	Packages                  []canonicalLinuxPackage    `json:"packages"`
+	ProbeContractVersion      string                     `json:"probe_contract_version"`
+	ProbeImage                string                     `json:"probe_image"`
+	ProbeImageDigest          string                     `json:"probe_image_digest"`
+	Repository                canonicalLinuxRepository   `json:"repository"`
+	VerificationRepositories  []canonicalLinuxRepository `json:"verification_repositories"`
+	RollbackHeadroomBytes     uint64                     `json:"rollback_headroom_bytes"`
+	RootlessToolDigest        string                     `json:"rootless_tool_digest"`
+	RootlessToolPath          string                     `json:"rootless_tool_path"`
+	SELinuxEnforcingSupported bool                       `json:"selinux_enforcing_supported"`
+	ServiceID                 string                     `json:"service_id"`
+	ServiceUnitDigest         string                     `json:"service_unit_digest"`
+	SubordinateIDCount        uint32                     `json:"subordinate_id_count"`
 }
 
 type canonicalLinuxRepository struct {
-	Component             string                             `json:"component"`
-	ConfigurationDigest   string                             `json:"configuration_digest"`
-	ID                    string                             `json:"id"`
-	MetadataDigest        string                             `json:"metadata_digest"`
-	SigningKeyDigest      string                             `json:"signing_key_digest"`
-	SigningKeyFingerprint string                             `json:"signing_key_fingerprint"`
-	Suite                 string                             `json:"suite"`
-	URL                   canonicalSource                    `json:"url"`
-	VerificationArtifacts []canonicalLinuxRepositoryArtifact `json:"verification_artifacts"`
+	Component              string                                `json:"component"`
+	ConfigurationDigest    string                                `json:"configuration_digest"`
+	ID                     string                                `json:"id"`
+	MetadataAuthentication LinuxRepositoryMetadataAuthentication `json:"metadata_authentication"`
+	MetadataDigest         string                                `json:"metadata_digest"`
+	SigningKeyDigest       string                                `json:"signing_key_digest"`
+	SigningKeyFingerprint  string                                `json:"signing_key_fingerprint"`
+	Suite                  string                                `json:"suite"`
+	URL                    canonicalSource                       `json:"url"`
+	VerificationArtifacts  []canonicalLinuxRepositoryArtifact    `json:"verification_artifacts"`
 }
 
 type canonicalLinuxRepositoryArtifact struct {
@@ -110,6 +112,7 @@ type canonicalLinuxPackage struct {
 	Name          string              `json:"name"`
 	Purpose       LinuxPackagePurpose `json:"purpose"`
 	ReceiptDigest string              `json:"receipt_digest"`
+	RepositoryID  string              `json:"repository_id"`
 	SHA256        string              `json:"sha256"`
 	Source        canonicalSource     `json:"source"`
 	Version       string              `json:"version"`
@@ -183,10 +186,14 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 		for _, pkg := range manifest.linuxExecution.packages {
 			packages = append(packages, canonicalLinuxPackage{
 				DownloadBytes: pkg.downloadBytes, Name: pkg.name, Purpose: pkg.purpose,
-				ReceiptDigest: pkg.nativeReceiptDigest.Hex(), SHA256: pkg.sha256.Hex(),
+				ReceiptDigest: pkg.nativeReceiptDigest.Hex(), RepositoryID: pkg.repositoryID, SHA256: pkg.sha256.Hex(),
 				Source:  canonicalSource{Scheme: pkg.source.scheme, Host: pkg.source.host, PathPrefix: pkg.source.pathPrefix},
 				Version: pkg.version,
 			})
+		}
+		verificationRepositories := make([]canonicalLinuxRepository, 0, len(manifest.linuxExecution.verificationRepositories))
+		for _, repository := range manifest.linuxExecution.verificationRepositories {
+			verificationRepositories = append(verificationRepositories, canonicalFromLinuxRepository(repository))
 		}
 		verification := make([]canonicalLinuxRepositoryArtifact, 0, len(manifest.linuxExecution.repository.verification))
 		for _, resource := range manifest.linuxExecution.repository.verification {
@@ -208,14 +215,16 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			ProbeImageDigest: policy.probeImageDigest.Hex(),
 			Repository: canonicalLinuxRepository{
 				Component: policy.repository.component, ConfigurationDigest: policy.repository.configurationDigest.Hex(),
-				ID: policy.repository.id, MetadataDigest: policy.repository.metadataDigest.Hex(),
+				ID: policy.repository.id, MetadataAuthentication: policy.repository.metadataAuthentication,
+				MetadataDigest:        policy.repository.metadataDigest.Hex(),
 				SigningKeyDigest:      policy.repository.signingKeyDigest.Hex(),
 				SigningKeyFingerprint: policy.repository.signingKeyFingerprint, Suite: policy.repository.suite,
 				URL:                   canonicalSource{Scheme: policy.repository.url.scheme, Host: policy.repository.url.host, PathPrefix: policy.repository.url.pathPrefix},
 				VerificationArtifacts: verification,
 			},
-			RollbackHeadroomBytes: policy.rollbackHeadroomBytes,
-			RootlessToolDigest:    policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
+			VerificationRepositories: verificationRepositories,
+			RollbackHeadroomBytes:    policy.rollbackHeadroomBytes,
+			RootlessToolDigest:       policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
 			SELinuxEnforcingSupported: policy.selinuxEnforcingSupported, ServiceID: policy.serviceID,
 			ServiceUnitDigest: policy.serviceUnitDigest.Hex(), SubordinateIDCount: policy.subordinateIDCount,
 		}
@@ -274,5 +283,28 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			},
 			Version: manifest.terms.version,
 		},
+	}
+}
+
+func canonicalFromLinuxRepository(repository LinuxRepository) canonicalLinuxRepository {
+	verification := make([]canonicalLinuxRepositoryArtifact, 0, len(repository.verification))
+	for _, resource := range repository.verification {
+		verification = append(verification, canonicalLinuxRepositoryArtifact{
+			DownloadBytes: resource.downloadBytes, Role: resource.role, SHA256: resource.sha256.Hex(),
+			Source: canonicalSource{
+				Scheme: resource.source.scheme, Host: resource.source.host, PathPrefix: resource.source.pathPrefix,
+			},
+		})
+	}
+	return canonicalLinuxRepository{
+		Component: repository.component, ConfigurationDigest: repository.configurationDigest.Hex(),
+		ID: repository.id, MetadataAuthentication: repository.metadataAuthentication,
+		MetadataDigest:        repository.metadataDigest.Hex(),
+		SigningKeyDigest:      repository.signingKeyDigest.Hex(),
+		SigningKeyFingerprint: repository.signingKeyFingerprint, Suite: repository.suite,
+		URL: canonicalSource{
+			Scheme: repository.url.scheme, Host: repository.url.host, PathPrefix: repository.url.pathPrefix,
+		},
+		VerificationArtifacts: verification,
 	}
 }

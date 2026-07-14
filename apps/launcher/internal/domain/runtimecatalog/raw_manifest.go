@@ -172,30 +172,17 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
 	}
-	signingKeyDigest, err := ParseDigest(document.Repository.SigningKeyDigest)
+	repository, err := linuxRepositoryInputFromCanonical(document.Repository)
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
 	}
-	configurationDigest, err := ParseDigest(document.Repository.ConfigurationDigest)
-	if err != nil {
-		return LinuxExecutionPolicyInput{}, err
-	}
-	metadataDigest, err := ParseDigest(document.Repository.MetadataDigest)
-	if err != nil {
-		return LinuxExecutionPolicyInput{}, err
-	}
-	verificationArtifacts := make([]LinuxRepositoryArtifactInput, 0, len(document.Repository.VerificationArtifacts))
-	for _, resource := range document.Repository.VerificationArtifacts {
-		resourceDigest, parseError := ParseDigest(resource.SHA256)
+	verificationRepositories := make([]LinuxRepositoryInput, 0, len(document.VerificationRepositories))
+	for _, repositoryDocument := range document.VerificationRepositories {
+		repositoryInput, parseError := linuxRepositoryInputFromCanonical(repositoryDocument)
 		if parseError != nil {
 			return LinuxExecutionPolicyInput{}, parseError
 		}
-		verificationArtifacts = append(verificationArtifacts, LinuxRepositoryArtifactInput{
-			Role: resource.Role, DownloadBytes: resource.DownloadBytes, SHA256: resourceDigest,
-			Source: OfficialSourceInput{
-				Scheme: resource.Source.Scheme, Host: resource.Source.Host, PathPrefix: resource.Source.PathPrefix,
-			},
-		})
+		verificationRepositories = append(verificationRepositories, repositoryInput)
 	}
 	packages := make([]LinuxPackageInput, 0, len(document.Packages))
 	for _, pkg := range document.Packages {
@@ -208,7 +195,7 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 			return LinuxExecutionPolicyInput{}, parseError
 		}
 		packages = append(packages, LinuxPackageInput{
-			Name: pkg.Name, Version: pkg.Version, Purpose: pkg.Purpose,
+			Name: pkg.Name, Version: pkg.Version, Purpose: pkg.Purpose, RepositoryID: pkg.RepositoryID,
 			DownloadBytes: pkg.DownloadBytes, SHA256: sha256Digest,
 			NativeReceiptDigest: receiptDigest,
 			Source:              OfficialSourceInput{Scheme: pkg.Source.Scheme, Host: pkg.Source.Host, PathPrefix: pkg.Source.PathPrefix},
@@ -218,14 +205,7 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 		PackageManager: document.PackageManager, PackageManagerVersion: document.PackageManagerVersion,
 		Codename: document.Codename, MinimumKernel: document.MinimumKernel,
 		MinimumAvailableMemory: document.MinimumAvailableMemory,
-		Repository: LinuxRepositoryInput{
-			ID:    document.Repository.ID,
-			URL:   OfficialSourceInput{Scheme: document.Repository.URL.Scheme, Host: document.Repository.URL.Host, PathPrefix: document.Repository.URL.PathPrefix},
-			Suite: document.Repository.Suite, Component: document.Repository.Component,
-			SigningKeyFingerprint: document.Repository.SigningKeyFingerprint,
-			SigningKeyDigest:      signingKeyDigest, ConfigurationDigest: configurationDigest,
-			MetadataDigest: metadataDigest, VerificationArtifacts: verificationArtifacts,
-		},
+		Repository:             repository, VerificationRepositories: verificationRepositories,
 		Packages: packages, PackageSetDigest: packageSetDigest,
 		RollbackHeadroomBytes:     document.RollbackHeadroomBytes,
 		AcquisitionSafetyBytes:    document.AcquisitionSafetyBytes,
@@ -236,6 +216,45 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 		ProbeImage: document.ProbeImage, ProbeImageDigest: probeImageDigest,
 		ProbeContractVersion:   document.ProbeContractVersion,
 		CapabilityPolicyDigest: capabilityPolicyDigest,
+	}, nil
+}
+
+func linuxRepositoryInputFromCanonical(document canonicalLinuxRepository) (LinuxRepositoryInput, error) {
+	signingKeyDigest, err := ParseDigest(document.SigningKeyDigest)
+	if err != nil {
+		return LinuxRepositoryInput{}, err
+	}
+	configurationDigest, err := ParseDigest(document.ConfigurationDigest)
+	if err != nil {
+		return LinuxRepositoryInput{}, err
+	}
+	metadataDigest, err := ParseDigest(document.MetadataDigest)
+	if err != nil {
+		return LinuxRepositoryInput{}, err
+	}
+	verificationArtifacts := make([]LinuxRepositoryArtifactInput, 0, len(document.VerificationArtifacts))
+	for _, resource := range document.VerificationArtifacts {
+		resourceDigest, parseError := ParseDigest(resource.SHA256)
+		if parseError != nil {
+			return LinuxRepositoryInput{}, parseError
+		}
+		verificationArtifacts = append(verificationArtifacts, LinuxRepositoryArtifactInput{
+			Role: resource.Role, DownloadBytes: resource.DownloadBytes, SHA256: resourceDigest,
+			Source: OfficialSourceInput{
+				Scheme: resource.Source.Scheme, Host: resource.Source.Host, PathPrefix: resource.Source.PathPrefix,
+			},
+		})
+	}
+	return LinuxRepositoryInput{
+		ID: document.ID,
+		URL: OfficialSourceInput{
+			Scheme: document.URL.Scheme, Host: document.URL.Host, PathPrefix: document.URL.PathPrefix,
+		},
+		Suite: document.Suite, Component: document.Component,
+		SigningKeyFingerprint: document.SigningKeyFingerprint,
+		SigningKeyDigest:      signingKeyDigest, ConfigurationDigest: configurationDigest,
+		MetadataAuthentication: document.MetadataAuthentication,
+		MetadataDigest:         metadataDigest, VerificationArtifacts: verificationArtifacts,
 	}, nil
 }
 

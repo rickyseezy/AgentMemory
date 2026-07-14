@@ -25,15 +25,24 @@ func (c VerifiedCatalog) LinuxArtifactPlan(
 		!linuxAuthorityPackageSetMatches(execution.Packages(), authority.Packages()) {
 		return artifactacquisition.Plan{}, errors.New("verified Linux artifact authority is invalid")
 	}
-	verification := execution.Repository().VerificationArtifacts()
-	artifacts := make([]artifactacquisition.ArtifactInput, 0, len(verification)+len(execution.Packages()))
-	for _, resource := range verification {
-		digest := releaseinventory.Digest(resource.SHA256())
-		artifacts = append(artifacts, artifactacquisition.ArtifactInput{
-			ID: "repo-" + string(resource.Role()), Digest: digest, Size: resource.DownloadBytes(),
-			Sources: []string{catalogSourceURL(resource.Source())},
-			Chunks:  []artifactacquisition.ChunkInput{{Offset: 0, Size: resource.DownloadBytes(), Digest: digest}},
-		})
+	repositories := append([]runtimecatalog.LinuxRepository{execution.Repository()}, execution.VerificationRepositories()...)
+	artifactCapacity := len(execution.Packages())
+	for _, repository := range repositories {
+		artifactCapacity += len(repository.VerificationArtifacts())
+	}
+	artifacts := make([]artifactacquisition.ArtifactInput, 0, artifactCapacity)
+	for _, repository := range repositories {
+		for _, resource := range repository.VerificationArtifacts() {
+			digest := releaseinventory.Digest(resource.SHA256())
+			artifacts = append(artifacts, artifactacquisition.ArtifactInput{
+				ID:     "repo-" + repository.ID() + "-" + string(resource.Role()),
+				Digest: digest, Size: resource.DownloadBytes(),
+				Sources: []string{catalogSourceURL(resource.Source())},
+				Chunks: []artifactacquisition.ChunkInput{{
+					Offset: 0, Size: resource.DownloadBytes(), Digest: digest,
+				}},
+			})
+		}
 	}
 	for _, pkg := range execution.Packages() {
 		digest := releaseinventory.Digest(pkg.SHA256())

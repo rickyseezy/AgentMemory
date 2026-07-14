@@ -30,6 +30,7 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 		{name: "remote endpoint", mutate: func(input *LinuxAuthorityInput) { input.Endpoint = "tcp://127.0.0.1:2375" }},
 		{name: "small subordinate range", mutate: func(input *LinuxAuthorityInput) { input.SubordinateIDCount = 65535 }},
 		{name: "missing native receipt", mutate: func(input *LinuxAuthorityInput) { input.Packages[2].NativeReceiptDigest = runtimeinstall.Hash{} }},
+		{name: "missing package repository", mutate: func(input *LinuxAuthorityInput) { input.Packages[2].RepositoryID = "" }},
 		{name: "unbound catalog", mutate: func(input *LinuxAuthorityInput) { input.CatalogDigest = runtimeinstall.Hash{} }},
 		{name: "unbound terms", mutate: func(input *LinuxAuthorityInput) { input.TermsDigest = runtimeinstall.Hash{} }},
 		{name: "unknown architecture", mutate: func(input *LinuxAuthorityInput) { input.Architecture = runtimeinstall.ArchitectureUnknown }},
@@ -129,6 +130,9 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 		repository.Component() != input.Repository.Component || repository.MetadataDigest() != input.Repository.MetadataDigest {
 		t.Fatal("repository authority projection drifted")
 	}
+	if authority.Packages()[6].RepositoryID() != "ubuntu-noble-updates" {
+		t.Fatal("package repository binding drifted")
+	}
 	if AuthorityDigestBytes([]byte("binding")).IsZero() {
 		t.Fatal("authority binding digest was zero")
 	}
@@ -212,6 +216,10 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 		{Name: "uidmap", Version: "1:4.13+dfsg1-4ubuntu3.2", Purpose: PackagePurposePrerequisite},
 	}
 	for index := range packages {
+		packages[index].RepositoryID = "docker-stable"
+		if packages[index].Purpose == PackagePurposePrerequisite {
+			packages[index].RepositoryID = "ubuntu-noble-updates"
+		}
 		packages[index].NativeReceiptDigest = runtimeinstall.Sum([]byte(packages[index].Name + packages[index].Version))
 	}
 	return LinuxAuthorityInput{

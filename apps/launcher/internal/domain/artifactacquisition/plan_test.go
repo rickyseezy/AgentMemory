@@ -316,7 +316,10 @@ func TestPF001ArtifactDomainValueAndFailureBoundaries(t *testing.T) {
 
 func TestPF001ArtifactSourceGrammarFailsClosed(t *testing.T) {
 	t.Parallel()
-	valid := []string{"bundle://release/core.bin", "https://release.example/core.bin"}
+	valid := []string{
+		"bundle://release/core.bin", "https://release.example/core.bin",
+		"https://archive.ubuntu.com/ubuntu/pool/main/s/shadow/uidmap_4.13+dfsg1-4ubuntu3.2~24.04_amd64.deb",
+	}
 	invalid := []string{
 		"", "bundle://", "bundle://../core", "bundle:///absolute", "bundle://release//core",
 		"http://release.example/core", "https://release.example", "https://release.example/",

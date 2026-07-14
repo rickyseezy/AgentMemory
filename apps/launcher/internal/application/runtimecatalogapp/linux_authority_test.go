@@ -46,11 +46,12 @@ func TestVerifiedCatalogProjectsLinuxPackagesIntoHardenedCASPlan(t *testing.T) {
 		t.Fatalf("LinuxArtifactPlan() error = %v", err)
 	}
 	artifacts := plan.Artifacts()
-	if len(artifacts) != 10 || artifacts[0].ID() != "repo-signing_key" ||
+	if len(artifacts) != 13 || artifacts[0].ID() != "repo-docker-stable-signing_key" ||
 		!plan.Digest().Equal(releaseinventory.Digest(catalog.Manifest().Digest())) ||
 		artifacts[0].Sources()[0] != "https://download.docker.com/linux/ubuntu/gpg" ||
-		artifacts[3].ID() != "containerd.io" ||
-		artifacts[3].Sources()[0] != "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io.deb" ||
+		artifacts[3].ID() != "repo-ubuntu-noble-updates-signing_key" ||
+		artifacts[6].ID() != "containerd.io" ||
+		artifacts[6].Sources()[0] != "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io.deb" ||
 		len(artifacts[0].Chunks()) != 1 || artifacts[0].Chunks()[0].Size() != artifacts[0].Size() ||
 		plan.Totals().DownloadBytes() != catalog.Manifest().Artifact().DownloadBytes() ||
 		plan.Totals().ExpandedBytes() != 0 ||
@@ -196,6 +197,7 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 	t.Helper()
 	packages := linuxCatalogPackages()
 	verification := linuxCatalogRepositoryArtifacts()
+	distributionVerification := linuxCatalogDistributionRepositoryArtifacts()
 	capabilities := []runtimecatalog.CapabilityProbe{
 		runtimecatalog.CapabilityBindReadOnly, runtimecatalog.CapabilityComposeVersion,
 		runtimecatalog.CapabilityEngineAPI, runtimecatalog.CapabilityLinuxContainers,
@@ -211,6 +213,9 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 		packageIDs = append(packageIDs, pkg.Name)
 	}
 	for _, resource := range verification {
+		downloadBytes += resource.DownloadBytes
+	}
+	for _, resource := range distributionVerification {
 		downloadBytes += resource.DownloadBytes
 	}
 	input := runtimecatalog.ManifestInput{
@@ -239,7 +244,10 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 		Artifact: runtimecatalog.ArtifactPolicyInput{
 			DownloadBytes: downloadBytes, ExpandedBytes: downloadBytes + 200_000_000,
 			ReserveBytes: downloadBytes + 400_000_000, SHA256: packageSetDigest,
-			Sources:       []runtimecatalog.OfficialSourceInput{{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/"}},
+			Sources: []runtimecatalog.OfficialSourceInput{
+				{Scheme: "https", Host: "archive.ubuntu.com", PathPrefix: "/ubuntu/"},
+				{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/"},
+			},
 			ProxyMode:     runtimecatalog.ProxyModeSystem,
 			OfflinePolicy: runtimecatalog.OfflinePolicyUserSelectedOfficial,
 			Publisher: runtimecatalog.PublisherPolicyInput{
@@ -263,11 +271,23 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 			Repository: runtimecatalog.LinuxRepositoryInput{
 				ID: "docker-stable", URL: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/"},
 				Suite: "noble", Component: "stable", SigningKeyFingerprint: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88",
-				SigningKeyDigest:      verification[0].SHA256,
-				ConfigurationDigest:   runtimecatalog.DigestBytes([]byte("configuration")),
-				MetadataDigest:        runtimecatalog.LinuxRepositoryMetadataDigest(verification),
-				VerificationArtifacts: verification,
+				SigningKeyDigest:       verification[0].SHA256,
+				ConfigurationDigest:    runtimecatalog.DigestBytes([]byte("configuration")),
+				MetadataAuthentication: runtimecatalog.LinuxRepositoryMetadataAuthenticationInline,
+				MetadataDigest:         runtimecatalog.LinuxRepositoryMetadataDigest(verification),
+				VerificationArtifacts:  verification,
 			},
+			VerificationRepositories: []runtimecatalog.LinuxRepositoryInput{{
+				ID:    "ubuntu-noble-updates",
+				URL:   runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "archive.ubuntu.com", PathPrefix: "/ubuntu/"},
+				Suite: "noble-updates", Component: "main",
+				SigningKeyFingerprint:  "F6ECB3762474EDA9D21B7022871920D1991BC93C",
+				SigningKeyDigest:       distributionVerification[0].SHA256,
+				ConfigurationDigest:    runtimecatalog.DigestBytes([]byte("ubuntu archive source configuration")),
+				MetadataAuthentication: runtimecatalog.LinuxRepositoryMetadataAuthenticationInline,
+				MetadataDigest:         runtimecatalog.LinuxRepositoryMetadataDigest(distributionVerification),
+				VerificationArtifacts:  distributionVerification,
+			}},
 			Packages: packages, PackageSetDigest: packageSetDigest, SubordinateIDCount: 65536,
 			RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
 			SELinuxEnforcingSupported: true, ServiceID: "docker.service",
@@ -319,6 +339,26 @@ func linuxCatalogRepositoryArtifacts() []runtimecatalog.LinuxRepositoryArtifactI
 	}
 }
 
+func linuxCatalogDistributionRepositoryArtifacts() []runtimecatalog.LinuxRepositoryArtifactInput {
+	return []runtimecatalog.LinuxRepositoryArtifactInput{
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactSigningKey, DownloadBytes: 20_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("ubuntu archive key")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "archive.ubuntu.com", PathPrefix: "/ubuntu/project/ubuntu-archive-keyring.gpg"},
+		},
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactSignedMetadata, DownloadBytes: 250_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("ubuntu noble-updates InRelease")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "archive.ubuntu.com", PathPrefix: "/ubuntu/dists/noble-updates/InRelease"},
+		},
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactPackageIndex, DownloadBytes: 2_000_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("ubuntu noble-updates Packages")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "archive.ubuntu.com", PathPrefix: "/ubuntu/dists/noble-updates/main/binary-amd64/Packages.xz"},
+		},
+	}
+}
+
 func linuxCatalogPackages() []runtimecatalog.LinuxPackageInput {
 	base := "/linux/ubuntu/dists/noble/pool/stable/amd64/"
 	values := []struct {
@@ -336,12 +376,24 @@ func linuxCatalogPackages() []runtimecatalog.LinuxPackageInput {
 	}
 	result := make([]runtimecatalog.LinuxPackageInput, 0, len(values))
 	for _, value := range values {
-		result = append(result, runtimecatalog.LinuxPackageInput{
-			Name: value.name, Version: value.version, Purpose: value.purpose, DownloadBytes: value.size,
-			SHA256:              runtimecatalog.DigestBytes([]byte(value.name + " artifact")),
-			NativeReceiptDigest: runtimecatalog.DigestBytes([]byte(value.name + " receipt")),
-			Source:              runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: base + value.name + ".deb"},
-		})
+		host := "download.docker.com"
+		repositoryID := "docker-stable"
+		path := base + value.name + ".deb"
+		if value.purpose == runtimecatalog.LinuxPackagePurposePrerequisite {
+			host = "archive.ubuntu.com"
+			repositoryID = "ubuntu-noble-updates"
+			path = "/ubuntu/pool/main/s/shadow/uidmap_4.13+dfsg1-4ubuntu3.2_amd64.deb"
+		}
+		input := runtimecatalog.LinuxPackageInput{
+			Name: value.name, Version: value.version, Purpose: value.purpose,
+			RepositoryID: repositoryID, DownloadBytes: value.size,
+			SHA256: runtimecatalog.DigestBytes([]byte(value.name + " artifact")),
+			Source: runtimecatalog.OfficialSourceInput{
+				Scheme: "https", Host: host, PathPrefix: path,
+			},
+		}
+		input.NativeReceiptDigest = runtimecatalog.LinuxNativePackageReceiptDigest(runtimecatalog.LinuxPackageManagerAPT, input)
+		result = append(result, input)
 	}
 	return result
 }

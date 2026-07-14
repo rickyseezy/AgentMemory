@@ -63,15 +63,17 @@ type PackageInput struct {
 	Name                string
 	Version             string
 	Purpose             PackagePurpose
+	RepositoryID        string
 	NativeReceiptDigest runtimeinstall.Hash
 }
 
 // Package is an immutable exact native-package receipt expectation.
 type Package struct {
-	name    string
-	version string
-	purpose PackagePurpose
-	receipt runtimeinstall.Hash
+	name         string
+	version      string
+	purpose      PackagePurpose
+	repositoryID string
+	receipt      runtimeinstall.Hash
 }
 
 // Name returns the signed native package identity.
@@ -82,6 +84,9 @@ func (p Package) Version() string { return p.version }
 
 // Purpose returns the package's closed semantic role.
 func (p Package) Purpose() PackagePurpose { return p.purpose }
+
+// RepositoryID returns the signed repository that authenticated this package.
+func (p Package) RepositoryID() string { return p.repositoryID }
 
 // NativeReceiptDigest returns the expected package-manager publisher receipt.
 func (p Package) NativeReceiptDigest() runtimeinstall.Hash { return p.receipt }
@@ -292,13 +297,14 @@ func newPackages(manager PackageManager, inputs []PackageInput) ([]Package, erro
 	packages := make([]Package, 0, len(inputs))
 	for index, input := range inputs {
 		purpose, present := wanted[input.Name]
-		if !present || input.Purpose != purpose || !input.Purpose.valid() || !validPackageVersion(input.Version) ||
+		if !present || input.Purpose != purpose || !input.Purpose.valid() || !validIdentity(input.RepositoryID) ||
+			!validPackageVersion(input.Version) ||
 			input.NativeReceiptDigest.IsZero() || index > 0 && inputs[index-1].Name == input.Name {
 			return nil, ErrAuthorityInvalid
 		}
 		delete(wanted, input.Name)
 		packages = append(packages, Package{
-			name: input.Name, version: input.Version, purpose: input.Purpose,
+			name: input.Name, version: input.Version, purpose: input.Purpose, repositoryID: input.RepositoryID,
 			receipt: input.NativeReceiptDigest,
 		})
 	}
@@ -411,15 +417,17 @@ func safeAbsolutePath(value string) bool {
 
 func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 	type canonicalPackage struct {
-		Name    string `json:"name"`
-		Purpose string `json:"purpose"`
-		Receipt string `json:"receipt_digest"`
-		Version string `json:"version"`
+		Name       string `json:"name"`
+		Purpose    string `json:"purpose"`
+		Receipt    string `json:"receipt_digest"`
+		Repository string `json:"repository_id"`
+		Version    string `json:"version"`
 	}
 	packages := make([]canonicalPackage, 0, len(a.packages))
 	for _, pkg := range a.packages {
 		packages = append(packages, canonicalPackage{
-			Name: pkg.name, Purpose: string(pkg.purpose), Receipt: pkg.receipt.String(), Version: pkg.version,
+			Name: pkg.name, Purpose: string(pkg.purpose), Receipt: pkg.receipt.String(),
+			Repository: pkg.repositoryID, Version: pkg.version,
 		})
 	}
 	document := struct {

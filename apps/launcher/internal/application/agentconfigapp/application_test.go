@@ -358,6 +358,31 @@ func TestPF001ApplicationRejectsUnverifiedInvocationAndExercisesClosedDependency
 	}
 }
 
+func TestPF001PortableDocumentPolicyExposesOnlySupportedHostSyntax(t *testing.T) {
+	t.Parallel()
+	application, err := New(&fakeStore{}, &fakeVerifier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Validate([]byte(`{"mcpServers":{}}`)); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if err := application.Validate([]byte(`not-json`)); !errors.Is(err, domain.ErrInvalidDocument) {
+		t.Fatalf("Validate(invalid) error = %v", err)
+	}
+	policy := hostNeutralDocumentPolicy{}
+	for _, host := range []domain.AgentHost{domain.AgentHostGeneric, domain.AgentHostClaude, domain.AgentHostGemini, domain.AgentHostGLM} {
+		if !policy.Supports(host) {
+			t.Fatalf("portable policy rejected %s", host)
+		}
+	}
+	for _, host := range []domain.AgentHost{domain.AgentHostCodex, domain.AgentHost("foreign")} {
+		if policy.Supports(host) {
+			t.Fatalf("portable policy accepted %s", host)
+		}
+	}
+}
+
 func testTarget(t *testing.T) domain.Target {
 	t.Helper()
 	target, err := domain.NewTarget(testInstallationID, testEntryID, "/opt/agentmemory/bin/agentmemory", domain.DigestBytes([]byte("signed launcher")))

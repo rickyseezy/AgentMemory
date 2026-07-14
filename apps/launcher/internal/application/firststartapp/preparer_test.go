@@ -171,12 +171,36 @@ func TestPF001PreparationValueObjectsAreImmutableAndClosed(t *testing.T) {
 		}
 	}
 	valid, _ := NewPreparation(agentconfigdomain.AgentHostCodex, template.Digest(), operation, identifiers, 1)
+	if valid.GenerationID() != "generation" || valid.BrainID() != "brain" ||
+		valid.OwnerPrincipalID() != "principal" || valid.OwnerGrantID() != "grant" ||
+		valid.AgentEntryID() != "entry" || valid.SecurityEpoch() != 1 {
+		t.Fatalf("preparation accessors lost authority: %+v", valid)
+	}
 	confirmed, err := valid.WithConfirmedPlan(preparationPlanDigest(t, "plan"))
 	if err != nil || !confirmed.Confirmed() || valid.Confirmed() {
 		t.Fatalf("confirmed=%+v,%v", confirmed, err)
 	}
 	if _, err := confirmed.WithConfirmedPlan(preparationPlanDigest(t, "other")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflicting confirmation=%v", err)
+	}
+}
+
+func TestPF001PreparationBoundaryKeepsOnlyClosedPublicErrors(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		input error
+		want  error
+	}{
+		{input: nil, want: ErrUnavailable},
+		{input: context.Canceled, want: context.Canceled},
+		{input: context.DeadlineExceeded, want: context.DeadlineExceeded},
+		{input: ErrIntegrity, want: ErrIntegrity},
+		{input: ErrConflict, want: ErrConflict},
+		{input: errors.New("private"), want: ErrUnavailable},
+	} {
+		if actual := mapPreparationBoundary(test.input); !errors.Is(actual, test.want) {
+			t.Fatalf("mapPreparationBoundary(%v) = %v, want %v", test.input, actual, test.want)
+		}
 	}
 }
 

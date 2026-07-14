@@ -257,6 +257,50 @@ func TestPF001MergeActionStringsAreStable(t *testing.T) {
 	}
 }
 
+func TestPF001HostSpecificValidationAndAdapterPlansRemainClosed(t *testing.T) {
+	t.Parallel()
+	for _, host := range []AgentHost{AgentHostGeneric, AgentHostClaude, AgentHostGemini, AgentHostGLM} {
+		if err := ValidateDocumentFor(host, []byte(`{"mcpServers":{}}`)); err != nil {
+			t.Fatalf("ValidateDocumentFor(%s) error = %v", host, err)
+		}
+	}
+	for _, host := range []AgentHost{AgentHostCodex, AgentHost("foreign")} {
+		if err := ValidateDocumentFor(host, []byte(`{}`)); !errors.Is(err, ErrInvalidTarget) {
+			t.Fatalf("ValidateDocumentFor(%s) error = %v", host, err)
+		}
+	}
+
+	target := testTarget(t, strings.Repeat("7", 64))
+	before := []byte(`{"mcpServers":{}}`)
+	after := []byte(`{"mcpServers":{"agentmemory":{}}}`)
+	managed := DigestBytes([]byte("managed entry"))
+	plan, err := NewMergePlan(MergeActionAdd, true, before, after, managed, target)
+	if err != nil || plan.Action() != MergeActionAdd || !plan.Changed() {
+		t.Fatalf("NewMergePlan() = %+v, %v", plan, err)
+	}
+	invalid := []struct {
+		action MergeAction
+		exists bool
+		before []byte
+		after  []byte
+		digest Digest
+		target Target
+	}{
+		{action: MergeActionUnknown, exists: true, before: before, after: after, digest: managed, target: target},
+		{action: MergeActionAdd, exists: false, before: before, after: after, digest: managed, target: target},
+		{action: MergeActionAdd, exists: true, before: before, after: before, digest: managed, target: target},
+		{action: MergeActionNoChange, exists: true, before: before, after: after, digest: managed, target: target},
+		{action: MergeActionAdd, exists: true, before: before, after: nil, digest: managed, target: target},
+		{action: MergeActionAdd, exists: true, before: before, after: after, target: target},
+		{action: MergeActionAdd, exists: true, before: before, after: after, digest: managed},
+	}
+	for index, candidate := range invalid {
+		if _, candidateErr := NewMergePlan(candidate.action, candidate.exists, candidate.before, candidate.after, candidate.digest, candidate.target); !errors.Is(candidateErr, ErrInvalidDocument) {
+			t.Fatalf("invalid candidate %d error = %v", index, candidateErr)
+		}
+	}
+}
+
 func FuzzPF001HostNeutralJSONPlanNeverPanics(f *testing.F) {
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`{"mcpServers":{"other":{"command":"other"}}}`))

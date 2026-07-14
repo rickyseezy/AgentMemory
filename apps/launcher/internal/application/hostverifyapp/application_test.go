@@ -21,9 +21,19 @@ func TestPF001VerifyHostAuthenticatesBeforeNativeProbeAndBindsReceipt(t *testing
 	verification, err := application.Verify(context.Background(), command)
 	if err != nil || !verification.Certified() || verification.Failure() != hostverification.FailureNone ||
 		!verification.ValidFor(command.OperationID, command.ParentPlanDigest) ||
+		verification.OperationID() != command.OperationID ||
+		!verification.ParentPlanDigest().Equal(command.ParentPlanDigest) ||
 		!verification.HostPlanDigest().Equal(command.SignedPlan.Plan().Digest()) || verification.EvidenceDigest().IsZero() ||
 		signature.calls != 1 || probe.calls != 1 || !probe.last.Digest().Equal(command.SignedPlan.Plan().Digest()) {
 		t.Fatalf("Verify() = %+v, %v, signature=%d probe=%d", verification, err, signature.calls, probe.calls)
+	}
+	foreignOperation, _ := install.NewOperationID("019f6000-1234-7abc-8123-0123456789ac")
+	foreignParent, _ := install.BindPlan([]byte("foreign parent"))
+	if verification.ValidFor(foreignOperation, command.ParentPlanDigest) ||
+		verification.ValidFor(command.OperationID, foreignParent) ||
+		verification.ValidFor(install.OperationID{}, command.ParentPlanDigest) ||
+		verification.ValidFor(command.OperationID, install.PlanDigest{}) {
+		t.Fatal("verification accepted foreign or zero authority")
 	}
 }
 

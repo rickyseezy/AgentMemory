@@ -29,6 +29,17 @@ func TestPF001DefaultReleaseConstructorClosesEveryProductionTopologyChoice(t *te
 		len(projections[0].Files()) != 8 || projections[2].Files()[0].UserID() != 7474 {
 		t.Fatalf("projection authority = %#v/%v", projections, projected)
 	}
+	projectedSecret := projections[0].Files()[0]
+	if projectedSecret.Name() == "" || projectedSecret.SourceFile() == "" ||
+		projectedSecret.GroupID() != 10_001 || projectedSecret.Mode() != 0o400 ||
+		projectedSecret.MaximumBytes() != 32 {
+		t.Fatalf("projected secret authority = %#v", projectedSecret)
+	}
+	filesCopy := projections[0].Files()
+	filesCopy[0] = ProjectedSecret{}
+	if projections[0].Files()[0].Name() == "" {
+		t.Fatal("projection exposed mutable file authority")
+	}
 	capacities, capacityOK := input.Identity.SecretProjectionCapacities()
 	if !capacityOK || len(capacities) != 6 || capacities[0].Name() != projections[0].Name() ||
 		capacities[0].Purpose() != projections[0].Purpose() || capacities[0].ReservedBytes() != projections[0].ReservedBytes() {
@@ -36,6 +47,15 @@ func TestPF001DefaultReleaseConstructorClosesEveryProductionTopologyChoice(t *te
 	}
 	if capacities, ok := (Identity{}).SecretProjectionCapacities(); ok || capacities != nil {
 		t.Fatalf("zero identity capacities = %#v/%v", capacities, ok)
+	}
+	if model, ok := (PolicyPlan{}).CanonicalModel(); ok || len(model.Services) != 0 {
+		t.Fatalf("zero canonical model = %#v/%v", model, ok)
+	}
+	if files, ok := (PolicyPlan{}).SecretFiles(); ok || files != nil {
+		t.Fatalf("zero secret files = %#v/%v", files, ok)
+	}
+	if volumes, ok := (PolicyPlan{}).SecretProjectionVolumes(); ok || volumes != nil {
+		t.Fatalf("zero secret projections = %#v/%v", volumes, ok)
 	}
 	model.Services[ServiceCore].Environment["AM_NEO4J_USERNAME"] = "attacker"
 	if !plan.Valid() {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -293,14 +294,16 @@ func TestPF001BoundCancellationUsesExactAggregateCASAuthority(t *testing.T) {
 	}
 }
 
-func TestPF001BoundAcceptAndRetryResumeOnlyTheExactPlanBoundInstaller(t *testing.T) {
+func TestPF001BoundAcceptDeliversConsentAndRetryResumesExactInstaller(t *testing.T) {
 	t.Parallel()
 	binding, operation := nativeCancellationFixture(t)
 	repository := &nativeCancellationRepository{operation: operation}
 	supervisor := &nativeSupervisorStub{}
 	canonical := []byte("canonical plan")
+	consent := &nativeConsentSink{}
 	control := &boundCancellation{
 		binding: binding, repository: repository, supervisor: supervisor, canonical: canonical,
+		consent: consent,
 	}
 	for _, decision := range []setupprogressapp.Decision{
 		setupprogressapp.DecisionAccept, setupprogressapp.DecisionRetry,
@@ -310,9 +313,10 @@ func TestPF001BoundAcceptAndRetryResumeOnlyTheExactPlanBoundInstaller(t *testing
 			t.Fatal(err)
 		}
 	}
-	if supervisor.calls.Load() != 2 || supervisor.command.OperationID != binding.OperationID().String() ||
+	if consent.submits.Load() != 1 || supervisor.calls.Load() != 1 ||
+		supervisor.command.OperationID != binding.OperationID().String() ||
 		string(supervisor.command.CanonicalPlan) != "canonical plan" {
-		t.Fatalf("resume calls=%d command=%+v", supervisor.calls.Load(), supervisor.command)
+		t.Fatalf("consent=%d resume=%d command=%+v", consent.submits.Load(), supervisor.calls.Load(), supervisor.command)
 	}
 	canonical[0] = 'X'
 	if string(supervisor.command.CanonicalPlan) != "canonical plan" {
@@ -382,27 +386,45 @@ func TestPF001BoundCancellationRejectsEveryInvalidAuthorityResponse(t *testing.T
 
 func TestPF001BoundCancellationDispatchesOnlyClosedSetupDecisions(t *testing.T) {
 	t.Parallel()
+	binding, operation := nativeCancellationFixture(t)
+	repository := &nativeCancellationRepository{operation: operation}
+	cancellation := &boundCancellation{binding: binding, repository: repository}
+	if err := invokeNativeDecision(t, cancellation, binding, setupprogressapp.DecisionCancel,
+		"018f47ab-9a77-7df0-8f4c-3e934c0a7d41"); err != nil || repository.requests.Load() != 1 {
+		t.Fatalf("cancel error=%v calls=%d", err, repository.requests.Load())
+	}
+	consent := &nativeConsentSink{}
+	cancellation.consent = consent
 	for _, decision := range []setupprogressapp.Decision{
-		setupprogressapp.DecisionCancel, setupprogressapp.DecisionDecline,
+		setupprogressapp.DecisionAccept, setupprogressapp.DecisionDecline,
 	} {
-		binding, operation := nativeCancellationFixture(t)
-		repository := &nativeCancellationRepository{operation: operation}
-		cancellation := &boundCancellation{binding: binding, repository: repository}
-		err := invokeNativeDecision(t, cancellation, binding, decision,
-			"018f47ab-9a77-7df0-8f4c-3e934c0a7d41")
-		if err != nil || repository.requests.Load() != 1 {
-			t.Fatalf("decision=%s error=%v calls=%d", decision, err, repository.requests.Load())
+		if err := invokeNativeDecision(t, cancellation, binding, decision,
+			"018f47ab-9a77-7df0-8f4c-3e934c0a7d42"); err != nil {
+			t.Fatalf("decision=%s error=%v", decision, err)
 		}
 	}
+	if consent.submits.Load() != 2 || repository.requests.Load() != 1 {
+		t.Fatalf("consent=%d cancellation=%d", consent.submits.Load(), repository.requests.Load())
+	}
+	consent.submitErr = context.Canceled
+	if err := invokeNativeDecision(t, cancellation, binding, setupprogressapp.DecisionAccept,
+		"018f47ab-9a77-7df0-8f4c-3e934c0a7d44"); !setupprogressapp.IsDeadlineError(err) {
+		t.Fatalf("cancelled consent error=%v", err)
+	}
+	consent.submitErr = errors.New("private")
+	if err := invokeNativeDecision(t, cancellation, binding, setupprogressapp.DecisionDecline,
+		"018f47ab-9a77-7df0-8f4c-3e934c0a7d45"); err == nil || strings.Contains(err.Error(), "private") {
+		t.Fatalf("unsanitized consent error=%v", err)
+	}
+	cancellation.consent = nil
 	for _, decision := range []setupprogressapp.Decision{
-		setupprogressapp.DecisionAccept, setupprogressapp.DecisionRetry,
+		setupprogressapp.DecisionAccept, setupprogressapp.DecisionDecline,
+		setupprogressapp.DecisionRetry,
 	} {
-		binding, operation := nativeCancellationFixture(t)
-		cancellation := &boundCancellation{binding: binding, repository: &nativeCancellationRepository{operation: operation}}
 		err := invokeNativeDecision(t, cancellation, binding, decision,
-			"018f47ab-9a77-7df0-8f4c-3e934c0a7d42")
+			"018f47ab-9a77-7df0-8f4c-3e934c0a7d43")
 		if !setupprogressapp.IsConflictError(err) {
-			t.Fatalf("decision=%s error=%v", decision, err)
+			t.Fatalf("unavailable decision=%s error=%v", decision, err)
 		}
 	}
 	var nilCancellation *boundCancellation
@@ -420,7 +442,7 @@ func TestPF001NativeRuntimeFactoryBuildsBoundProgressSetupAndCancellation(t *tes
 	resources := &nativeResources{plans: &nativePlanCloser{}}
 	factory := &nativeRuntimeFactory{
 		operations: repository, runtime: nativeMissingRuntimeOperations{}, runtimePlans: nativeMissingRuntimePlans{},
-		decisions: nativeMissingJournalProvider{}, clock: fixedResolverClock{},
+		decisions: nativeMissingJournalProvider{}, consent: &nativeConsentSink{}, clock: fixedResolverClock{},
 		ready: &readyStub{err: errors.New("not Ready")}, resources: resources,
 		decodePlan: func([]byte) (runtimePlanProjection, error) {
 			return runtimeProjection(resolved, agentconfigdomain.AgentHostCodex, 4096), nil
@@ -459,7 +481,7 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 	base := nativeRuntimeFactory{
 		operations: &nativeCancellationRepository{operation: operation},
 		runtime:    nativeMissingRuntimeOperations{}, runtimePlans: nativeMissingRuntimePlans{},
-		decisions: nativeMissingJournalProvider{}, clock: fixedResolverClock{},
+		decisions: nativeMissingJournalProvider{}, consent: &nativeConsentSink{}, clock: fixedResolverClock{},
 		ready: &readyStub{err: errors.New("not Ready")}, resources: &nativeResources{plans: &nativePlanCloser{}},
 		decodePlan: func([]byte) (runtimePlanProjection, error) {
 			return runtimeProjection(resolved, agentconfigdomain.AgentHostCodex, 1), nil
@@ -489,6 +511,7 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 		"runtime":       func(f *nativeRuntimeFactory) { f.runtime = (*nativeMissingRuntimeOperations)(nil) },
 		"runtime plans": func(f *nativeRuntimeFactory) { f.runtimePlans = (*nativeMissingRuntimePlans)(nil) },
 		"decisions":     func(f *nativeRuntimeFactory) { f.decisions = (*nativeMissingJournalProvider)(nil) },
+		"consent":       func(f *nativeRuntimeFactory) { f.consent = (*nativeConsentSink)(nil) },
 		"clock":         func(f *nativeRuntimeFactory) { f.clock = nil },
 		"Ready":         func(f *nativeRuntimeFactory) { f.ready = (*readyStub)(nil) },
 		"resources":     func(f *nativeRuntimeFactory) { f.resources = nil },
@@ -533,6 +556,13 @@ func TestPF001NativeRuntimeFactoryRejectsPlanAndDependencySubstitution(t *testin
 		errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
 		t.Fatalf("setup failure error=%v", err)
 	}
+	consentFailure := base
+	consentFailure.consent = &nativeConsentSink{bindErr: errors.New("private")}
+	if _, err := consentFailure.BuildBootstrapRuntime(
+		context.Background(), agentconfigdomain.AgentHostCodex, resolved,
+	); !errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) {
+		t.Fatalf("consent bind failure=%v", err)
+	}
 }
 
 type nativeMissingRuntimeOperations struct{}
@@ -552,6 +582,28 @@ func (nativeMissingRuntimePlans) LoadRuntimePlan(
 	install.PlanDigest,
 ) (installplanapp.RuntimePlanAuthority, error) {
 	return installplanapp.RuntimePlanAuthority{}, installplanapp.ErrRuntimePlanNotFound
+}
+
+type nativeConsentSink struct {
+	bindErr   error
+	submitErr error
+	binds     atomic.Int32
+	submits   atomic.Int32
+}
+
+func (s *nativeConsentSink) Bind(setupprogressapp.Binding) error {
+	s.binds.Add(1)
+	return s.bindErr
+}
+
+func (s *nativeConsentSink) SubmitRuntimeConsent(
+	context.Context,
+	setupprogressapp.Binding,
+	setupprogressapp.Decision,
+	string,
+) error {
+	s.submits.Add(1)
+	return s.submitErr
 }
 
 func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.T) {

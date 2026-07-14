@@ -23,6 +23,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseanchor"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/resourcejournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimecataloganchor"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeconsent"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -336,6 +337,11 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	resources := &nativeResources{plans: plans, artifacts: artifactStore}
+	consent, err := runtimeconsent.NewHub()
+	if err != nil {
+		_ = resources.Close(context.WithoutCancel(ctx))
+		return nativeComposition{}, err
+	}
 	resolver, err := NewProtectedResolver(pointerJournals, plans, operations, clock)
 	if err != nil {
 		_ = resources.Close(context.WithoutCancel(ctx))
@@ -343,7 +349,7 @@ func composeNative(
 	}
 	runtime := &nativeRuntimeFactory{
 		operations: operations, runtime: runtimeState, runtimePlans: plans,
-		decisions: decisionJournals, clock: clock,
+		decisions: decisionJournals, consent: consent, clock: clock,
 		ready: ready, resources: resources, decodePlan: decodeRuntimePlan,
 		setup: newNativeSetupController, readyForPlan: newNativeReadySurface,
 	}
@@ -377,6 +383,17 @@ type boundCancellation struct {
 	repository cancellationRepository
 	supervisor firststartapp.InstallationSupervisor
 	canonical  []byte
+	consent    runtimeConsentDecisionSink
+}
+
+type runtimeConsentDecisionSink interface {
+	Bind(setupprogressapp.Binding) error
+	SubmitRuntimeConsent(
+		context.Context,
+		setupprogressapp.Binding,
+		setupprogressapp.Decision,
+		string,
+	) error
 }
 
 func (c *boundCancellation) RequestCancellation(ctx context.Context) error {
@@ -416,9 +433,22 @@ func (c *boundCancellation) ApplySetupDecision(
 		return setupprogressapp.ErrAuthorityIntegrity
 	}
 	switch command.Decision() {
-	case setupprogressapp.DecisionCancel, setupprogressapp.DecisionDecline:
+	case setupprogressapp.DecisionCancel:
 		return c.RequestCancellation(ctx)
-	case setupprogressapp.DecisionAccept, setupprogressapp.DecisionRetry:
+	case setupprogressapp.DecisionAccept, setupprogressapp.DecisionDecline:
+		if nilAny(c.consent) {
+			return setupprogressapp.ErrAuthorityConflict
+		}
+		if err := c.consent.SubmitRuntimeConsent(
+			ctx, c.binding, command.Decision(), command.IdempotencyKey(),
+		); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return errors.New("runtime consent decision authority is unavailable")
+		}
+		return nil
+	case setupprogressapp.DecisionRetry:
 		if nilAny(c.supervisor) || len(c.canonical) == 0 {
 			return setupprogressapp.ErrAuthorityConflict
 		}
@@ -439,6 +469,7 @@ type nativeRuntimeFactory struct {
 	runtime      installprogress.RuntimeOperationRepository
 	runtimePlans installprogress.RuntimePlanRepository
 	decisions    installprogress.DecisionJournalProvider
+	consent      runtimeConsentDecisionSink
 	clock        installprogress.Clock
 	ready        mcpbootstrap.ReadySurfaceProvider
 	readyForPlan readySurfaceFactory
@@ -532,7 +563,7 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 ) (BootstrapRuntime, error) {
 	if f == nil || ctx == nil || !host.Valid() || !resolved.Valid() ||
 		nilAny(f.operations) || nilAny(f.runtime) || nilAny(f.runtimePlans) ||
-		nilAny(f.decisions) || nilAny(f.clock) ||
+		nilAny(f.decisions) || nilAny(f.consent) || nilAny(f.clock) ||
 		(nilCapability(f.ready) && f.readyForPlan == nil) ||
 		f.resources == nil || f.decodePlan == nil || f.setup == nil {
 		return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapIntegrity
@@ -555,9 +586,13 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 	if err != nil {
 		return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
+	if err := f.consent.Bind(binding); err != nil {
+		return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	cancellation := &boundCancellation{
 		binding: binding, repository: f.operations,
 		supervisor: f.supervisor, canonical: resolved.CanonicalPlan(),
+		consent: f.consent,
 	}
 	authority, err := installprogress.NewAuthority(
 		binding, plan.totalBytes,

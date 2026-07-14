@@ -7,7 +7,10 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"syscall"
 	"testing"
 
@@ -53,6 +56,9 @@ func TestLinuxNativeHostProbesUseFixedTrustedSurfaces(t *testing.T) {
 	if _, err := linuxSubordinateCount("/etc/subuid", "root"); err != nil {
 		t.Fatalf("linuxSubordinateCount() error = %v", err)
 	}
+	if count, err := linuxSubordinateCount(filepath.Join(t.TempDir(), "missing"), "root"); err != nil || count != 0 {
+		t.Fatalf("missing subordinate map = %d/%v", count, err)
+	}
 	if _, err := linuxDockerGroupAbsent("agentmemory", uint32(os.Getgid())); err != nil { // #nosec G115 -- Linux group IDs are nonnegative uint32 values.
 		t.Fatalf("linuxDockerGroupAbsent() error = %v", err)
 	}
@@ -67,6 +73,20 @@ func TestLinuxNativeHostProbesUseFixedTrustedSurfaces(t *testing.T) {
 	if linuxUserSystemd(directory, uid) {
 		t.Fatal("ordinary temporary directory was accepted as a systemd runtime")
 	}
+	if _, _, err := linuxHomeFilesystem(filepath.Join(directory, "missing")); err == nil ||
+		linuxUserSystemd(filepath.Join(directory, "missing"), uid) {
+		t.Fatal("missing Linux owner filesystem/runtime directory was accepted")
+	}
+	unsafeFile := filepath.Join(directory, "unsafe-root-input")
+	if err := os.WriteFile(unsafeFile, []byte("unsafe"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unsafeFile, 0o666); err != nil { //nolint:gosec // G302: deliberate unsafe root-input fixture.
+		t.Fatal(err)
+	}
+	if _, err := readRootOwnedRegular(unsafeFile, 64); err == nil {
+		t.Fatal("unsafe root-owned input mode was accepted")
+	}
 	if err := os.Chmod(directory, 0o755); err != nil { // #nosec G302 -- intentionally creates a non-runtime mode for rejection testing.
 		t.Fatal(err)
 	}
@@ -79,11 +99,94 @@ func TestLinuxNativeHostProbesUseFixedTrustedSurfaces(t *testing.T) {
 	if _, err := NewNativeHostProbe().ProbeLinuxHost(nilContext, authority); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil host context error = %v", err)
 	}
+	cancelledHost, cancelHost := context.WithCancel(context.Background())
+	cancelHost()
+	if _, err := NewNativeHostProbe().ProbeLinuxHost(cancelledHost, authority); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled host context error = %v", err)
+	}
 	if _, err := NewNativeHostProbe().ProbeLinuxHost(context.Background(), authority); !errors.Is(err, ErrUnsupportedHost) {
 		t.Fatalf("mismatched invoking identity error = %v", err)
 	}
 	if _, err := NewNativeEndpointProbe().ProbeLinuxEndpoint(context.Background(), runtimeinstallZeroAuthority()); !errors.Is(err, ErrProvisionIntegrity) {
 		t.Fatalf("zero endpoint authority error = %v", err)
+	}
+	if _, err := NewNativeEndpointProbe().ProbeLinuxEndpoint(nilContext, authority); !errors.Is(err, context.Canceled) {
+		t.Fatalf("nil endpoint context error = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewNativeEndpointProbe().ProbeLinuxEndpoint(cancelled, authority); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled endpoint context error = %v", err)
+	}
+}
+
+func TestLinuxNativeHostProbeCollectsTheInvokingPrincipal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the signed rootless authority deliberately rejects uid 0")
+	}
+	distribution, version, err := linuxOSRelease()
+	if err != nil || distribution != "ubuntu" || version != "24.04" {
+		t.Skipf("the PF-001 Linux certification cell is Ubuntu 24.04; host=%s/%s error=%v", distribution, version, err)
+	}
+	current, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, uidError := strconv.ParseUint(current.Uid, 10, 32)
+	gid, gidError := strconv.ParseUint(current.Gid, 10, 32)
+	if uidError != nil || gidError != nil || uid == 0 || gid == 0 {
+		t.Fatalf("invoking principal = %q/%q (%v/%v)", current.Uid, current.Gid, uidError, gidError)
+	}
+	if err := validateOwnerDirectory(current.HomeDir, uint32(uid), false); err != nil { // #nosec G115 -- parsed as uint32 above.
+		t.Fatalf("invoking home is not owner-controlled: %v", err)
+	}
+	machine, err := linuxMachineDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, template := adapterAuthority(t)
+	packages := make([]runtimeport.PackageInput, 0, len(template.Packages()))
+	for _, item := range template.Packages() {
+		packages = append(packages, runtimeport.PackageInput{
+			Name: item.Name(), Version: item.Version(), Purpose: item.Purpose(),
+			NativeReceiptDigest: item.NativeReceiptDigest(),
+		})
+	}
+	repository := template.Repository()
+	architecture := runtimeinstall.ArchitectureAMD64
+	if runtime.GOARCH == "arm64" {
+		architecture = runtimeinstall.ArchitectureARM64
+	}
+	input := runtimeport.LinuxAuthorityInput{
+		PlanDigest: template.PlanDigest(), CatalogDigest: template.CatalogDigest(), ArtifactDigest: template.ArtifactDigest(),
+		SigningKeyID: "agentmemory-runtime-root-2026", Architecture: architecture,
+		Distribution: distribution, VersionID: version, Codename: "noble", MinimumKernel: template.MinimumKernel(),
+		MinimumCPUs: template.MinimumCPUs(), MinimumTotalMemory: template.MinimumTotalMemory(),
+		MinimumAvailableMemory: template.MinimumAvailableMemory(), MinimumFreeDisk: template.MinimumFreeDisk(),
+		PackageManager: template.PackageManager(), PackageManagerVersion: template.PackageManagerVersion(),
+		Repository: runtimeport.RepositoryInput{
+			ID: repository.ID(), URL: repository.URL(), Suite: repository.Suite(), Component: repository.Component(),
+			SigningKeyFingerprint: repository.SigningKeyFingerprint(), SigningKeyDigest: repository.SigningKeyDigest(),
+			ConfigurationDigest: repository.ConfigurationDigest(), MetadataDigest: repository.MetadataDigest(),
+		},
+		Packages: packages, RuntimeVersion: template.RuntimeVersion(), ComposeVersion: template.ComposeVersion(),
+		InvokingUID: uint32(uid), InvokingGID: uint32(gid), AccountName: current.Username, // #nosec G115 -- parsed as uint32 above.
+		PrincipalID: "linux:uid:" + strconv.FormatUint(uid, 10), MachineDigest: machine, HomeDirectory: current.HomeDir,
+		RuntimeDirectory:   "/run/user/" + strconv.FormatUint(uid, 10),
+		Endpoint:           "unix:///run/user/" + strconv.FormatUint(uid, 10) + "/docker.sock",
+		SubordinateIDCount: 65536, SELinuxEnforcing: true, ServiceID: template.ServiceID(),
+		ServiceUnitDigest: template.ServiceUnitDigest(), RootlessToolPath: template.RootlessToolPath(),
+		RootlessToolDigest: template.RootlessToolDigest(), ProbeImage: template.ProbeImage(),
+		ProbeImageDigest: template.ProbeImageDigest(), ProbeContractVersion: template.ProbeContractVersion(),
+		CapabilityPolicyDigest: template.CapabilityPolicyDigest(),
+	}
+	authority, err := runtimeport.NewLinuxAuthority(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := NewNativeHostProbe().ProbeLinuxHost(context.Background(), authority)
+	if err != nil || evidence.machineDigest != machine {
+		t.Fatalf("native invoking-principal evidence = %+v/%v", evidence, err)
 	}
 }
 

@@ -106,6 +106,9 @@ func TestPF001ProductFilesystemNativeDescriptorEdgesFailClosed(t *testing.T) {
 	if _, _, err := ensurePrivateDescendant(cancelled, directory, "child", uid); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled descendant error = %v", err)
 	}
+	if _, _, err := ensurePrivateDescendant(context.Background(), directory, "", uid); !errors.Is(err, productinstall.ErrUnavailable) {
+		t.Fatalf("empty descendant error = %v", err)
+	}
 	if _, _, err := ensurePrivateDescendant(context.Background(), directory, "child/grandchild", uid); err != nil {
 		t.Fatal(err)
 	}

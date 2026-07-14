@@ -49,13 +49,39 @@ type protectedValue struct {
 // RunDefault executes the complete fixed projection and returns no secret-
 // derived receipt. The command wrapper emits only the constant token "ok".
 func RunDefault() error {
-	if unix.Geteuid() != 0 || !exactEffectiveCapabilities() {
+	return runDefault(
+		unix.Geteuid(), exactEffectiveCapabilities(), networkNamespaceIsDisabled(),
+		func() error {
+			return runProjection(
+				defaultContract(), inputPath, outputPath,
+				[]string{"/proc/self/cmdline", "/proc/self/environ"},
+			)
+		},
+	)
+}
+
+func runDefault(effectiveUID int, exactCapabilities, networkDisabled bool, project func() error) error {
+	if effectiveUID != 0 || !exactCapabilities {
 		return errProjectionCapabilities
 	}
-	if !networkNamespaceIsDisabled() {
+	if !networkDisabled {
 		return errProjectionNetwork
 	}
-	contract := defaultContract()
+	if project == nil {
+		return errProjection
+	}
+	return project()
+}
+
+func runProjection(
+	contract []volumeContract,
+	resolveInput func(string) string,
+	resolveOutput func(string) string,
+	metadataPaths []string,
+) error {
+	if len(contract) == 0 || resolveInput == nil || resolveOutput == nil || len(metadataPaths) == 0 {
+		return errProjection
+	}
 	values := make(map[string]protectedValue, 8)
 	defer func() {
 		for name, value := range values {
@@ -68,18 +94,18 @@ func RunDefault() error {
 			if _, exists := values[file.name]; exists {
 				continue
 			}
-			value, err := readProtectedInput(file)
+			value, err := readProtectedInput(file, resolveInput(file.name))
 			if err != nil {
 				return errProjectionInput
 			}
 			values[file.name] = value
 		}
 	}
-	if processMetadataContains(values) {
+	if processMetadataContains(values, metadataPaths) {
 		return errProjectionMetadata
 	}
 	for _, volume := range contract {
-		if err := projectVolume(volume, values); err != nil {
+		if err := projectVolume(volume, values, resolveOutput(volume.purpose)); err != nil {
 			return err
 		}
 	}
@@ -121,12 +147,16 @@ func networkNamespaceIsDisabled() bool {
 	if err != nil || len(ipv4) > maximumStatusBytes {
 		return false
 	}
-	ipv4Lines := strings.Split(strings.TrimSpace(string(ipv4)), "\n")
-	if len(ipv4Lines) != 1 || !strings.HasPrefix(ipv4Lines[0], "Iface") {
-		return false
-	}
 	ipv6, err := os.ReadFile("/proc/net/ipv6_route")
 	if err != nil || len(ipv6) > maximumStatusBytes {
+		return false
+	}
+	return networkNamespaceRoutesDisabled(ipv4, ipv6)
+}
+
+func networkNamespaceRoutesDisabled(ipv4, ipv6 []byte) bool {
+	ipv4Lines := strings.Split(strings.TrimSpace(string(ipv4)), "\n")
+	if len(ipv4Lines) != 1 || !strings.HasPrefix(ipv4Lines[0], "Iface") {
 		return false
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(ipv6)), "\n") {
@@ -141,8 +171,8 @@ func networkNamespaceIsDisabled() bool {
 	return true
 }
 
-func readProtectedInput(contract fileContract) (protectedValue, error) {
-	descriptor, err := unix.Open(inputPath(contract.name), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func readProtectedInput(contract fileContract, path string) (protectedValue, error) {
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return protectedValue{}, errProjection
 	}
@@ -207,9 +237,9 @@ func allZero(value []byte) bool {
 	return aggregate == 0
 }
 
-func processMetadataContains(values map[string]protectedValue) bool {
+func processMetadataContains(values map[string]protectedValue, paths []string) bool {
 	metadata := make([]byte, 0, maximumStatusBytes)
-	for _, path := range []string{"/proc/self/cmdline", "/proc/self/environ"} {
+	for _, path := range paths {
 		value, err := os.ReadFile(path) // #nosec G304 -- path comes from the fixed /proc/self allowlist above.
 		if err != nil || len(value) > maximumStatusBytes-len(metadata) {
 			clear(metadata)
@@ -227,8 +257,8 @@ func processMetadataContains(values map[string]protectedValue) bool {
 	return false
 }
 
-func projectVolume(contract volumeContract, values map[string]protectedValue) error {
-	directory, err := unix.Open(outputPath(contract.purpose), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func projectVolume(contract volumeContract, values map[string]protectedValue, path string) error {
+	directory, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return errProjectionVolumeOpen
 	}
@@ -371,6 +401,10 @@ func exactDirectoryEntries(directory int, allowed map[string]struct{}, allowTemp
 	file := os.NewFile(uintptr(duplicate), "protected-projection-directory")
 	if file == nil {
 		_ = unix.Close(duplicate)
+		return errProjection
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
 		return errProjection
 	}
 	names, readErr := file.Readdirnames(-1)

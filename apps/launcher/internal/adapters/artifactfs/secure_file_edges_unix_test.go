@@ -26,6 +26,9 @@ func TestPF001SecureDescriptorPrimitivesRejectInvalidPathsAndIdentitySwaps(t *te
 		}
 	}
 	root := resolvedTempDir(t)
+	if err := syncDirectory(root); err != nil {
+		t.Fatalf("sync protected directory: %v", err)
+	}
 	filePath := filepath.Join(root, "ordinary")
 	if err := os.WriteFile(filePath, []byte("abc"), 0o600); err != nil {
 		t.Fatal(err)

@@ -28,7 +28,11 @@ func openPrivateExecutionFile(ctx context.Context, path string) (*os.File, error
 }
 
 func openPrivateExecutionDirectory(ctx context.Context, path string) (*os.File, error) {
-	file, _, err := windowssecurity.OpenVerifiedLockedRead(ctx, path, true)
+	// The retained directory is the capability used by NtCreateFile for each
+	// no-replace child. It therefore needs directory mutation rights while the
+	// no-FILE_SHARE_DELETE open still prevents path replacement for the whole
+	// materialization transaction.
+	file, _, err := windowssecurity.OpenVerified(ctx, path, true, true, true)
 	return file, err
 }
 

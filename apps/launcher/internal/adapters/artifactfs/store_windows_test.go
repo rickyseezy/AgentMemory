@@ -100,6 +100,44 @@ func TestPF001WindowsArtifactStoreReservesResumesAndPublishesExactCAS(t *testing
 	}
 }
 
+func TestPF001WindowsArtifactStoreConstructionRetainsEveryNativeAuthority(t *testing.T) {
+	t.Parallel()
+	root := resolvedTempDir(t)
+	directory, err := openSecureDirectory(root)
+	if err != nil {
+		t.Fatalf("open protected store root: %v", err)
+	}
+	defer func() { _ = directory.Close() }()
+	local, filesystemID, err := localFilesystemDescriptor(directory)
+	if err != nil || !local || filesystemID == "" {
+		t.Fatalf("attest local filesystem: local=%t id=%q error=%v", local, filesystemID, err)
+	}
+	if _, err := reservationFilesystemSafeDescriptor(directory); err != nil {
+		t.Fatalf("attest reservation filesystem: %v", err)
+	}
+	identity, identityValue, err := openStoreIdentity(directory)
+	if err != nil {
+		t.Fatalf("open durable store identity: %v", err)
+	}
+	defer identity.close()
+	if _, err := boundFilesystemIdentity(filesystemID, directory, identityValue); err != nil {
+		t.Fatalf("bind store filesystem identity: %v", err)
+	}
+	for _, leaf := range []string{".partials", ".reservations", "sha256"} {
+		child, err := openSecureChildDirectoryAt(directory, leaf, true)
+		if err != nil {
+			t.Fatalf("open protected child %q: %v", leaf, err)
+		}
+		if !secureChildDirectoryIdentity(directory, leaf, child) {
+			_ = child.Close()
+			t.Fatalf("protected child %q lost identity", leaf)
+		}
+		if err := child.Close(); err != nil {
+			t.Fatalf("close protected child %q: %v", leaf, err)
+		}
+	}
+}
+
 func TestPF001WindowsArtifactStoreReleaseIsExactDurableAndIdempotent(t *testing.T) {
 	t.Parallel()
 	root := resolvedTempDir(t)

@@ -328,6 +328,34 @@ func TestPF001LinuxCapacityStoreRejectsLowSpaceCancellationAndInvalidAuthority(t
 	}
 }
 
+func TestPF001LinuxCapacityStoreRejectsCrossOperationAuthorityBeforeOpeningTheVolume(t *testing.T) {
+	t.Parallel()
+	store := newLinuxStoreAt(t.TempDir())
+	reserve := mustHelperRequest(t, helperRequestInput(OperationReserve))
+	inspect := mustHelperRequest(t, helperRequestInput(OperationInspect))
+	transfer := mustHelperRequest(t, withTransfer(helperRequestInput(OperationTransfer)))
+	activate := mustHelperRequest(t, withTransfer(helperRequestInput(OperationActivateProjection)))
+	deleteRequest := mustHelperRequest(t, withDelete(
+		helperRequestInput(OperationDeleteProof), PriorReserved, "",
+	))
+	for name, invoke := range map[string]func() error{
+		"reserve":  func() error { _, err := store.Reserve(context.Background(), inspect); return err },
+		"inspect":  func() error { _, err := store.Inspect(context.Background(), reserve); return err },
+		"transfer": func() error { _, err := store.Transfer(context.Background(), activate); return err },
+		"activate": func() error { _, err := store.ActivateProjection(context.Background(), transfer); return err },
+		"delete":   func() error { _, err := store.DeleteProof(context.Background(), activate); return err },
+	} {
+		if err := invoke(); err == nil {
+			t.Fatalf("%s accepted an authority for another closed operation", name)
+		}
+	}
+	if _, err := store.DeleteProof(context.Background(), deleteRequest); err == nil {
+		// The exact DeleteProof operation proceeds beyond dispatch and correctly
+		// rejects this missing PriorReserved state; this guards the fixture too.
+		t.Fatal("missing reserved state was accepted")
+	}
+}
+
 func TestPF001LinuxCapacityStoreRejectsUnsafeRootAndInterruptsLockWait(t *testing.T) {
 	t.Parallel()
 	t.Run("unsafe root mode", func(t *testing.T) {

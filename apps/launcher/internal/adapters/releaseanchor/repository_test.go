@@ -253,6 +253,32 @@ func TestPF001ReleaseAnchorRepositoryRejectsIncompleteCompositionAndMapsBoundari
 	}
 }
 
+func TestPF001ReleaseAnchorRepositoryResolvesOnlyTheFixedProtectedJournal(t *testing.T) {
+	t.Parallel()
+	clock := fixedClock{at: time.Unix(1_000, 0).UTC()}
+	anchored := newAnchoredTestJournal(t, &memoryJournal{})
+	provider := &releaseAnchorProvider{journal: anchored}
+	repository, err := NewRepositoryFromProvider(t.Context(), provider, clock)
+	if err != nil || repository == nil || provider.calls != 1 || provider.operation.String() != releaseAnchorOperationID {
+		t.Fatalf("repository=%+v error=%v provider=%+v", repository, err, provider)
+	}
+	for name, candidate := range map[string]anchoredJournalProvider{
+		"nil":              nil,
+		"typed nil":        (*releaseAnchorProvider)(nil),
+		"plain journal":    &releaseAnchorProvider{journal: &memoryJournal{}},
+		"provider failure": &releaseAnchorProvider{err: installjournal.ErrUnsafePermission},
+	} {
+		resolved, resolveError := NewRepositoryFromProvider(t.Context(), candidate, clock)
+		if resolved != nil || resolveError == nil {
+			t.Fatalf("%s provider accepted: repository=%+v error=%v", name, resolved, resolveError)
+		}
+	}
+	//lint:ignore SA1012 Deliberate nil-context authority boundary test.
+	if resolved, resolveError := NewRepositoryFromProvider(nil, provider, clock); resolved != nil || resolveError == nil { //nolint:staticcheck
+		t.Fatalf("nil context accepted: repository=%+v error=%v", resolved, resolveError)
+	}
+}
+
 func releaseAnchorFixture(t *testing.T) (*Repository, *memoryJournal) {
 	t.Helper()
 	inner := &memoryJournal{}
@@ -325,6 +351,22 @@ type memoryJournal struct {
 	mu            sync.Mutex
 	snapshot      installjournal.Snapshot
 	confirmations int
+}
+
+type releaseAnchorProvider struct {
+	journal   installjournal.Journal
+	err       error
+	operation install.OperationID
+	calls     int
+}
+
+func (p *releaseAnchorProvider) JournalFor(
+	_ context.Context,
+	operationID install.OperationID,
+) (installjournal.Journal, error) {
+	p.calls++
+	p.operation = operationID
+	return p.journal, p.err
 }
 
 func (j *memoryJournal) Append(

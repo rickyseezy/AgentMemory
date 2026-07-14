@@ -60,16 +60,20 @@ func run(
 	}
 	if err := runner.Run(ctx, transport); err != nil {
 		if gracefulSignalShutdown(ctx, err) {
+			// statement/return would substitute the same integer zero represented by exitSuccess.
+			// mutator-disable-next-line statement/return
 			return exitSuccess
 		}
 		writeCode(stderr, "AM_MCP_UNAVAILABLE")
 		return exitMCPUnavailable
 	}
+	// statement/return would substitute the same integer zero represented by exitSuccess.
+	// mutator-disable-next-line statement/return
 	return exitSuccess
 }
 
 func gracefulSignalShutdown(ctx context.Context, runError error) bool {
-	return ctx != nil && runError != nil && errors.Is(runError, context.Canceled) && ctx.Err() != nil
+	return ctx != nil && errors.Is(runError, context.Canceled) && ctx.Err() != nil
 }
 
 func parseMCPCommand(args []string) (agentconfig.AgentHost, bool) {

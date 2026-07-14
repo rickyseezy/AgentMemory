@@ -17,11 +17,16 @@ import (
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 )
 
 const (
-	releaseAnchorOperationID = "release-anchor"
+	// This fixed UUIDv7-shaped authority is a purpose-separated journal
+	// namespace, not a user installation operation. Using the same validated
+	// locator/key/rollback boundary prevents the release anchor from falling
+	// back to an ordinary file.
+	releaseAnchorOperationID = "019f5f30-0000-7000-8000-000000000001"
 	releaseAnchorSchema      = uint16(1)
 	maximumSafeJSONInteger   = uint64(1<<53 - 1)
 	maximumReleaseChannels   = 5
@@ -33,6 +38,35 @@ const (
 type Repository struct {
 	journal *bootstrapadapter.AnchoredJournal
 	clock   releaseverify.Clock
+}
+
+type anchoredJournalProvider interface {
+	JournalFor(context.Context, install.OperationID) (installjournal.Journal, error)
+}
+
+// NewRepositoryFromProvider resolves the fixed release-anchor authority from
+// a platform-protected journal provider and rejects any undecorated journal.
+func NewRepositoryFromProvider(
+	ctx context.Context,
+	provider anchoredJournalProvider,
+	clock releaseverify.Clock,
+) (*Repository, error) {
+	if ctx == nil || nilProvider(provider) || nilClock(clock) {
+		return nil, releaseverify.ErrReleaseAnchorIntegrity
+	}
+	operationID, err := install.NewOperationID(releaseAnchorOperationID)
+	if err != nil {
+		return nil, releaseverify.ErrReleaseAnchorIntegrity
+	}
+	journal, err := provider.JournalFor(ctx, operationID)
+	if err != nil {
+		return nil, mapMutationError(err)
+	}
+	anchored, ok := journal.(*bootstrapadapter.AnchoredJournal)
+	if !ok || anchored == nil {
+		return nil, releaseverify.ErrReleaseAnchorIntegrity
+	}
+	return NewRepository(anchored, clock)
 }
 
 // NewRepository accepts only the concrete rollback-protected journal
@@ -228,6 +262,14 @@ func validAnchor(anchor releaseverify.ReleaseAnchor) bool {
 func sameAnchor(left, right releaseverify.ReleaseAnchor) bool {
 	return left.Channel() == right.Channel() && left.Sequence() == right.Sequence() && left.ReleaseID() == right.ReleaseID() &&
 		left.ManifestDigest().Equal(right.ManifestDigest())
+}
+
+func nilProvider(provider anchoredJournalProvider) bool {
+	if provider == nil {
+		return true
+	}
+	value := reflect.ValueOf(provider)
+	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
 func mapLoadError(err error) error {

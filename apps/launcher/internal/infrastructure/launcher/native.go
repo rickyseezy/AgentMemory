@@ -8,15 +8,19 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/activereleasejournal"
 	agentconfigadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/agentconfig"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactjournal"
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/corehttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
 	firststartadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/firststart"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/hostlock"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installplanfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installprogress"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseanchor"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/resourcejournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -38,6 +42,10 @@ type NativeRoots struct {
 	PreparationState   string
 	RuntimeState       string
 	ReleaseAnchorState string
+	ArtifactState      string
+	ResourceState      string
+	ActiveReleaseState string
+	InstallationLock   string
 	CanonicalPlans     string
 }
 
@@ -102,6 +110,10 @@ func defaultNativeRoots() (NativeRoots, error) {
 		PreparationState:   filepath.Join(base, "preparation-state"),
 		RuntimeState:       filepath.Join(base, "runtime-state"),
 		ReleaseAnchorState: filepath.Join(base, "release-anchor-state"),
+		ArtifactState:      filepath.Join(base, "artifact-state"),
+		ResourceState:      filepath.Join(base, "resource-state"),
+		ActiveReleaseState: filepath.Join(base, "active-release-state"),
+		InstallationLock:   filepath.Join(base, "installation.lock"),
 		CanonicalPlans:     filepath.Join(base, "canonical-plans"),
 	}, nil
 }
@@ -110,6 +122,7 @@ func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.CanonicalPlans,
+		r.ArtifactState, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -131,6 +144,11 @@ type nativeComposition struct {
 	binder        firststartapp.PreparationBinder
 	runtimeState  *filesystem.RuntimeOperationRepository
 	releaseAnchor *releaseanchor.Repository
+	artifacts     *artifactjournal.Repository
+	resourceState *resourcejournal.Repository
+	activations   *activereleasejournal.ActivationRepository
+	hostPointers  *activereleasejournal.HostPointerRepository
+	installLock   *hostlock.Port
 }
 
 func composeNative(
@@ -166,6 +184,18 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	artifactLocator, err := bootstrapadapter.NewOperationLocator(roots.ArtifactState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	resourceLocator, err := bootstrapadapter.NewOperationLocator(roots.ResourceState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	activeReleaseLocator, err := bootstrapadapter.NewOperationLocator(roots.ActiveReleaseState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operationJournals, err := journalFactory(operationLocator)
 	if err != nil || nilCapability(operationJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -190,6 +220,18 @@ func composeNative(
 	if err != nil || nilCapability(releaseAnchorJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	artifactJournals, err := journalFactory(artifactLocator)
+	if err != nil || nilCapability(artifactJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	resourceJournals, err := journalFactory(resourceLocator)
+	if err != nil || nilCapability(resourceJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	activeReleaseJournals, err := journalFactory(activeReleaseLocator)
+	if err != nil || nilCapability(activeReleaseJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	fence, err := filesystem.NewNativeOperationStateFence(operationLocator)
 	if err != nil {
 		return nativeComposition{}, err
@@ -199,6 +241,26 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	clock := setuphost.Clock{}
+	artifactRepository, err := artifactjournal.New(artifactJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	resourceRepository, err := resourcejournal.New(resourceJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	activationRepository, err := activereleasejournal.NewActivationRepository(activeReleaseJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	hostPointerRepository, err := activereleasejournal.NewHostPointerRepository(activeReleaseJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	installationLock, err := hostlock.New(roots.InstallationLock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	releaseAnchorRepository, err := releaseanchor.NewRepositoryFromProvider(ctx, releaseAnchorJournals, clock)
 	if err != nil {
 		return nativeComposition{}, err
@@ -252,6 +314,8 @@ func composeNative(
 	return nativeComposition{
 		factory: factory, resources: resources, preparations: preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
+		artifacts: artifactRepository, resourceState: resourceRepository,
+		activations: activationRepository, hostPointers: hostPointerRepository, installLock: installationLock,
 	}, nil
 }
 

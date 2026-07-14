@@ -62,7 +62,7 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	}
 }
 
-func TestPF001NativeCompositionUsesThreeDistinctJournalAuthoritiesAndResolvesMissing(t *testing.T) {
+func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolvesMissing(t *testing.T) {
 	t.Parallel()
 	roots := nativeTestRoots(t.TempDir())
 	var observed []string
@@ -75,13 +75,15 @@ func TestPF001NativeCompositionUsesThreeDistinctJournalAuthoritiesAndResolvesMis
 	}
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
-		composition.releaseAnchor == nil {
+		composition.releaseAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
+		composition.activations == nil || composition.hostPointers == nil || composition.installLock == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 6 || observed[0] != roots.OperationState ||
+	if len(observed) != 9 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
 		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState ||
-		observed[5] != roots.ReleaseAnchorState {
+		observed[5] != roots.ReleaseAnchorState || observed[6] != roots.ArtifactState ||
+		observed[7] != roots.ResourceState || observed[8] != roots.ActiveReleaseState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -128,7 +130,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 6; failAt++ {
+	for failAt := 1; failAt <= 9; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -156,7 +158,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			}
 			return nativeMissingJournalProvider{}, nil
 		}, pendingReadySurface{})
-	if err == nil || calls != 6 {
+	if err == nil || calls != 9 {
 		t.Fatalf("ordinary release-anchor journal accepted: calls=%d error=%v", calls, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -631,6 +633,8 @@ func nativeTestRoots(root string) NativeRoots {
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
 		RuntimeState: filepath.Join(root, "runtime"), ReleaseAnchorState: filepath.Join(root, "release-anchor"),
+		ArtifactState: filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
+		ActiveReleaseState: filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
 		CanonicalPlans: filepath.Join(root, "plans"),
 	}
 }

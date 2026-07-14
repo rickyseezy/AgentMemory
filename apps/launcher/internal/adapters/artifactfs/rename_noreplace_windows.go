@@ -94,7 +94,10 @@ func renameSecureNoReplace(from *secureFile, toDirectory *os.File, to string) er
 	if err != nil {
 		return err
 	}
-	if durableSync(mutation) != nil || durableSync(from.directory) != nil || durableSync(toDirectory) != nil ||
+	// The mutation handle deliberately carries only rename authority. Flush the
+	// still-open writable source handle, which identifies the same file after
+	// the rename, because FlushFileBuffers rejects a read/delete-only handle.
+	if durableSync(from.file) != nil || durableSync(from.directory) != nil || durableSync(toDirectory) != nil ||
 		fromGuard.Verify(ctx) != nil || toGuard.Verify(ctx) != nil {
 		return artifactapp.ErrStoreOperation
 	}

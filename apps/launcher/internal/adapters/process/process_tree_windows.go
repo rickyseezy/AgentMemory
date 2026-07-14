@@ -28,6 +28,7 @@ const (
 	windowsJobCompletionKey            = uintptr(0x50463031)
 	windowsJobMessageActiveProcessZero = uint32(4)
 	windowsJobTerminationExitCode      = uint32(0xc000013a)
+	windowsJobProcessSnapshotLimit     = 4096
 
 	// ProcThreadAttributeValue(13, FALSE, TRUE, FALSE). x/sys does not yet
 	// export this Windows 10 / Server 2016 attribute. Update fails closed on
@@ -59,6 +60,12 @@ type windowsJobBasicAccountingInformation struct {
 	totalProcesses            uint32
 	activeProcesses           uint32
 	totalTerminatedProcesses  uint32
+}
+
+type windowsJobBasicProcessIDList struct {
+	numberOfAssignedProcesses uint32
+	numberOfProcessIDsInList  uint32
+	processIDList             [1]uintptr
 }
 
 type windowsJobResources struct {
@@ -448,12 +455,14 @@ func validateWindowsBrokerCommand(ctx context.Context, command *exec.Cmd) error 
 }
 
 func abortWindowsCreatedProcess(process, job, completionPort windows.Handle) error {
-	result := terminateWindowsJob(job)
+	processes, snapshotError := snapshotWindowsJobProcesses(job)
+	defer closeWindowsProcessHandles(processes)
+	result := errors.Join(snapshotError, terminateWindowsJob(job))
 	waitResult, waitError := windows.WaitForSingleObject(process, windows.INFINITE)
 	if waitError != nil || waitResult != windows.WAIT_OBJECT_0 {
 		result = errors.Join(result, waitError, os.ErrInvalid)
 	}
-	result = errors.Join(result, windows.CloseHandle(process))
+	result = errors.Join(result, waitForWindowsProcessHandles(processes), windows.CloseHandle(process))
 	return errors.Join(result, waitForWindowsJobSettlement(job, completionPort))
 }
 
@@ -550,6 +559,9 @@ func superviseWindowsJob(
 	if leaderExited {
 		result = errors.Join(result, windows.GetExitCodeProcess(process, &exitStatus))
 	}
+	processes, snapshotError := snapshotWindowsJobProcesses(job)
+	defer closeWindowsProcessHandles(processes)
+	result = errors.Join(result, snapshotError)
 	result = errors.Join(result, terminateWindowsJob(job))
 	if !leaderExited {
 		waitResult, waitError := windows.WaitForSingleObject(process, windows.INFINITE)
@@ -559,9 +571,80 @@ func superviseWindowsJob(
 			result = errors.Join(result, windows.GetExitCodeProcess(process, &exitStatus))
 		}
 	}
-	result = errors.Join(result, windows.CloseHandle(process))
+	result = errors.Join(result, waitForWindowsProcessHandles(processes), windows.CloseHandle(process))
 	result = errors.Join(result, waitForWindowsJobSettlement(job, completionPort))
 	return exitStatus, cancelled, result
+}
+
+// snapshotWindowsJobProcesses retains synchronization handles for every job
+// member observed immediately before termination. Windows can decrement the
+// job's active-process accounting just before a terminated process object is
+// signaled, so accounting alone is not a sufficient return barrier.
+func snapshotWindowsJobProcesses(job windows.Handle) ([]windows.Handle, error) {
+	for capacity := 16; capacity <= windowsJobProcessSnapshotLimit; capacity *= 2 {
+		var layout windowsJobBasicProcessIDList
+		headerBytes := int(unsafe.Offsetof(layout.processIDList))
+		buffer := make([]byte, headerBytes+capacity*int(unsafe.Sizeof(uintptr(0))))
+		//nolint:gosec // G103: the buffer is the documented variable-length JOBOBJECT_BASIC_PROCESS_ID_LIST layout.
+		information := (*windowsJobBasicProcessIDList)(unsafe.Pointer(&buffer[0]))
+		var returned uint32
+		queryError := windows.QueryInformationJobObject(
+			job,
+			windows.JobObjectBasicProcessIdList,
+			uintptr(unsafe.Pointer(information)), //nolint:gosec // G103: Win32 fills the reviewed native structure.
+			uint32(len(buffer)),                  // #nosec G115 -- the buffer is capped at 4096 native process identifiers.
+			&returned,
+		)
+		runtime.KeepAlive(buffer)
+		if errors.Is(queryError, windows.ERROR_MORE_DATA) ||
+			information.numberOfAssignedProcesses > uint32(capacity) ||
+			information.numberOfProcessIDsInList > uint32(capacity) {
+			continue
+		}
+		if queryError != nil || returned < uint32(headerBytes) {
+			return nil, errors.Join(queryError, os.ErrInvalid)
+		}
+		count := int(information.numberOfProcessIDsInList)
+		//nolint:gosec // G103: the query proved count is bounded by the allocated trailing array.
+		processIDs := (*[windowsJobProcessSnapshotLimit]uintptr)(unsafe.Pointer(&information.processIDList[0]))[:count:count]
+		handles := make([]windows.Handle, 0, count)
+		for _, processID := range processIDs {
+			if processID == 0 || processID > uintptr(^uint32(0)) {
+				closeWindowsProcessHandles(handles)
+				return nil, os.ErrInvalid
+			}
+			handle, openError := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(processID))
+			if errors.Is(openError, windows.ERROR_INVALID_PARAMETER) {
+				continue
+			}
+			if openError != nil {
+				closeWindowsProcessHandles(handles)
+				return nil, openError
+			}
+			handles = append(handles, handle)
+		}
+		return handles, nil
+	}
+	return nil, os.ErrInvalid
+}
+
+func waitForWindowsProcessHandles(processes []windows.Handle) error {
+	var result error
+	for _, process := range processes {
+		waitResult, waitError := windows.WaitForSingleObject(process, windows.INFINITE)
+		if waitError != nil || waitResult != windows.WAIT_OBJECT_0 {
+			result = errors.Join(result, waitError, os.ErrInvalid)
+		}
+	}
+	return result
+}
+
+func closeWindowsProcessHandles(processes []windows.Handle) {
+	for _, process := range processes {
+		if process != 0 && process != windows.InvalidHandle {
+			_ = windows.CloseHandle(process)
+		}
+	}
 }
 
 func terminateWindowsJob(job windows.Handle) error {

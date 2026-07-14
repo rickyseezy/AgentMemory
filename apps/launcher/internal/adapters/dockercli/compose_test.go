@@ -18,7 +18,6 @@ import (
 func TestPF001ComposeAdapterUsesOnlyExactAddressedArgv(t *testing.T) {
 	t.Parallel()
 
-	project, rendered := composeFixture(t, "directory with spaces;$(id)")
 	tests := []struct {
 		name      string
 		invoke    func(*Compose, containerengine.ComposeProject) error
@@ -53,6 +52,7 @@ func TestPF001ComposeAdapterUsesOnlyExactAddressedArgv(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			project, rendered := composeFixture(t, "directory with spaces;$(id)")
 			runner := &composeRunner{outputs: []argvprocess.Result{{StandardOutput: rendered}}}
 			if test.name != "verify" {
 				runner.outputs = append(runner.outputs,

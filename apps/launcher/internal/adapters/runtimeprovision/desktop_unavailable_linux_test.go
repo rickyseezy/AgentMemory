@@ -31,6 +31,7 @@ func TestPF001LinuxDesktopNativeBoundariesFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	var nilContext context.Context
 	if _, err := probe.ProbeDesktopHost(ctx, runtimeport.DesktopAuthority{}); !errors.Is(err, ErrUnsupportedHost) {
 		t.Fatalf("desktop host probe error = %v", err)
 	}
@@ -48,19 +49,19 @@ func TestPF001LinuxDesktopNativeBoundariesFailClosed(t *testing.T) {
 	if _, err := probe.ProbeDesktopHost(cancelled, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled desktop host error = %v", err)
 	}
-	if _, err := verifier.VerifyDesktopArtifact(nil, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
+	if _, err := verifier.VerifyDesktopArtifact(nilContext, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context desktop artifact error = %v", err)
 	}
 	if _, err := installed.ProbeDesktopInstalledApplication(cancelled, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled installed-app error = %v", err)
 	}
-	if _, err := launcher.LaunchDesktopRuntime(nil, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
+	if _, err := launcher.LaunchDesktopRuntime(nilContext, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context desktop launcher error = %v", err)
 	}
 	if _, err := prepareNativeDesktopProbeWorkspace(ctx, runtimeport.DesktopAuthority{}); !errors.Is(err, ErrUnsupportedHost) {
 		t.Fatalf("desktop workspace error = %v", err)
 	}
-	if _, err := prepareNativeDesktopProbeWorkspace(nil, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
+	if _, err := prepareNativeDesktopProbeWorkspace(nilContext, runtimeport.DesktopAuthority{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context desktop workspace error = %v", err)
 	}
 }
@@ -75,16 +76,17 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 		t.Fatal("desktop mutation dependency nil detector drifted")
 	}
 	ctx := context.Background()
+	var nilContext context.Context
 	if _, err := createNativeDesktopMutationExchange(ctx, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
 		t.Fatalf("desktop mutation exchange error = %v", err)
 	}
-	if _, err := createNativeDesktopMutationExchange(nil, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, context.Canceled) {
+	if _, err := createNativeDesktopMutationExchange(nilContext, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context mutation exchange error = %v", err)
 	}
 	if err := executeNativeDesktopHelper(ctx, runtimeport.DesktopHelperAuthority{}, "request"); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
 		t.Fatalf("desktop helper execution error = %v", err)
 	}
-	if err := executeNativeDesktopHelper(nil, runtimeport.DesktopHelperAuthority{}, "request"); !errors.Is(err, context.Canceled) {
+	if err := executeNativeDesktopHelper(nilContext, runtimeport.DesktopHelperAuthority{}, "request"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context desktop helper error = %v", err)
 	}
 	exchange := nativeDesktopMutationExchange{}

@@ -425,7 +425,11 @@ func ensureExecutionFile(
 			return nil, containerengine.ErrInvalidComposeProject
 		}
 	}
-	if sealExecutionFile(file) != nil || file.Sync() != nil {
+	// Existing generation-owned files are reopened read-only after their exact
+	// contents and protected identity are verified. Only a newly-created file
+	// needs the post-seal durability barrier; Sync rejects the reused read-only
+	// Windows handle.
+	if sealExecutionFile(file) != nil || created && file.Sync() != nil {
 		return nil, containerengine.ErrInvalidComposeProject
 	}
 	snapshot, err := snapshotOpenedComposeFile(file, allowEmpty, max(len(contents), 1))

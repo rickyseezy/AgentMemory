@@ -16,7 +16,19 @@ import (
 
 func TestPF001WindowsProductFilesystemCreatesProtectedIdempotentState(t *testing.T) {
 	t.Parallel()
-	root := filepath.Join(t.TempDir(), "AgentMemory")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.MkdirTemp(home, ".agentmemory-product-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fixture); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(fixture) })
+	root := filepath.Join(fixture, "AgentMemory")
 	ensurer := NewEnsurer()
 	directories := windowsDirectoryCommand(t, root)
 	first, err := ensurer.EnsureDirectories(context.Background(), directories)

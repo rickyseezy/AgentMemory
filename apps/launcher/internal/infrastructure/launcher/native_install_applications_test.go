@@ -85,6 +85,11 @@ func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *
 	t.Cleanup(func() { _ = complete.resources.Close(context.Background()) })
 
 	base := nativeInstallCapabilitiesFixture(nativeInstallGraphFixture())
+	missingCatalogAnchor := complete
+	missingCatalogAnchor.runtimeCatalogAnchor = nil
+	if builder, buildError := newNativeInstallApplicationsBuilder(&missingCatalogAnchor, base); builder != nil || buildError == nil {
+		t.Fatalf("missing runtime catalog anchor accepted: builder=%v error=%v", builder, buildError)
+	}
 	value := reflect.ValueOf(&base).Elem()
 	for index := 0; index < value.NumField(); index++ {
 		candidate := base
@@ -98,8 +103,7 @@ func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *
 
 func nativeInstallCapabilitiesFixture(dependencies nativeInstallGraphDependencies) nativeInstallPhaseCapabilities {
 	return nativeInstallPhaseCapabilities{
-		RuntimeEvidence: dependencies.RuntimeEvidence,
-		RuntimeEnsurer:  dependencies.RuntimeEnsurer, Capacity: dependencies.Capacity,
+		RuntimeEnsurer: dependencies.RuntimeEnsurer, Capacity: dependencies.Capacity,
 		ManagedResources: dependencies.ManagedResources, ProductStack: dependencies.ProductStack,
 		AgentConfiguration: dependencies.AgentConfiguration,
 	}

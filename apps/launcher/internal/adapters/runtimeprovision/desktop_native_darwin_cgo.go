@@ -224,6 +224,8 @@ func nativeDarwinEncrypted(path string) bool {
 	return C.am_disk_encrypted(cPath) == 1
 }
 
+func nativeDarwinAvailableMemory() uint64 { return uint64(C.am_available_memory()) }
+
 func darwinDesktopFilesystem(path string) (uint64, bool, error) {
 	var filesystem unix.Statfs_t
 	if err := unix.Statfs(path, &filesystem); err != nil || filesystem.Bsize <= 0 || filesystem.Bavail == 0 {

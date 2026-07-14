@@ -7,11 +7,11 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/corehttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installplanfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/productfs"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/activereleaseapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
-	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productstack"
 )
 
@@ -20,7 +20,6 @@ import (
 // Release, host-policy, and artifact-acquisition authority are deliberately
 // absent: the builder derives those only from the verified retained release.
 type nativeInstallPhaseCapabilities struct {
-	RuntimeEvidence    installplanapp.RuntimeEvidenceResolver
 	RuntimeEnsurer     installphase.RuntimeEnsurer
 	Capacity           installphase.ArtifactCapacityApplication
 	ManagedResources   installphase.ManagedResourceEnsurer
@@ -47,12 +46,13 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 	if composition == nil || composition.plans == nil || composition.operations == nil ||
 		composition.artifacts == nil || composition.artifactStore == nil ||
 		composition.resourceState == nil || composition.installLock == nil ||
+		composition.runtimeCatalogAnchor == nil ||
 		composition.activations == nil || composition.hostPointers == nil ||
 		composition.readinessRoot == "" || decode == nil {
 		return nil, errNativeInstallerIntegrity
 	}
 	required := []any{
-		capabilities.RuntimeEvidence, capabilities.RuntimeEnsurer,
+		capabilities.RuntimeEnsurer,
 		capabilities.Capacity, capabilities.ManagedResources, capabilities.ProductStack,
 		capabilities.AgentConfiguration,
 	}
@@ -79,6 +79,23 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		}
 		artifacts, err := newNativeArtifactApplication(
 			composition.artifacts, composition.artifactStore, release,
+		)
+		if err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		observer, err := runtimeprovision.NewNativeCatalogObserver(release.runtimeCatalogPublisherVerifier())
+		if err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		catalogPolicy, err := newNativeRuntimeCatalogPolicy(
+			setuphost.Clock{}, release.runtimeCatalogSignatureVerifier(),
+			release.runtimeCatalogPublisherVerifier(), composition.runtimeCatalogAnchor,
+		)
+		if err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		runtimeEvidence, err := newNativeRuntimeEvidenceResolver(
+			release.runtimeCatalogLoader(), catalogPolicy, observer,
 		)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
@@ -125,7 +142,7 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 			}
 			graph, graphError := newNativeInstallApplicationFactory(nativeInstallGraphDependencies{
 				Plans: composition.plans, RuntimePlans: composition.plans,
-				RuntimeEvidence: capabilities.RuntimeEvidence,
+				RuntimeEvidence: runtimeEvidence,
 				Operations:      composition.operations, Cancellation: composition.operations,
 				ReadinessReceipts: receipts, ResourceInventory: composition.resourceState,
 				InstallationLock: composition.installLock,

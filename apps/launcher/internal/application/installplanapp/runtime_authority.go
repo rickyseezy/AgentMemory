@@ -25,6 +25,8 @@ type RuntimeEvidenceRequest struct {
 	RuntimeCatalogDigest   install.Digest
 	SignedHostPlan         hostverification.SignedPlan
 	HostEvidenceDigest     install.Digest
+	HostStorageTarget      string
+	RuntimeEndpoint        string
 	SignedRelease          releaseinventory.SignedManifest
 	RuntimeCatalogResource releaseinventory.Resource
 }

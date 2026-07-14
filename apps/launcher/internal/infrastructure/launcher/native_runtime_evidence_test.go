@@ -81,6 +81,12 @@ func TestPF001NativeRuntimeEvidenceResolverFailsClosedAtEveryBoundary(t *testing
 		"host evidence": {loader: validLoader, policy: validPolicy, observer: validObserver, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
 			value.HostEvidenceDigest = install.Digest{}
 		}},
+		"storage target": {loader: validLoader, policy: validPolicy, observer: validObserver, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
+			value.HostStorageTarget = ""
+		}},
+		"runtime endpoint": {loader: validLoader, policy: validPolicy, observer: validObserver, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
+			value.RuntimeEndpoint = ""
+		}},
 	} {
 		candidate := request
 		if test.mutate != nil {
@@ -211,6 +217,8 @@ func nativeRuntimeEvidenceRequest(t testing.TB) installplanapp.RuntimeEvidenceRe
 	return installplanapp.RuntimeEvidenceRequest{
 		OperationID: operationID, ParentPlanDigest: parent,
 		SignedHostPlan: signed, HostEvidenceDigest: install.DigestBytes([]byte("host receipt")),
+		HostStorageTarget: "/Users/agentmemory/Library/Application Support/AgentMemory",
+		RuntimeEndpoint:   "unix:///Users/agentmemory/.docker/run/docker.sock",
 	}
 }
 
@@ -268,7 +276,12 @@ type runtimeObservationStub struct {
 	calls     int
 }
 
-func (s *runtimeObservationStub) ObserveRuntime(context.Context, installplanapp.RuntimeEvidenceRequest, runtimeinstall.CertifiedRuntime) (runtimeinstall.HostCapabilities, runtimeinstall.RuntimeDiscovery, install.Digest, error) {
+func (s *runtimeObservationStub) ObserveRuntime(
+	context.Context,
+	installplanapp.RuntimeEvidenceRequest,
+	runtimecatalogapp.VerifiedCatalog,
+	runtimeinstall.CertifiedRuntime,
+) (runtimeinstall.HostCapabilities, runtimeinstall.RuntimeDiscovery, install.Digest, error) {
 	s.calls++
 	return s.host, s.discovery, s.digest, s.err
 }

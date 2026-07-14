@@ -131,7 +131,9 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 		runtimePlan.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) || fixture.runtimeEvidence.calls != 1 ||
 		!fixture.runtimeEvidence.request.SignedHostPlan.Valid() ||
 		!fixture.runtimeEvidence.request.SignedHostPlan.Plan().Digest().Equal(plan.SignedHostPlan().Plan().Digest()) ||
-		!fixture.runtimeEvidence.request.HostEvidenceDigest.Equal(fixture.runtimeEvidence.evidence.HostEvidenceDigest()) {
+		!fixture.runtimeEvidence.request.HostEvidenceDigest.Equal(fixture.runtimeEvidence.evidence.HostEvidenceDigest()) ||
+		fixture.runtimeEvidence.request.HostStorageTarget != plan.HostStorageTarget() ||
+		fixture.runtimeEvidence.request.RuntimeEndpoint != plan.RuntimeEndpoint() {
 		t.Fatalf("runtime projection = %+v/%v", runtimePlan, err)
 	}
 	if _, err := runtimeinstall.DecodePlanV1(runtimePlan.CanonicalPlan()); err != nil {

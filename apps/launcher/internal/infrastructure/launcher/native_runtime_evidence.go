@@ -19,6 +19,7 @@ type nativeRuntimeCatalogEnvelopeLoader interface {
 type nativeVerifiedRuntimeCatalog struct {
 	runtime        runtimeinstall.CertifiedRuntime
 	manifestDigest runtimecatalog.Digest
+	verified       runtimecatalogapp.VerifiedCatalog
 }
 
 type nativeRuntimeCatalogPolicyVerifier interface {
@@ -33,6 +34,7 @@ type nativeRuntimeObservationResolver interface {
 	ObserveRuntime(
 		context.Context,
 		installplanapp.RuntimeEvidenceRequest,
+		runtimecatalogapp.VerifiedCatalog,
 		runtimeinstall.CertifiedRuntime,
 	) (runtimeinstall.HostCapabilities, runtimeinstall.RuntimeDiscovery, install.Digest, error)
 }
@@ -62,7 +64,7 @@ func (r *nativeRuntimeEvidenceResolver) ResolveRuntimeEvidence(
 ) (installplanapp.RuntimeEvidence, error) {
 	if r == nil || ctx == nil || nilAny(r.loader) || nilAny(r.catalog) || nilAny(r.observations) ||
 		request.OperationID.IsZero() || request.ParentPlanDigest.IsZero() || !request.SignedHostPlan.Valid() ||
-		request.HostEvidenceDigest.IsZero() {
+		request.HostEvidenceDigest.IsZero() || request.HostStorageTarget == "" || request.RuntimeEndpoint == "" {
 		return installplanapp.RuntimeEvidence{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
 	if err := ctx.Err(); err != nil {
@@ -77,7 +79,9 @@ func (r *nativeRuntimeEvidenceResolver) ResolveRuntimeEvidence(
 		!runtimecatalog.Digest(verified.runtime.CatalogDigest()).Equal(verified.manifestDigest) {
 		return installplanapp.RuntimeEvidence{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
-	host, discovery, discoveryEvidence, err := r.observations.ObserveRuntime(ctx, request, verified.runtime)
+	host, discovery, discoveryEvidence, err := r.observations.ObserveRuntime(
+		ctx, request, verified.verified, verified.runtime,
+	)
 	if err != nil || discoveryEvidence.IsZero() {
 		return installplanapp.RuntimeEvidence{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
@@ -154,7 +158,9 @@ func (p *nativeRuntimeCatalogPolicy) VerifyRuntimeCatalog(
 	if err != nil {
 		return nativeVerifiedRuntimeCatalog{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
-	return nativeVerifiedRuntimeCatalog{runtime: certified, manifestDigest: verified.ManifestDigest()}, nil
+	return nativeVerifiedRuntimeCatalog{
+		runtime: certified, manifestDigest: verified.ManifestDigest(), verified: verified,
+	}, nil
 }
 
 func nativeRuntimeCatalogSourceSelection(

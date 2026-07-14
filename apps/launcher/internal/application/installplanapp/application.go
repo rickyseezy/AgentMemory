@@ -504,6 +504,7 @@ func (a *Application) ResolveRuntimePlan(
 		OperationID: operationID, ParentPlanDigest: digest,
 		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
 		SignedHostPlan: plan.SignedHostPlan(), HostEvidenceDigest: hostEvidence.OutputDigest(),
+		HostStorageTarget: plan.HostStorageTarget(), RuntimeEndpoint: plan.RuntimeEndpoint(),
 		SignedRelease: plan.SignedRelease(), RuntimeCatalogResource: runtimeResource,
 	})
 	if err != nil || !evidence.HostEvidenceDigest().Equal(hostEvidence.OutputDigest()) ||

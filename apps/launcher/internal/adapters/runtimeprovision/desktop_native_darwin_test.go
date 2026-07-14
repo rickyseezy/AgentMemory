@@ -144,7 +144,14 @@ func TestDarwinDesktopBoundedIOAndFilesystemEvidence(t *testing.T) {
 	if machine, err := nativeDarwinMachineDigest(); err != nil || machine.IsZero() {
 		t.Fatalf("machine digest = %s, %v", machine, err)
 	}
+	if available := nativeDarwinAvailableMemory(); available == 0 {
+		t.Fatal("available memory probe returned zero")
+	}
 	_ = nativeDarwinEncrypted(home)
+	if _, _, err := observeDarwinCatalogHost(CatalogObservationInput{HostStorageTarget: home}); err != nil &&
+		!errors.Is(err, ErrUnsupportedHost) && !errors.Is(err, ErrProbeFailed) {
+		t.Fatalf("catalog host probe returned an unclassified error: %v", err)
+	}
 }
 
 func TestDarwinDesktopNativeConstructorsAndInvalidBoundariesFailClosed(t *testing.T) {

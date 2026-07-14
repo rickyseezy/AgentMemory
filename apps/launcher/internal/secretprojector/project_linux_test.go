@@ -66,6 +66,46 @@ func TestPF001LinuxProjectionRunsClosedContractAndIsReplaySafe(t *testing.T) {
 	}
 }
 
+func TestPF001LinuxProjectionReadsSharedSecretOnceAndProjectsEveryDeclaredVolume(t *testing.T) {
+	inputRoot := t.TempDir()
+	outputRoot := t.TempDir()
+	metadataRoot := t.TempDir()
+	uid := uint32(os.Getuid()) // #nosec G115 -- Linux UIDs are nonnegative uint32 values.
+	gid := uint32(os.Getgid()) // #nosec G115 -- Linux GIDs are nonnegative uint32 values.
+	file := fileContract{name: "shared-key", userID: uid, groupID: gid, maxBytes: exactCryptographicSecretBytes}
+	contract := []volumeContract{
+		{purpose: "core", files: []fileContract{file}},
+		{purpose: "worker", files: []fileContract{file}},
+	}
+	value := bytes.Repeat([]byte{0x3c}, int(exactCryptographicSecretBytes))
+	if err := os.WriteFile(filepath.Join(inputRoot, file.name), value, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	for _, volume := range contract {
+		if err := os.Mkdir(filepath.Join(outputRoot, volume.purpose), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadata := filepath.Join(metadataRoot, "metadata")
+	if err := os.WriteFile(metadata, []byte("fixed-process-metadata"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runProjection(
+		contract,
+		func(name string) string { return filepath.Join(inputRoot, name) },
+		func(purpose string) string { return filepath.Join(outputRoot, purpose) },
+		[]string{metadata},
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, volume := range contract {
+		projected, err := os.ReadFile(filepath.Join(outputRoot, volume.purpose, file.name)) //nolint:gosec // test-owned path.
+		if err != nil || !bytes.Equal(projected, value) {
+			t.Fatalf("%s projection = %x, %v", volume.purpose, projected, err)
+		}
+	}
+}
+
 func TestPF001LinuxProjectionHelpersFailClosed(t *testing.T) {
 	if RunDefault() == nil {
 		t.Fatal("bare test host unexpectedly satisfied the closed production projection contract")

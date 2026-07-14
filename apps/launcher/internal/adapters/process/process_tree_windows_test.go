@@ -189,10 +189,31 @@ func TestPF001WindowsJobBrokerRejectsIncompleteOrCallerBroadenedCommand(t *testi
 }
 
 func TestPF001WindowsJobBrokerClosesNativeHandlesAcrossRepeatedRuns(t *testing.T) {
+	// The race-enabled Go runtime lazily creates worker threads (and their
+	// Windows synchronization handles) when the broker first exercises three
+	// concurrent pipe copies. Establish that bounded runtime high-water mark
+	// before measuring broker-owned handles.
+	runWindowsBrokerExitBatch(t, 16)
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
 	before := currentWindowsProcessHandleCount(t)
 	goroutinesBefore := runtime.NumGoroutine()
+	runWindowsBrokerExitBatch(t, 32)
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+	after := currentWindowsProcessHandleCount(t)
+	if after > before+8 {
+		t.Fatalf("process handles grew from %d to %d after the runtime warm-up", before, after)
+	}
+	if afterGoroutines := runtime.NumGoroutine(); afterGoroutines > goroutinesBefore+2 {
+		t.Fatalf("goroutines grew from %d to %d across repeated runs", goroutinesBefore, afterGoroutines)
+	}
+}
+
+func runWindowsBrokerExitBatch(t *testing.T, iterations int) {
+	t.Helper()
 	executable := testCurrentExecutable(t)
-	for iteration := 0; iteration < 64; iteration++ {
+	for iteration := 0; iteration < iterations; iteration++ {
 		command, _, _ := windowsBrokerTestCommand(
 			context.Background(),
 			t,
@@ -203,15 +224,6 @@ func TestPF001WindowsJobBrokerClosesNativeHandlesAcrossRepeatedRuns(t *testing.T
 		if err := runCommandInProcessTree(context.Background(), command); err != nil {
 			t.Fatalf("iteration %d: %v", iteration, err)
 		}
-	}
-	runtime.GC()
-	time.Sleep(50 * time.Millisecond)
-	after := currentWindowsProcessHandleCount(t)
-	if after > before+8 {
-		t.Fatalf("process handles grew from %d to %d across repeated runs", before, after)
-	}
-	if afterGoroutines := runtime.NumGoroutine(); afterGoroutines > goroutinesBefore+2 {
-		t.Fatalf("goroutines grew from %d to %d across repeated runs", goroutinesBefore, afterGoroutines)
 	}
 }
 

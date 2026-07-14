@@ -659,6 +659,28 @@ func TestPF001ArtifactFSReservationAndFinalizeFailureBoundaries(t *testing.T) {
 	}
 }
 
+func TestPF001ArtifactFSAllocationValidationRejectsDuplicateAndForeignAuthority(t *testing.T) {
+	t.Parallel()
+	plan := fsPlan(t, []string{"bundle://release/core.bin"})
+	request := fsReservationRequest(t, "allocation-validation", plan)
+	if !validAllocations(request) || !sameAllocations(request.Allocations, request.Authorization.Allocations()) {
+		t.Fatal("valid plan-bound allocation was rejected")
+	}
+
+	duplicate := request
+	duplicate.Allocations = append(append([]artifactacquisition.ReservationAllocation(nil), request.Allocations...), request.Allocations[0])
+	duplicate.DownloadBytes *= 2
+	duplicate.RequiredBytes = duplicate.DownloadBytes
+	if validAllocations(duplicate) {
+		t.Fatal("duplicate physical capacity slot was accepted")
+	}
+
+	foreign := fsReservationRequest(t, "foreign-allocation", plan)
+	if sameAllocations(request.Allocations, foreign.Allocations) || sameAllocations(request.Allocations, duplicate.Allocations) {
+		t.Fatal("foreign or differently sized allocation authority was accepted")
+	}
+}
+
 func fsOwnedArtifact(t *testing.T, operationID string) (*artifactacquisition.Aggregate, artifactacquisition.Artifact, artifactacquisition.PartialAuthorization) {
 	t.Helper()
 	plan := fsPlan(t, []string{"bundle://release/core.bin"})

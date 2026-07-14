@@ -25,6 +25,7 @@ const (
 	ResourceKindModel               ResourceKind = "model"
 	ResourceKindTokenizer           ResourceKind = "tokenizer"
 	ResourceKindTemplate            ResourceKind = "template"
+	ResourceKindInstallPlanTemplate ResourceKind = "install_plan_template"
 	ResourceKindOfflineComponent    ResourceKind = "offline_bundle_component"
 	ResourceKindRuntimeCatalog      ResourceKind = "runtime_catalog"
 	ResourceKindCycloneDXSBOM       ResourceKind = "cyclonedx_sbom"
@@ -52,6 +53,7 @@ const (
 	ResourcePurposeModelWeights        ResourcePurpose = "model_weights"
 	ResourcePurposeTokenizer           ResourcePurpose = "tokenizer"
 	ResourcePurposePromptTemplate      ResourcePurpose = "prompt_template"
+	ResourcePurposeInstallPlanTemplate ResourcePurpose = "install_plan_template"
 	ResourcePurposeOfflineComponent    ResourcePurpose = "offline_bundle_component"
 	ResourcePurposeRuntimeCatalog      ResourcePurpose = "runtime_catalog"
 	ResourcePurposeCycloneDXSBOM       ResourcePurpose = "cyclonedx_sbom"
@@ -95,6 +97,7 @@ const (
 	MediaTypeModelWeights            = "application/vnd.agentmemory.model-weights"
 	MediaTypeTokenizer               = "application/vnd.agentmemory.tokenizer+json"
 	MediaTypePromptTemplate          = "text/vnd.agentmemory.prompt-template"
+	MediaTypeInstallPlanTemplate     = "application/vnd.agentmemory.install-plan-template+json"
 	MediaTypeOfflineComponent        = "application/vnd.agentmemory.offline-component"
 	MediaTypeRuntimeCatalog          = "application/vnd.agentmemory.runtime-catalog+json"
 	MediaTypeCycloneDX               = "application/vnd.cyclonedx+json"
@@ -303,6 +306,8 @@ func expectedPurpose(kind ResourceKind) ResourcePurpose {
 		return ResourcePurposeTokenizer
 	case ResourceKindTemplate:
 		return ResourcePurposePromptTemplate
+	case ResourceKindInstallPlanTemplate:
+		return ResourcePurposeInstallPlanTemplate
 	case ResourceKindOfflineComponent:
 		return ResourcePurposeOfflineComponent
 	case ResourceKindRuntimeCatalog:
@@ -343,6 +348,8 @@ func expectedMediaType(kind ResourceKind) string {
 		return MediaTypeTokenizer
 	case ResourceKindTemplate:
 		return MediaTypePromptTemplate
+	case ResourceKindInstallPlanTemplate:
+		return MediaTypeInstallPlanTemplate
 	case ResourceKindOfflineComponent:
 		return MediaTypeOfflineComponent
 	case ResourceKindRuntimeCatalog:
@@ -511,6 +518,7 @@ func (k ResourceKind) Valid() bool {
 		ResourceKindModel,
 		ResourceKindTokenizer,
 		ResourceKindTemplate,
+		ResourceKindInstallPlanTemplate,
 		ResourceKindOfflineComponent,
 		ResourceKindRuntimeCatalog,
 		ResourceKindCycloneDXSBOM,

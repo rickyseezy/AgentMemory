@@ -534,6 +534,7 @@ func requiredSubjectKinds() []ResourceKind {
 		ResourceKindModel,
 		ResourceKindTokenizer,
 		ResourceKindTemplate,
+		ResourceKindInstallPlanTemplate,
 		ResourceKindRuntimeCatalog,
 	}
 }
@@ -576,6 +577,7 @@ func hasUnambiguousSingletonSubjects(subjects []Resource) bool {
 		ResourceKindMigration,
 		ResourceKindSetupUI,
 		ResourceKindVerifier,
+		ResourceKindInstallPlanTemplate,
 		ResourceKindRuntimeCatalog,
 	} {
 		if counts[kind] != 1 {

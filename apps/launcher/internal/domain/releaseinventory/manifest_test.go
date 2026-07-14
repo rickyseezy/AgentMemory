@@ -505,6 +505,28 @@ func TestManifestRequiresEveryProviderArtifactAndEveryServicePlatformImage(t *te
 		t.Fatalf("ResourcesFor() missing extraction tokenizer error = %v", err)
 	}
 
+	missingInstallPlan := removeSubjectAndEvidence(resources, "install-plan")
+	manifest = mustManifest(t, missingInstallPlan)
+	if _, err := manifest.ResourcesFor(linux); !errors.Is(err, ErrTargetInventoryIncomplete) {
+		t.Fatalf("ResourcesFor() missing signed install-plan template error = %v", err)
+	}
+
+	duplicateInput := fixtureSubjectInput(
+		"install-plan-duplicate", ResourceKindInstallPlanTemplate, linux,
+		digestText("install-plan-duplicate"), 12,
+	)
+	duplicateInput.CycloneDXSBOMResourceID = duplicateInput.ID + "-cyclonedx"
+	duplicateInput.SPDXSBOMResourceID = duplicateInput.ID + "-spdx"
+	duplicateInput.ProvenanceResourceID = duplicateInput.ID + "-provenance"
+	duplicateInput.LicenseResourceID = duplicateInput.ID + "-licenses"
+	duplicateInput.VulnerabilityResourceID = duplicateInput.ID + "-vulnerabilities"
+	duplicateResources := append(append([]Resource(nil), resources...), mustResource(t, duplicateInput))
+	duplicateResources = append(duplicateResources, fixtureEvidenceResources(t, duplicateInput)...)
+	manifest = mustManifest(t, duplicateResources)
+	if _, err := manifest.ResourcesFor(linux); !errors.Is(err, ErrTargetInventoryIncomplete) {
+		t.Fatalf("ResourcesFor() ambiguous signed install-plan templates error = %v", err)
+	}
+
 	macOS := mustPlatform(t, "darwin", "arm64")
 	multiPlatformResources := append(completeResources(t, linux), platformResources(t, macOS)...)
 	input := validManifestInput(multiPlatformResources)
@@ -720,6 +742,7 @@ func platformResources(t testing.TB, platform Platform) []Resource {
 		fixtureSubjectInput("migration"+suffix, ResourceKindMigration, platform, digestText("migration"+suffix), 9),
 		fixtureSubjectInput("verifier"+suffix, ResourceKindVerifier, platform, digestText("verifier"+suffix), 8),
 		fixtureSubjectInput("setup-ui"+suffix, ResourceKindSetupUI, platform, digestText("setup-ui"+suffix), 8),
+		fixtureSubjectInput("install-plan"+suffix, ResourceKindInstallPlanTemplate, platform, digestText("install-plan"+suffix), 12),
 		fixtureSubjectInput("runtime-catalog"+suffix, ResourceKindRuntimeCatalog, platform, digestText("runtime-catalog"+suffix), 8),
 	)
 	for _, role := range []LocalProviderRole{

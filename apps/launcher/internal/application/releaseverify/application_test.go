@@ -643,6 +643,7 @@ func releaseFixtureResources(t *testing.T, platform releaseinventory.Platform) [
 		releaseSubjectInput("migration", releaseinventory.ResourceKindMigration, platform),
 		releaseSubjectInput("verifier", releaseinventory.ResourceKindVerifier, platform),
 		releaseSubjectInput("setup-ui", releaseinventory.ResourceKindSetupUI, platform),
+		releaseSubjectInput("install-plan", releaseinventory.ResourceKindInstallPlanTemplate, platform),
 		releaseSubjectInput("runtime-catalog", releaseinventory.ResourceKindRuntimeCatalog, platform),
 	)
 	for _, role := range []releaseinventory.LocalProviderRole{
@@ -812,6 +813,7 @@ func releasePurpose(kind releaseinventory.ResourceKind) releaseinventory.Resourc
 		releaseinventory.ResourceKindModel:               releaseinventory.ResourcePurposeModelWeights,
 		releaseinventory.ResourceKindTokenizer:           releaseinventory.ResourcePurposeTokenizer,
 		releaseinventory.ResourceKindTemplate:            releaseinventory.ResourcePurposePromptTemplate,
+		releaseinventory.ResourceKindInstallPlanTemplate: releaseinventory.ResourcePurposeInstallPlanTemplate,
 		releaseinventory.ResourceKindOfflineComponent:    releaseinventory.ResourcePurposeOfflineComponent,
 		releaseinventory.ResourceKindRuntimeCatalog:      releaseinventory.ResourcePurposeRuntimeCatalog,
 		releaseinventory.ResourceKindCycloneDXSBOM:       releaseinventory.ResourcePurposeCycloneDXSBOM,
@@ -836,6 +838,7 @@ func releaseMediaType(kind releaseinventory.ResourceKind) string {
 		releaseinventory.ResourceKindModel:               releaseinventory.MediaTypeModelWeights,
 		releaseinventory.ResourceKindTokenizer:           releaseinventory.MediaTypeTokenizer,
 		releaseinventory.ResourceKindTemplate:            releaseinventory.MediaTypePromptTemplate,
+		releaseinventory.ResourceKindInstallPlanTemplate: releaseinventory.MediaTypeInstallPlanTemplate,
 		releaseinventory.ResourceKindOfflineComponent:    releaseinventory.MediaTypeOfflineComponent,
 		releaseinventory.ResourceKindRuntimeCatalog:      releaseinventory.MediaTypeRuntimeCatalog,
 		releaseinventory.ResourceKindCycloneDXSBOM:       releaseinventory.MediaTypeCycloneDX,

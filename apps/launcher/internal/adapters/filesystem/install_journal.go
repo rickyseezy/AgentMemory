@@ -393,7 +393,7 @@ func (j *InstallJournal) loadDocument(ctx context.Context) (persistedJournal, er
 	if err := verifyCurrentOwner(fileInfo, "inspect"); err != nil {
 		return persistedJournal{}, err
 	}
-	if fileInfo.Mode().Perm()&0o077 != 0 {
+	if platformUnsafePermissions(fileInfo) {
 		return persistedJournal{}, journalport.NewError(
 			journalport.ErrorUnsafePermission,
 			"inspect",

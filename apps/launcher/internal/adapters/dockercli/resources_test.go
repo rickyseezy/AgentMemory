@@ -262,6 +262,9 @@ func TestPF001ManagedResourceJSONAndValueGuards(t *testing.T) {
 	); !errors.Is(err, containerengine.ErrManagedResourceResponse) {
 		t.Fatalf("unknown resource kind error = %v", err)
 	}
+	if err := rejectDuplicateJSONKeys(make([]byte, maximumDockerJSON+1)); err == nil {
+		t.Fatal("oversized JSON document was accepted")
+	}
 }
 
 func TestPF001ManagedResourceRemovalFailsClosedAtEveryBoundary(t *testing.T) {

@@ -1111,8 +1111,7 @@ func verifyPrivateDACLMask(
 		return errors.New("windows filesystem DACL proof is unavailable")
 	}
 	control, _, err := descriptor.Control()
-	if err != nil || control&windows.SE_DACL_PROTECTED == 0 || control&windows.SE_DACL_PRESENT == 0 ||
-		control&windows.SE_DACL_AUTO_INHERITED != 0 {
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 || control&windows.SE_DACL_PRESENT == 0 {
 		return errors.New("windows filesystem DACL is absent, inherited, or unprotected")
 	}
 	dacl, defaulted, err := descriptor.DACL()

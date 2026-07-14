@@ -34,12 +34,13 @@ type executableLease struct {
 	owner        string
 	digest       [sha256.Size]byte
 	ancestors    []windowsExecutableAncestor
+	allowMutable bool
 }
 
 func acquireExecutableLease(
 	ctx context.Context,
 	authority argvprocess.ExecutableAuthority,
-	_ bool,
+	allowMutable bool,
 ) (*executableLease, error) {
 	if ctx == nil || ctx.Err() != nil || !authority.Valid() || authority.Platform() != runtime.GOOS ||
 		authority.Architecture() != runtime.GOARCH ||
@@ -50,7 +51,9 @@ func acquireExecutableLease(
 	if err != nil || expectedSID == nil || !expectedSID.IsValid() {
 		return nil, argvprocess.ErrInvalidInvocation
 	}
-	lease := &executableLease{path: authority.CanonicalPath(), owner: authority.OwnerIdentity()}
+	lease := &executableLease{
+		path: authority.CanonicalPath(), owner: authority.OwnerIdentity(), allowMutable: allowMutable,
+	}
 	failed := true
 	defer func() {
 		if failed {
@@ -88,7 +91,7 @@ func acquireExecutableLease(
 		parent = opened
 	}
 	lease.file, lease.identityText, err = openWindowsExecutableRelative(
-		ctx, parent, components[len(components)-1], expectedSID,
+		ctx, parent, components[len(components)-1], expectedSID, allowMutable,
 	)
 	if err != nil {
 		return nil, err
@@ -192,6 +195,7 @@ func openWindowsExecutableRelative(
 	parent *os.File,
 	name string,
 	expectedSID *windows.SID,
+	allowMutable bool,
 ) (*os.File, string, error) {
 	if parent == nil || filepath.Base(name) != name || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) {
 		return nil, "", argvprocess.ErrInvalidInvocation
@@ -226,7 +230,7 @@ func openWindowsExecutableRelative(
 		return nil, "", err
 	}
 	identity, err := windowsExecutableIdentity(handle, false)
-	if err != nil || verifyWindowsExecutableSecurity(handle, expectedSID) != nil || ctx.Err() != nil {
+	if err != nil || verifyWindowsExecutableSecurity(handle, expectedSID, allowMutable) != nil || ctx.Err() != nil {
 		_ = windows.CloseHandle(handle)
 		return nil, "", argvprocess.ErrInvalidInvocation
 	}
@@ -257,7 +261,7 @@ func windowsExecutableIdentity(handle windows.Handle, wantDirectory bool) (strin
 	), nil
 }
 
-func verifyWindowsExecutableSecurity(handle windows.Handle, expectedSID *windows.SID) error {
+func verifyWindowsExecutableSecurity(handle windows.Handle, expectedSID *windows.SID, allowMutable bool) error {
 	descriptor, err := windows.GetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
@@ -269,6 +273,9 @@ func verifyWindowsExecutableSecurity(handle windows.Handle, expectedSID *windows
 	owner, defaulted, err := descriptor.Owner()
 	if err != nil || owner == nil || defaulted || !owner.Equals(expectedSID) {
 		return argvprocess.ErrInvalidInvocation
+	}
+	if allowMutable {
+		return nil
 	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil {
@@ -360,7 +367,7 @@ func (l *executableLease) verify(ctx context.Context, authority argvprocess.Exec
 		}
 	}
 	expectedSID, err := windows.StringToSid(strings.TrimPrefix(authority.OwnerIdentity(), "sid:"))
-	if err != nil || verifyWindowsExecutableSecurity(windows.Handle(l.file.Fd()), expectedSID) != nil {
+	if err != nil || verifyWindowsExecutableSecurity(windows.Handle(l.file.Fd()), expectedSID, l.allowMutable) != nil {
 		return argvprocess.ErrInvalidInvocation
 	}
 	identity, err := windowsExecutableIdentity(windows.Handle(l.file.Fd()), false)

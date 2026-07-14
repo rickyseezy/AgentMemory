@@ -281,6 +281,9 @@ type networkResourceDocument struct {
 }
 
 func rejectDuplicateJSONKeys(data []byte) error {
+	if len(data) == 0 || len(data) > maximumDockerJSON {
+		return errors.New("JSON input size bound exceeded")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	state := jsonBoundState{}

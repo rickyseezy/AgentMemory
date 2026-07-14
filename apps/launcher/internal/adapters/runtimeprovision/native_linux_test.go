@@ -275,7 +275,7 @@ func TestLinuxProcessSocketInventoryReadsTheExactOwnedProcess(t *testing.T) {
 }
 
 func TestLinuxProbeWorkspaceCleanupRejectsSubstitutionAndRemovesExactContent(t *testing.T) {
-	_, authority := adapterAuthority(t)
+	plan, authority := adapterAuthority(t)
 	var nilContext context.Context
 	if _, err := prepareNativeProbeWorkspace(nilContext, authority); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil workspace context error = %v", err)
@@ -292,15 +292,26 @@ func TestLinuxProbeWorkspaceCleanupRejectsSubstitutionAndRemovesExactContent(t *
 		t.Fatalf("nil workspace file error = %v", err)
 	}
 	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	directory := filepath.Join(parent, "workspace")
 	inputPath := filepath.Join(directory, "input.bin")
 	content := []byte("agentmemory-probe-content")
 	digest := runtimeinstall.Sum(content)
 	uid := uint32(os.Getuid()) // #nosec G115 -- Linux user IDs are nonnegative uint32 values.
-	if uid == authority.InvokingUID() {
-		workspace, err := prepareNativeProbeWorkspace(context.Background(), authority)
+	if uid != 0 {
+		gid := mustTestUint32(t, os.Getgid())
+		runtimeDirectory := "/run/user/" + strconv.FormatUint(uint64(uid), 10)
+		nativeAuthority := adapterLinuxAuthorityForIdentity(
+			t, plan, 0, uid, gid, "/home/agentmemory", runtimeDirectory,
+		)
+		workspace, err := prepareNativeProbeWorkspaceAt(context.Background(), nativeAuthority, parent)
 		if err != nil {
-			t.Fatalf("prepareNativeProbeWorkspace() error = %v", err)
+			t.Fatalf(
+				"prepareNativeProbeWorkspaceAt() error = %v (authority=%t root=%v)",
+				err, nativeAuthority.Valid(), validateOwnerDirectory(parent, uid, true),
+			)
 		}
 		if workspace.directory == "" || workspace.inputPath == "" || workspace.digest.IsZero() || workspace.cleanup == nil {
 			t.Fatal("prepared workspace omitted authenticated cleanup evidence")

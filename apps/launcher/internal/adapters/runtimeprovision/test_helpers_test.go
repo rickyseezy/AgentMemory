@@ -1,6 +1,7 @@
 package runtimeprovision
 
 import (
+	"strconv"
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -35,6 +36,18 @@ func adapterLinuxAuthority(
 	plan runtimeinstall.Plan,
 	workloads uint32,
 ) runtimeport.LinuxAuthority {
+	return adapterLinuxAuthorityForIdentity(t, plan, workloads, 1000, 1000, "/home/agentmemory", "/run/user/1000")
+}
+
+func adapterLinuxAuthorityForIdentity(
+	t *testing.T,
+	plan runtimeinstall.Plan,
+	workloads uint32,
+	uid uint32,
+	gid uint32,
+	home string,
+	runtimeDirectory string,
+) runtimeport.LinuxAuthority {
 	t.Helper()
 	probeDigest := runtimeinstall.Sum([]byte("probe-image"))
 	packages := []runtimeport.PackageInput{
@@ -62,9 +75,10 @@ func adapterLinuxAuthority(
 			MetadataDigest: runtimeinstall.Sum([]byte("metadata")),
 		},
 		Packages: packages, RuntimeVersion: "29.6.1", ComposeVersion: "5.1.4", UnrelatedWorkloads: workloads,
-		InvokingUID: 1000, InvokingGID: 1000, AccountName: "agentmemory", PrincipalID: "linux:uid:1000",
-		MachineDigest: runtimeinstall.Sum([]byte("machine")), HomeDirectory: "/home/agentmemory",
-		RuntimeDirectory: "/run/user/1000", Endpoint: "unix:///run/user/1000/docker.sock",
+		InvokingUID: uid, InvokingGID: gid, AccountName: "agentmemory",
+		PrincipalID:   "linux:uid:" + strconv.FormatUint(uint64(uid), 10),
+		MachineDigest: runtimeinstall.Sum([]byte("machine")), HomeDirectory: home,
+		RuntimeDirectory: runtimeDirectory, Endpoint: "unix://" + runtimeDirectory + "/docker.sock",
 		SubordinateIDCount: 65536, SELinuxEnforcing: true, ServiceID: "docker.service",
 		ServiceUnitDigest: runtimeinstall.Sum([]byte("unit")), RootlessToolPath: "/usr/bin/dockerd-rootless-setuptool.sh",
 		RootlessToolDigest:     runtimeinstall.Sum([]byte("tool")),

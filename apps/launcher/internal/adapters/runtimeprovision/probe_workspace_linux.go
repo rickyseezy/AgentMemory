@@ -18,16 +18,25 @@ func prepareNativeProbeWorkspace(
 	ctx context.Context,
 	authority runtimeport.LinuxAuthority,
 ) (probeWorkspace, error) {
+	return prepareNativeProbeWorkspaceAt(ctx, authority, authority.RuntimeDirectory())
+}
+
+func prepareNativeProbeWorkspaceAt(
+	ctx context.Context,
+	authority runtimeport.LinuxAuthority,
+	runtimeDirectory string,
+) (probeWorkspace, error) {
 	if ctx == nil {
 		return probeWorkspace{}, context.Canceled
 	}
 	if err := ctx.Err(); err != nil {
 		return probeWorkspace{}, err
 	}
-	if !authority.Valid() || validateOwnerDirectory(authority.RuntimeDirectory(), authority.InvokingUID(), true) != nil {
+	if !authority.Valid() || runtimeDirectory == "" ||
+		validateOwnerDirectory(runtimeDirectory, authority.InvokingUID(), true) != nil {
 		return probeWorkspace{}, ErrProvisionIntegrity
 	}
-	directory := authority.RuntimeDirectory() + "/agentmemory-runtime-probe-" + authority.PlanDigest().String()[:20]
+	directory := runtimeDirectory + "/agentmemory-runtime-probe-" + authority.PlanDigest().String()[:20]
 	inputPath := directory + "/input.bin"
 	content := []byte("agentmemory-runtime-probe-v1\n" + authority.CapabilityPolicyDigest().String() + "\n")
 	contentDigest := runtimeinstall.Sum(content)

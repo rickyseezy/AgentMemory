@@ -182,6 +182,20 @@ func TestParseChangedLinesRejectsMalformedHunk(t *testing.T) {
 	}
 }
 
+func TestParseChangedLinesAcceptsBoundedGeneratedAssetLine(t *testing.T) {
+	t.Parallel()
+
+	input := "+++ b/apps/launcher/generated.go\n@@ -0,0 +1 @@\n+" +
+		strings.Repeat("x", 128<<10) + "\n"
+	changed, err := parseChangedLines(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parseChangedLines() error = %v", err)
+	}
+	if !changed.Contains("apps/launcher/generated.go", 1) {
+		t.Fatal("generated source line was not recorded")
+	}
+}
+
 func TestParseChangedLinesHandlesDeletionAndZeroLengthHunks(t *testing.T) {
 	t.Parallel()
 

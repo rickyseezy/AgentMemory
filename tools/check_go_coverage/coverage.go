@@ -13,7 +13,11 @@ import (
 	"strings"
 )
 
-const launcherPathPrefix = "apps/launcher/"
+const (
+	launcherPathPrefix       = "apps/launcher/"
+	maximumDiffLineBytes     = 4 << 20
+	initialDiffScannerBuffer = 64 << 10
+)
 
 var hunkHeaderPattern = regexp.MustCompile(`^@@ -[0-9]+(?:,[0-9]+)? \+([0-9]+)(?:,([0-9]+))? @@`)
 
@@ -246,6 +250,7 @@ func percentage(covered uint64, statements uint64) float64 {
 
 func parseChangedLines(reader io.Reader) (changedLines, error) {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, initialDiffScannerBuffer), maximumDiffLineBytes)
 	result := make(changedLines)
 	currentFile := ""
 	deletedTarget := false

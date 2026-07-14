@@ -154,8 +154,8 @@ func TestPF001WindowsDPAPIOperationKeySourceConvergesAcrossInstances(t *testing.
 
 func TestPF001WindowsCredentialTargetIsDigestOnlyAndOperationSpecific(t *testing.T) {
 	t.Parallel()
-	firstID, _ := install.NewOperationID("private raw operation name")
-	secondID, _ := install.NewOperationID("another operation")
+	firstID, _ := install.NewOperationID("private-raw-operation-name")
+	secondID, _ := install.NewOperationID("another-operation")
 	first, err := windowsCredentialTarget(firstID)
 	if err != nil {
 		t.Fatal(err)

@@ -45,6 +45,7 @@ func TestPF001SecretProjectorCommandRejectsNilCapabilities(t *testing.T) {
 	t.Parallel()
 	stdout, _ := temporaryFile(t)
 	stderr, stderrPath := temporaryFile(t)
+	defer func() { _ = stdout.Close() }()
 	if code := run([]string{"agentmemory-secret-projector"}, stdout, stderr, nil); code != 1 {
 		t.Fatalf("run()=%d", code)
 	}

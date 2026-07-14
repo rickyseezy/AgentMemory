@@ -221,7 +221,7 @@ func openRelativeDirectoryGuard(
 	var handle windows.Handle
 	err = windows.NtCreateFile(
 		&handle,
-		windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
 		attributes,
 		&status,
 		nil,

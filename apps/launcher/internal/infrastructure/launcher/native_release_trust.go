@@ -25,14 +25,15 @@ const (
 var embeddedNativeReleaseTrustBase64 string
 
 type nativeReleaseTrustDocument struct {
-	SchemaVersion      uint16                      `json:"schemaVersion"`
-	ManifestKeys       map[string]string           `json:"manifestKeys"`
-	HostPolicyKeys     map[string]string           `json:"hostPolicyKeys"`
-	RuntimeCatalogKeys map[string]string           `json:"runtimeCatalogKeys"`
-	Offline            nativeOfflineTrustDocument  `json:"offline"`
-	Provenance         nativeProvenanceDocument    `json:"provenance"`
-	Qualification      nativeQualificationDocument `json:"qualification"`
-	Publishers         map[string][]string         `json:"nativePublishers"`
+	SchemaVersion      uint16                                         `json:"schemaVersion"`
+	ManifestKeys       map[string]string                              `json:"manifestKeys"`
+	HostPolicyKeys     map[string]string                              `json:"hostPolicyKeys"`
+	RuntimeCatalogKeys map[string]string                              `json:"runtimeCatalogKeys"`
+	RuntimePublishers  []runtimeprovision.RuntimePublisherPolicyInput `json:"runtimeNativePublishers"`
+	Offline            nativeOfflineTrustDocument                     `json:"offline"`
+	Provenance         nativeProvenanceDocument                       `json:"provenance"`
+	Qualification      nativeQualificationDocument                    `json:"qualification"`
+	Publishers         map[string][]string                            `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -117,6 +118,7 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
 		RuntimeCatalogKeys: runtimeCatalogKeys,
+		RuntimePublishers:  append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 			TrustDomain:           document.Offline.TrustDomain,
 			RevocationAuthorities: revocationKeys, TimeAuthorities: timeKeys,
@@ -139,6 +141,9 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := runtimeprovision.NewCatalogSignatureVerifier(trust.RuntimeCatalogKeys); err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
+	if _, err := runtimeprovision.NewRuntimePublisherPolicyVerifier(trust.RuntimePublishers); err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := releaseverifyadapter.NewOfflineTrustPolicy(trust.Offline); err != nil {

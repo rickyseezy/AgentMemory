@@ -36,6 +36,7 @@ type nativeReleaseAuthority struct {
 	releaseVerifier         *installphase.ReleaseApplicationAdapter
 	runtimeCatalog          *nativeRuntimeCatalogLoader
 	runtimeCatalogSignature *runtimeprovision.CatalogSignatureVerifier
+	runtimeCatalogPublisher *runtimeprovision.RuntimePublisherPolicyVerifier
 	closeOnce               sync.Once
 	closeError              error
 }
@@ -84,6 +85,10 @@ func newNativeReleaseAuthority(
 	if err != nil {
 		return nil, firststartapp.ErrIntegrity
 	}
+	runtimeCatalogPublisher, err := runtimeprovision.NewRuntimePublisherPolicyVerifier(trust.RuntimePublishers)
+	if err != nil {
+		return nil, firststartapp.ErrIntegrity
+	}
 	hostProbe := hostverify.NewNativeProbe()
 	hostApplication, err := hostverifyapp.NewApplication(hostverifyapp.Dependencies{
 		Signature: hostSignature, Probe: hostProbe,
@@ -101,6 +106,7 @@ func newNativeReleaseAuthority(
 		source: source, stack: stack, hostProbe: hostProbe,
 		hostVerifier: hostApplication, releaseVerifier: releaseApplication,
 		runtimeCatalogSignature: runtimeCatalogSignature,
+		runtimeCatalogPublisher: runtimeCatalogPublisher,
 	}
 	runtimeCatalog, err := newNativeRuntimeCatalogLoader(authority)
 	if err != nil {
@@ -152,6 +158,13 @@ func (a *nativeReleaseAuthority) runtimeCatalogSignatureVerifier() *runtimeprovi
 		return nil
 	}
 	return a.runtimeCatalogSignature
+}
+
+func (a *nativeReleaseAuthority) runtimeCatalogPublisherVerifier() *runtimeprovision.RuntimePublisherPolicyVerifier {
+	if a == nil {
+		return nil
+	}
+	return a.runtimeCatalogPublisher
 }
 
 func (a *nativeReleaseAuthority) Close(ctx context.Context) error {

@@ -10,9 +10,11 @@ import (
 	"time"
 
 	releaseverifyadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 )
 
 func TestPF001NativeReleaseStackComposesEveryTrustGateIntoVerifiedTemplates(t *testing.T) {
@@ -105,6 +107,11 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 			ManifestKeys:       map[string]ed25519.PublicKey{"release-root": manifestPublic},
 			HostPolicyKeys:     map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
 			RuntimeCatalogKeys: map[string]ed25519.PublicKey{"runtime-catalog-root": manifestPublic},
+			RuntimePublishers: []runtimeprovision.RuntimePublisherPolicyInput{{
+				Verification:       runtimecatalog.NativeVerificationAppleNotarized,
+				Identity:           "developer-id-application-docker-inc-9bnsxjn65r",
+				SigningKeyIdentity: "apple-developer-id-9bnsxjn65r", PackageIdentity: "com.docker.docker",
+			}},
 			Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 				TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]ed25519.PublicKey{"revocations": evidencePublic},
 				TimeAuthorities: map[string]ed25519.PublicKey{"trusted-time": evidencePublic}, MaximumFutureSkew: time.Minute,

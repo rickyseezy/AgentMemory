@@ -21,7 +21,8 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 	})
 	if err != nil || authority.templates() == nil || authority.verifier() == nil ||
 		authority.hostVerification() == nil || authority.releaseVerification() == nil ||
-		authority.runtimeCatalogLoader() == nil || authority.runtimeCatalogSignatureVerifier() == nil {
+		authority.runtimeCatalogLoader() == nil || authority.runtimeCatalogSignatureVerifier() == nil ||
+		authority.runtimeCatalogPublisherVerifier() == nil {
 		t.Fatalf("authority=%#v error=%v", authority, err)
 	}
 	if err := authority.Close(t.Context()); err != nil {

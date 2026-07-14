@@ -8,6 +8,7 @@ import (
 
 	firststartadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/firststart"
 	releaseverifyadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
@@ -27,6 +28,7 @@ type nativeReleaseTrustMaterial struct {
 	ManifestKeys       map[string]ed25519.PublicKey
 	HostPolicyKeys     map[string]ed25519.PublicKey
 	RuntimeCatalogKeys map[string]ed25519.PublicKey
+	RuntimePublishers  []runtimeprovision.RuntimePublisherPolicyInput
 	Offline            releaseverifyadapter.OfflineTrustPolicyInput
 	Provenance         releaseverifyadapter.ProvenanceTrustPolicyInput
 	Qualification      releaseverifyadapter.QualificationTrustPolicyInput

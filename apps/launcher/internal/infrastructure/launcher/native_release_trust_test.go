@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	releaseverifyadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 )
 
 func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *testing.T) {
@@ -17,7 +19,7 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	document := nativeReleaseTrustFixture()
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
 	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
-		len(trust.RuntimeCatalogKeys) != 1 ||
+		len(trust.RuntimeCatalogKeys) != 1 || len(trust.RuntimePublishers) != 1 ||
 		len(trust.Offline.RevocationAuthorities) != 1 || len(trust.Offline.TimeAuthorities) != 1 ||
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
 		len(trust.Provenance.BuildIdentities) != 1 || len(trust.Provenance.RecipeDigests) != 1 ||
@@ -40,6 +42,13 @@ func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testi
 		"manifest keys":        func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
 		"host policy keys":     func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
 		"runtime catalog keys": func(document *nativeReleaseTrustDocument) { document.RuntimeCatalogKeys = nil },
+		"runtime publishers":   func(document *nativeReleaseTrustDocument) { document.RuntimePublishers = nil },
+		"duplicate runtime publisher": func(document *nativeReleaseTrustDocument) {
+			document.RuntimePublishers = append(document.RuntimePublishers, document.RuntimePublishers[0])
+		},
+		"invalid runtime publisher": func(document *nativeReleaseTrustDocument) {
+			document.RuntimePublishers[0].PackageIdentity = "foreign?package"
+		},
 		"manifest key bytes": func(document *nativeReleaseTrustDocument) {
 			document.ManifestKeys["release-root"] = base64.StdEncoding.EncodeToString([]byte("short"))
 		},
@@ -132,6 +141,11 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 		ManifestKeys:       map[string]string{"release-root": key},
 		HostPolicyKeys:     map[string]string{"host-policy-root": key},
 		RuntimeCatalogKeys: map[string]string{"runtime-catalog-root": key},
+		RuntimePublishers: []runtimeprovision.RuntimePublisherPolicyInput{{
+			Verification:       runtimecatalog.NativeVerificationAppleNotarized,
+			Identity:           "developer-id-application-docker-inc-9bnsxjn65r",
+			SigningKeyIdentity: "apple-developer-id-9bnsxjn65r", PackageIdentity: "com.docker.docker",
+		}},
 		Offline: nativeOfflineTrustDocument{
 			TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]string{"revocation-root": key},
 			TimeAuthorities: map[string]string{"time-root": key}, MaximumFutureSkewSeconds: 300,

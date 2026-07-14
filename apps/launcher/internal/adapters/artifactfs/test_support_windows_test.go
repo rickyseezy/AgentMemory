@@ -51,3 +51,33 @@ func makeSecureTestDirectory(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+func writeSecureTestFile(t *testing.T, path string, value []byte) {
+	t.Helper()
+	file, err := windowssecurity.CreatePrivateFile(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(value); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func truncateSecureTestFile(t *testing.T, path string, size int64) {
+	t.Helper()
+	file, err := windowssecurity.CreatePrivateFile(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(size); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

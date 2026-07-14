@@ -59,13 +59,17 @@ func run(
 		return exitBootstrapIntegrity
 	}
 	if err := runner.Run(ctx, transport); err != nil {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		if gracefulSignalShutdown(ctx, err) {
 			return exitSuccess
 		}
 		writeCode(stderr, "AM_MCP_UNAVAILABLE")
 		return exitMCPUnavailable
 	}
 	return exitSuccess
+}
+
+func gracefulSignalShutdown(ctx context.Context, runError error) bool {
+	return ctx != nil && runError != nil && errors.Is(runError, context.Canceled) && ctx.Err() != nil
 }
 
 func parseMCPCommand(args []string) (agentconfig.AgentHost, bool) {

@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrapresolver"
-	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
 )
 
 // NewProtectedResolver wires the concrete immutable plan and authenticated
@@ -13,7 +12,7 @@ func NewProtectedResolver(
 	plans bootstrapresolver.CanonicalPlanRepository,
 	operations bootstrapresolver.InstallOperationRepository,
 	clock bootstrapresolver.Clock,
-) (mcpbootstrapapp.BootstrapResolver, error) {
+) (*bootstrapresolver.Repository, error) {
 	planAuthority, err := bootstrapresolver.NewPlanRepositoryAdapter(plans)
 	if err != nil {
 		return nil, err

@@ -168,6 +168,27 @@ func TestPF001AgentMemoryCommandDistinguishesSignalCancellationFromRunnerFailure
 	}
 }
 
+func TestPF001AgentMemoryCommandAcceptsGracefulShutdownOnlyForSignalCancellation(t *testing.T) {
+	t.Parallel()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, test := range map[string]struct {
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		"signal cancellation": {ctx: cancelled, err: context.Canceled, want: true},
+		"live cancellation":   {ctx: context.Background(), err: context.Canceled},
+		"other error":         {ctx: cancelled, err: errors.New("failed")},
+		"nil error":           {ctx: cancelled},
+		"nil context":         {err: context.Canceled},
+	} {
+		if got := gracefulSignalShutdown(test.ctx, test.err); got != test.want {
+			t.Fatalf("%s gracefulSignalShutdown()=%t, want %t", name, got, test.want)
+		}
+	}
+}
+
 type factoryStub struct {
 	runner launcher.MCPRunner
 	err    error

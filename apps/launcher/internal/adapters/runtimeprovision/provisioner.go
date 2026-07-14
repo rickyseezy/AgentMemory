@@ -205,9 +205,8 @@ func (p *LinuxProvisioner) AwaitRuntimeConsent(
 		!receipt.Matches(consentRequest, p.clock.Now()) {
 		return runtimeinstallapp.Output{}, ErrProvisionIntegrity
 	}
-	grant, err := runtimeport.NewLinuxConsentGrant(consentRequest, receipt)
-	if err != nil || p.consentStore.StoreLinuxConsent(ctx, request.OperationID(), grant) != nil {
-		return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+	if p.consentStore.StoreLinuxConsent(ctx, request.OperationID(), receipt) != nil {
+		return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, nil, ErrProvisionIntegrity)
 	}
 	return p.completed(request, authority, receipt.Digest(), runtimeinstall.OwnershipUnknown, false)
 }
@@ -392,12 +391,12 @@ func (p *LinuxProvisioner) AwaitThirdPartyTerms(
 			request, authority, authority.TermsDigest(), runtimeinstall.OwnershipUnknown, true,
 		)
 	}
-	grant, err := p.requireLinuxConsent(ctx, request, authority)
+	receipt, err := p.requireLinuxConsent(ctx, request, authority)
 	if err != nil {
 		return p.linuxConsentError(ctx, err)
 	}
 	return p.completed(
-		request, authority, combineDigests(grant.Receipt().Digest(), authority.TermsDigest()),
+		request, authority, combineDigests(receipt.Digest(), authority.TermsDigest()),
 		runtimeinstall.OwnershipUnknown, true,
 	)
 }
@@ -590,15 +589,14 @@ func (p *LinuxProvisioner) requireLinuxConsent(
 	ctx context.Context,
 	request runtimeinstallapp.Request,
 	authority runtimeport.LinuxAuthority,
-) (runtimeport.LinuxConsentGrant, error) {
-	grant, err := p.consentStore.LoadLinuxConsent(ctx, request.OperationID(), authority.PlanDigest())
-	if err != nil || !grant.ValidFor(request.OperationID(), authority) ||
-		!grant.Receipt().Authorizes(authority, p.clock.Now()) ||
-		p.consentAuth.VerifyStoredLinuxConsent(ctx, authority, grant.Receipt()) != nil ||
-		!grant.Receipt().Authorizes(authority, p.clock.Now()) {
-		return runtimeport.LinuxConsentGrant{}, errors.Join(runtimeport.ErrLinuxConsentIntegrity, err)
+) (runtimeport.LinuxConsentReceipt, error) {
+	receipt, err := p.consentStore.LoadLinuxConsent(ctx, request.OperationID(), authority.PlanDigest())
+	if err != nil || !receipt.Authorizes(authority, p.clock.Now()) ||
+		p.consentAuth.VerifyStoredLinuxConsent(ctx, authority, receipt) != nil ||
+		!receipt.Authorizes(authority, p.clock.Now()) {
+		return runtimeport.LinuxConsentReceipt{}, errors.Join(runtimeport.ErrLinuxConsentIntegrity, err)
 	}
-	return grant, nil
+	return receipt, nil
 }
 
 func (p *LinuxProvisioner) linuxConsentError(

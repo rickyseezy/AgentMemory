@@ -24,6 +24,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/resourcejournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimecataloganchor"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeconsent"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeconsentjournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -39,20 +40,22 @@ import (
 // They are selected only by the platform composition root, never by an MCP
 // request or installation plan.
 type NativeRoots struct {
-	OperationState            string
-	BootstrapPointer          string
-	SetupDecisions            string
-	PreparationState          string
-	RuntimeState              string
-	ReleaseAnchorState        string
-	RuntimeCatalogAnchorState string
-	ArtifactState             string
-	ArtifactCAS               string
-	ResourceState             string
-	ActiveReleaseState        string
-	ReadinessState            string
-	InstallationLock          string
-	CanonicalPlans            string
+	OperationState             string
+	BootstrapPointer           string
+	SetupDecisions             string
+	PreparationState           string
+	RuntimeState               string
+	RuntimeConsentKeyState     string
+	RuntimeConsentReceiptState string
+	ReleaseAnchorState         string
+	RuntimeCatalogAnchorState  string
+	ArtifactState              string
+	ArtifactCAS                string
+	ResourceState              string
+	ActiveReleaseState         string
+	ReadinessState             string
+	InstallationLock           string
+	CanonicalPlans             string
 }
 
 type nativeRootsResolver func() (NativeRoots, error)
@@ -110,20 +113,22 @@ func defaultNativeRoots() (NativeRoots, error) {
 	}
 	base := filepath.Join(filepath.Clean(configurationRoot), "AgentMemory", "launcher-v1")
 	return NativeRoots{
-		OperationState:            filepath.Join(base, "operation-state"),
-		BootstrapPointer:          filepath.Join(base, "bootstrap-pointer"),
-		SetupDecisions:            filepath.Join(base, "setup-decisions"),
-		PreparationState:          filepath.Join(base, "preparation-state"),
-		RuntimeState:              filepath.Join(base, "runtime-state"),
-		ReleaseAnchorState:        filepath.Join(base, "release-anchor-state"),
-		RuntimeCatalogAnchorState: filepath.Join(base, "runtime-catalog-anchor-state"),
-		ArtifactState:             filepath.Join(base, "artifact-state"),
-		ArtifactCAS:               filepath.Join(base, "artifact-cas"),
-		ResourceState:             filepath.Join(base, "resource-state"),
-		ActiveReleaseState:        filepath.Join(base, "active-release-state"),
-		ReadinessState:            filepath.Join(base, "readiness-state"),
-		InstallationLock:          filepath.Join(base, "installation.lock"),
-		CanonicalPlans:            filepath.Join(base, "canonical-plans"),
+		OperationState:             filepath.Join(base, "operation-state"),
+		BootstrapPointer:           filepath.Join(base, "bootstrap-pointer"),
+		SetupDecisions:             filepath.Join(base, "setup-decisions"),
+		PreparationState:           filepath.Join(base, "preparation-state"),
+		RuntimeState:               filepath.Join(base, "runtime-state"),
+		RuntimeConsentKeyState:     filepath.Join(base, "runtime-consent-key-state"),
+		RuntimeConsentReceiptState: filepath.Join(base, "runtime-consent-receipt-state"),
+		ReleaseAnchorState:         filepath.Join(base, "release-anchor-state"),
+		RuntimeCatalogAnchorState:  filepath.Join(base, "runtime-catalog-anchor-state"),
+		ArtifactState:              filepath.Join(base, "artifact-state"),
+		ArtifactCAS:                filepath.Join(base, "artifact-cas"),
+		ResourceState:              filepath.Join(base, "resource-state"),
+		ActiveReleaseState:         filepath.Join(base, "active-release-state"),
+		ReadinessState:             filepath.Join(base, "readiness-state"),
+		InstallationLock:           filepath.Join(base, "installation.lock"),
+		CanonicalPlans:             filepath.Join(base, "canonical-plans"),
 	}, nil
 }
 
@@ -131,6 +136,7 @@ func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
+		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
 		r.ReadinessState,
 	}
@@ -156,6 +162,9 @@ type nativeComposition struct {
 	preparations         firststartapp.PreparationRepository
 	binder               firststartapp.PreparationBinder
 	runtimeState         *filesystem.RuntimeOperationRepository
+	consentSigner        *runtimeconsent.ProtectedSigner
+	consentBroker        *runtimeconsent.Broker
+	consentRepository    *runtimeconsentjournal.Repository
 	releaseAnchor        *releaseanchor.Repository
 	runtimeCatalogAnchor *runtimecataloganchor.Repository
 	artifacts            *artifactjournal.Repository
@@ -193,6 +202,14 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	runtimeLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	consentKeyLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeConsentKeyState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	consentReceiptLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeConsentReceiptState)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -234,6 +251,10 @@ func composeNative(
 	}
 	runtimeJournals, err := journalFactory(runtimeLocator)
 	if err != nil || nilCapability(runtimeJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	consentReceiptJournals, err := journalFactory(consentReceiptLocator)
+	if err != nil || nilCapability(consentReceiptJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
 	releaseAnchorJournals, err := journalFactory(releaseAnchorLocator)
@@ -342,6 +363,21 @@ func composeNative(
 		_ = resources.Close(context.WithoutCancel(ctx))
 		return nativeComposition{}, err
 	}
+	consentSigner, err := newPlatformConsentSigner(consentKeyLocator)
+	if err != nil || consentSigner == nil {
+		_ = resources.Close(context.WithoutCancel(ctx))
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	consentRepository, err := runtimeconsentjournal.New(consentReceiptJournals, clock)
+	if err != nil {
+		_ = resources.Close(context.WithoutCancel(ctx))
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	consentBroker, err := runtimeconsent.NewBroker(consent, consentSigner, clock)
+	if err != nil {
+		_ = resources.Close(context.WithoutCancel(ctx))
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	resolver, err := NewProtectedResolver(pointerJournals, plans, operations, clock)
 	if err != nil {
 		_ = resources.Close(context.WithoutCancel(ctx))
@@ -363,6 +399,9 @@ func composeNative(
 		readinessRoot: roots.ReadinessState,
 		preparations:  preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
+		consentSigner:        consentSigner,
+		consentBroker:        consentBroker,
+		consentRepository:    consentRepository,
 		runtimeCatalogAnchor: runtimeCatalogAnchorRepository,
 		artifacts:            artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,

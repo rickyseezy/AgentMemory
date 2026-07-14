@@ -5,6 +5,7 @@ package launcher
 import (
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeconsent"
 )
 
 func newPlatformJournalProvider(
@@ -23,4 +24,18 @@ func newPlatformJournalProvider(
 		return nil, err
 	}
 	return filesystem.NewDarwinOperationJournalProvider(locator, keys, owners, anchors)
+}
+
+func newPlatformConsentSigner(
+	_ *bootstrapadapter.OperationLocator,
+) (*runtimeconsent.ProtectedSigner, error) {
+	owners, err := bootstrapadapter.NewDarwinOwnerBindingSource()
+	if err != nil {
+		return nil, err
+	}
+	keys, err := bootstrapadapter.NewDarwinKeychainOperationKeySource(owners)
+	if err != nil {
+		return nil, err
+	}
+	return runtimeconsent.NewProtectedSigner(owners, keys)
 }

@@ -7,6 +7,7 @@ import (
 
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 )
 
 func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing.T) {
@@ -64,6 +65,21 @@ func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing
 	}
 	if err := closer.Close(t.Context()); err != nil {
 		t.Fatalf("idempotent close error=%v", err)
+	}
+}
+
+func TestManagedNativeInstallApplicationDelegatesAndRejectsMissingApplication(t *testing.T) {
+	t.Parallel()
+	delegate := &nativeInstallApplicationStub{}
+	managed := &managedNativeInstallApplication{application: delegate}
+	command := nativeInstallerCommandFixture(t)
+	if _, err := managed.Install(t.Context(), command); err != nil || delegate.calls != 1 || delegate.command.OperationID != command.OperationID {
+		t.Fatalf("delegation error=%v calls=%d command=%+v", err, delegate.calls, delegate.command)
+	}
+	for _, candidate := range []*managedNativeInstallApplication{nil, {application: (*nativeInstallApplicationStub)(nil)}} {
+		if result, err := candidate.Install(t.Context(), installapp.InstallCommand{}); err == nil || result != (installapp.InstallResult{}) {
+			t.Fatalf("missing application result=%+v error=%v", result, err)
+		}
 	}
 }
 

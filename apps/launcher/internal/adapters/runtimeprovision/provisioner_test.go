@@ -514,7 +514,7 @@ func fakeLinuxArtifactEvidence(
 
 type fakeLinuxConsent struct {
 	mu       sync.Mutex
-	grants   map[string]runtimeport.LinuxConsentGrant
+	receipts map[string]runtimeport.LinuxConsentReceipt
 	awaitErr error
 	authErr  error
 	storeErr error
@@ -522,7 +522,7 @@ type fakeLinuxConsent struct {
 }
 
 func newFakeLinuxConsent() *fakeLinuxConsent {
-	return &fakeLinuxConsent{grants: make(map[string]runtimeport.LinuxConsentGrant)}
+	return &fakeLinuxConsent{receipts: make(map[string]runtimeport.LinuxConsentReceipt)}
 }
 
 func (c *fakeLinuxConsent) AwaitLinuxConsent(
@@ -563,32 +563,32 @@ func (c *fakeLinuxConsent) VerifyStoredLinuxConsent(
 func (c *fakeLinuxConsent) StoreLinuxConsent(
 	_ context.Context,
 	operationID string,
-	grant runtimeport.LinuxConsentGrant,
+	receipt runtimeport.LinuxConsentReceipt,
 ) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.storeErr != nil {
 		return c.storeErr
 	}
-	c.grants[operationID] = grant
+	c.receipts[operationID] = receipt
 	return nil
 }
 
 func (c *fakeLinuxConsent) LoadLinuxConsent(
 	_ context.Context,
 	operationID string,
-	planDigest runtimeinstall.Hash,
-) (runtimeport.LinuxConsentGrant, error) {
+	_ runtimeinstall.Hash,
+) (runtimeport.LinuxConsentReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.loadErr != nil {
-		return runtimeport.LinuxConsentGrant{}, c.loadErr
+		return runtimeport.LinuxConsentReceipt{}, c.loadErr
 	}
-	grant, present := c.grants[operationID]
-	if !present || grant.Request().Authority().PlanDigest() != planDigest {
-		return runtimeport.LinuxConsentGrant{}, runtimeport.ErrLinuxConsentIntegrity
+	receipt, present := c.receipts[operationID]
+	if !present {
+		return runtimeport.LinuxConsentReceipt{}, runtimeport.ErrLinuxConsentIntegrity
 	}
-	return grant, nil
+	return receipt, nil
 }
 
 func seedLinuxConsent(
@@ -609,11 +609,7 @@ func seedLinuxConsent(
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := runtimeport.NewLinuxConsentGrant(request, receipt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.StoreLinuxConsent(context.Background(), operationID, grant); err != nil {
+	if err := store.StoreLinuxConsent(context.Background(), operationID, receipt); err != nil {
 		t.Fatal(err)
 	}
 }

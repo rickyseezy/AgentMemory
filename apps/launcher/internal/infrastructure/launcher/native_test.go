@@ -35,6 +35,9 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		roots.BootstrapPointer == roots.SetupDecisions || roots.PreparationState == roots.OperationState ||
 		roots.PreparationState == roots.BootstrapPointer || roots.PreparationState == roots.SetupDecisions ||
 		roots.RuntimeState == roots.OperationState || roots.ReleaseAnchorState == roots.OperationState ||
+		roots.RuntimeConsentKeyState == roots.RuntimeState || roots.RuntimeConsentKeyState == roots.SetupDecisions ||
+		roots.RuntimeConsentReceiptState == roots.RuntimeState ||
+		roots.RuntimeConsentReceiptState == roots.RuntimeConsentKeyState ||
 		roots.ReleaseAnchorState == roots.RuntimeState || roots.RuntimeCatalogAnchorState == roots.RuntimeState ||
 		roots.RuntimeCatalogAnchorState == roots.ReleaseAnchorState {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
@@ -44,6 +47,10 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	if !valid.valid() {
 		t.Fatalf("valid roots rejected: %+v", valid)
 	}
+	missingConsent := valid
+	missingConsent.RuntimeConsentKeyState = ""
+	missingConsentReceipts := valid
+	missingConsentReceipts.RuntimeConsentReceiptState = ""
 	for name, candidate := range map[string]NativeRoots{
 		"empty": {},
 		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
@@ -56,6 +63,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 			SetupDecisions: valid.SetupDecisions, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
 			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
+		"missing runtime consent":          missingConsent,
+		"missing runtime consent receipts": missingConsentReceipts,
 		"missing release anchor": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
 			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime catalog anchor": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
@@ -83,17 +92,19 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	}
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
-		composition.plans == nil || composition.operations == nil ||
+		composition.plans == nil || composition.operations == nil || composition.runtimeState == nil ||
+		composition.consentSigner == nil || composition.consentBroker == nil || composition.consentRepository == nil ||
 		composition.releaseAnchor == nil || composition.runtimeCatalogAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
 		composition.capacityState == nil || composition.artifactStore == nil || composition.activations == nil ||
 		composition.hostPointers == nil || composition.installLock == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 10 || observed[0] != roots.OperationState ||
+	if len(observed) != 11 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
 		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState ||
-		observed[5] != roots.ReleaseAnchorState || observed[6] != roots.RuntimeCatalogAnchorState ||
-		observed[7] != roots.ArtifactState || observed[8] != roots.ResourceState || observed[9] != roots.ActiveReleaseState {
+		observed[5] != roots.RuntimeConsentReceiptState || observed[6] != roots.ReleaseAnchorState ||
+		observed[7] != roots.RuntimeCatalogAnchorState || observed[8] != roots.ArtifactState ||
+		observed[9] != roots.ResourceState || observed[10] != roots.ActiveReleaseState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -140,7 +151,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 10; failAt++ {
+	for failAt := 1; failAt <= 11; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -163,12 +174,12 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 	_, err := composeNative(context.Background(), roots,
 		func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
 			calls++
-			if calls == 6 {
+			if calls == 7 {
 				return nativePlainJournalProvider{}, nil
 			}
 			return nativeMissingJournalProvider{}, nil
 		}, pendingReadySurface{})
-	if err == nil || calls != 10 {
+	if err == nil || calls != 11 {
 		t.Fatalf("ordinary release-anchor journal accepted: calls=%d error=%v", calls, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -720,9 +731,12 @@ func nativeTestRoots(root string) NativeRoots {
 	return NativeRoots{
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
-		RuntimeState: filepath.Join(root, "runtime"), ReleaseAnchorState: filepath.Join(root, "release-anchor"),
-		RuntimeCatalogAnchorState: filepath.Join(root, "runtime-catalog-anchor"),
-		ArtifactState:             filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
+		RuntimeState:               filepath.Join(root, "runtime"),
+		RuntimeConsentKeyState:     filepath.Join(root, "runtime-consent-key"),
+		RuntimeConsentReceiptState: filepath.Join(root, "runtime-consent-receipt"),
+		ReleaseAnchorState:         filepath.Join(root, "release-anchor"),
+		RuntimeCatalogAnchorState:  filepath.Join(root, "runtime-catalog-anchor"),
+		ArtifactState:              filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
 		ArtifactCAS:        filepath.Join(root, "artifact-cas"),
 		ActiveReleaseState: filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
 		ReadinessState: filepath.Join(root, "readiness"),

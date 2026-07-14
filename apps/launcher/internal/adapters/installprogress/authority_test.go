@@ -141,7 +141,7 @@ func TestPF001ProgressProjectsAuthenticatedRuntimeConsent(t *testing.T) {
 		`"termsDigest":"` + authority.Plan().TermsDigest().String() + `"`,
 		`"downloadBytes":700000000`, `"expandedBytes":2000000000`,
 		`"requiresElevation":true`, `"mayRequireReboot":false`,
-		`"changes":["Install the certified docker desktop 28.3.2"]`,
+		`"changes":["Install the certified docker desktop 28.3.2","Confirm you are authorized and licensed to use Docker Desktop"]`,
 	} {
 		if !strings.Contains(string(canonical), required) {
 			t.Fatalf("canonical consent %s missing %s", canonical, required)

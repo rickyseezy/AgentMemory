@@ -356,12 +356,18 @@ func (a *Authority) runtimeConsent(
 	if !ok {
 		return setupprogressapp.ConsentInput{}, setupprogressapp.ErrAuthorityIntegrity
 	}
+	changes := []string{change}
+	if (plan.Platform() == runtimeinstall.PlatformDarwin || plan.Platform() == runtimeinstall.PlatformWindows) &&
+		(plan.Action() == runtimeinstall.PlanActionInstallCertified ||
+			plan.Action() == runtimeinstall.PlanActionRepairManaged) {
+		changes = append(changes, "Confirm you are authorized and licensed to use Docker Desktop")
+	}
 	return setupprogressapp.ConsentInput{
 		TermsTitle:  "Docker Subscription Service Agreement",
 		TermsURL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
 		TermsDigest: plan.TermsDigest().String(), DownloadBytes: plan.DownloadBytes(),
 		ExpandedBytes: plan.ExpandedBytes(), RequiresElevation: elevation,
-		MayRequireReboot: reboot, Changes: []string{change},
+		MayRequireReboot: reboot, Changes: changes,
 	}, nil
 }
 

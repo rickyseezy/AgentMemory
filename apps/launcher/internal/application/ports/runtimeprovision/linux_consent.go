@@ -232,8 +232,11 @@ type LinuxConsentAuthenticator interface {
 	VerifyStoredLinuxConsent(context.Context, LinuxAuthority, LinuxConsentReceipt) error
 }
 
-// LinuxConsentRepository durably stores one exact authority-bound grant.
+// LinuxConsentRepository durably stores one exact authority-bound receipt.
+// The short-lived request is deliberately not persisted: later phases receive
+// the independently restored signed authority and reauthenticate the receipt
+// against that authority, trusted time, and the protected signing key.
 type LinuxConsentRepository interface {
-	StoreLinuxConsent(context.Context, string, LinuxConsentGrant) error
-	LoadLinuxConsent(context.Context, string, runtimeinstall.Hash) (LinuxConsentGrant, error)
+	StoreLinuxConsent(context.Context, string, LinuxConsentReceipt) error
+	LoadLinuxConsent(context.Context, string, runtimeinstall.Hash) (LinuxConsentReceipt, error)
 }

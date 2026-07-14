@@ -292,7 +292,7 @@ func TestLinuxProbeWorkspaceCleanupRejectsSubstitutionAndRemovesExactContent(t *
 		t.Fatalf("nil workspace file error = %v", err)
 	}
 	parent := t.TempDir()
-	if err := os.Chmod(parent, 0o700); err != nil {
+	if err := os.Chmod(parent, 0o700); err != nil { // #nosec G302 -- private test directory requires owner execute for traversal.
 		t.Fatal(err)
 	}
 	directory := filepath.Join(parent, "workspace")

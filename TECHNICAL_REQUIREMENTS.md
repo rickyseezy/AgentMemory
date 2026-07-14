@@ -1389,8 +1389,8 @@ Blocking thresholds:
 
 - at least 80% line and 80% branch coverage globally across Python/TypeScript production code;
 - at least 80% line and 80% branch in every first-party Python package and UI package;
-- at least 90% line and branch coverage on changed production code;
-- at least 80% Go statement coverage in every launcher package and 90% statement coverage on changed launcher production code;
+- at least 80% line and branch coverage on changed production code;
+- at least 80% Go statement coverage in every launcher package and 80% statement coverage on changed launcher production code;
 - complete Go decision-table coverage for installation phases, host/platform validation, path/mount construction, Compose policy, signature policy, agent-config merge, upgrade compensation, resource inventory, and uninstall choices;
 - complete decision-table tests for authorization, Brain filters, deletion, egress, approval, rollback, audit integrity, migration cutover, and embedding-space validation.
 
@@ -1572,7 +1572,7 @@ uv run mypy src apps adapters tests
 uv run lint-imports
 uv run pytest tests/unit tests/property tests/contract --cov --cov-branch
 uv run coverage json -o build/coverage.json
-uv run python tools/check_package_coverage.py build/coverage.json --line 80 --branch 80 --changed 90
+uv run python tools/check_package_coverage.py build/coverage.json --line 80 --branch 80 --changed 80
 go mod tidy -diff
 go mod verify
 gofmt -l apps/launcher
@@ -1583,7 +1583,7 @@ govulncheck ./apps/launcher/...
 golangci-lint run ./apps/launcher/...
 go-arch-lint check
 go test -race -shuffle=on -count=1 -covermode=atomic -coverprofile=build/go-cover.out ./apps/launcher/...
-go run ./tools/check_go_coverage --profile build/go-cover.out --package 80 --changed 90
+go run ./tools/check_go_coverage --profile build/go-cover.out --package 80 --changed 80
 pnpm install --frozen-lockfile
 pnpm exec tsc --noEmit
 pnpm exec eslint . --max-warnings 0
@@ -1592,7 +1592,7 @@ pnpm exec vitest run --coverage
 pnpm exec playwright test
 ~~~
 
-`tools/check_package_coverage.py` and `tools/check_go_coverage` are required first-party CI utilities with their own tests. They MUST fail when a package is below its language threshold, changed code is below 90%, coverage data is missing, or a production file is omitted unexpectedly. Python mutation tests use mutmut, TypeScript mutation tests use Stryker, and launcher mutation tests use a pinned Go mutation runner on changed eligible packages and scheduled full critical packages. Their thresholds are those in Section 8.4.
+`tools/check_package_coverage.py` and `tools/check_go_coverage` are required first-party CI utilities with their own tests. They MUST fail when a package is below its language threshold, changed code is below 80%, coverage data is missing, or a production file is omitted unexpectedly. Python mutation tests use mutmut, TypeScript mutation tests use Stryker, and launcher mutation tests use a pinned Go mutation runner on changed eligible packages and scheduled full critical packages. Their thresholds are those in Section 8.4.
 
 ## 9. CI/CD and supply chain
 

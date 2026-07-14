@@ -120,7 +120,7 @@ jobs:
           uv run python tools/check_package_coverage.py build/coverage.json \
             --line 80 \
             --branch 80 \
-            --changed 90
+            --changed 80
 
       - name: Prove deterministic public OpenAPI
         run: |

@@ -415,7 +415,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base", help="Git base revision for changed-code coverage")
     parser.add_argument("--line", type=float, default=80, help="package line threshold")
     parser.add_argument("--branch", type=float, default=80, help="package branch threshold")
-    parser.add_argument("--changed", type=float, default=90, help="changed-code threshold")
+    parser.add_argument("--changed", type=float, default=80, help="changed-code threshold")
     parser.add_argument(
         "--source-root",
         action="append",

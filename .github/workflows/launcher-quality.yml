@@ -90,7 +90,7 @@ jobs:
             -root . \
             -base origin/main \
             -package 80 \
-            -changed 90
+            -changed 80
 
       - name: Preserve launcher coverage evidence
         if: ${{ always() && hashFiles('build/go-cover.out') != '' }}

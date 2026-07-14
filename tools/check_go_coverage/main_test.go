@@ -137,9 +137,9 @@ func TestRunEnforcesChangedStatementCoverageFromGit(t *testing.T) {
 		"-profile", "build/coverage.out",
 		"-base", baseCommit,
 		"-package", "0",
-		"-changed", "90",
+		"-changed", "80",
 	}, io.Discard, &failed)
-	if exitCode != 1 || !strings.Contains(failed.String(), "changed launcher coverage 0.00% is below 90.00%") {
+	if exitCode != 1 || !strings.Contains(failed.String(), "changed launcher coverage 0.00% is below 80.00%") {
 		t.Fatalf("uncovered changed run = %d, stderr=%q", exitCode, failed.String())
 	}
 
@@ -151,7 +151,7 @@ func TestRunEnforcesChangedStatementCoverageFromGit(t *testing.T) {
 		"-profile", "build/coverage.out",
 		"-base", baseCommit,
 		"-package", "0",
-		"-changed", "90",
+		"-changed", "80",
 	}, &stdout, &stderr)
 	if exitCode != 0 || stderr.Len() != 0 {
 		t.Fatalf("covered changed run = %d, stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())

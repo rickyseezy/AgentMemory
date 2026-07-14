@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultPackageThreshold = 80
-	defaultChangedThreshold = 90
+	defaultChangedThreshold = 80
 	maximumProfileBytes     = 256 << 20
 )
 

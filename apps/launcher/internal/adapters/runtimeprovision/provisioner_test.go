@@ -2,6 +2,7 @@ package runtimeprovision
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -20,9 +21,11 @@ func TestLinuxProvisionerCompletesCertifiedRootlessInstallThroughExactTypedEffec
 	broker := &fakePrivilegeBroker{}
 	replay := &fakeReplayLedger{consumed: make(map[runtimeport.Nonce]runtimeinstall.Hash)}
 	rootless := &fakeRunner{authority: rootlessAuthority(t, authority)}
+	consent := newFakeLinuxConsent()
 	provisioner, err := NewLinuxProvisioner(Dependencies{
 		Authority: staticAuthorityResolver{authority: authority}, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 		Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
+		Consent: consent, ConsentAuth: consent, ConsentStore: consent,
 		Privilege: broker, Authenticator: acceptingAuthenticator{}, Replay: replay,
 		Nonces: &incrementingNonces{}, Clock: clock, RootlessTool: rootless,
 	})
@@ -33,8 +36,8 @@ func TestLinuxProvisionerCompletesCertifiedRootlessInstallThroughExactTypedEffec
 	otherPhases := completeOtherPhases{artifact: authority.ArtifactDigest()}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: repository, Host: provisioner, Detector: provisioner,
-		Catalog: otherPhases, Consent: otherPhases, Fetcher: otherPhases, Verifier: otherPhases,
-		Prerequisites: provisioner, Installer: provisioner, Terms: otherPhases,
+		Catalog: provisioner, Consent: provisioner, Fetcher: otherPhases, Verifier: otherPhases,
+		Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 		Controller: provisioner, Capabilities: provisioner,
 	})
 	if err != nil {
@@ -71,12 +74,15 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 	t.Parallel()
 	plan, authority := adapterAuthority(t)
 	tests := []struct {
-		name      string
-		resolver  runtimeport.AuthorityResolver
-		brokerErr error
-		state     runtimeinstall.OperationState
+		name       string
+		resolver   runtimeport.AuthorityResolver
+		consentErr error
+		brokerErr  error
+		state      runtimeinstall.OperationState
 	}{
 		{name: "unsigned execution projection", resolver: staticAuthorityResolver{err: runtimeport.ErrAuthorityUnavailable}, state: runtimeinstall.OperationStatePausedForAdministrator},
+		{name: "consent surface unavailable", resolver: staticAuthorityResolver{authority: authority}, consentErr: runtimeport.ErrLinuxConsentUnavailable, state: runtimeinstall.OperationStatePausedForAdministrator},
+		{name: "consent declined", resolver: staticAuthorityResolver{authority: authority}, consentErr: runtimeport.ErrLinuxConsentDeclined, state: runtimeinstall.OperationStateCancelled},
 		{name: "native prompt unavailable", resolver: staticAuthorityResolver{authority: authority}, brokerErr: runtimeport.ErrPrivilegeUnavailable, state: runtimeinstall.OperationStatePausedForAdministrator},
 		{name: "native prompt declined", resolver: staticAuthorityResolver{authority: authority}, brokerErr: runtimeport.ErrPrivilegeDenied, state: runtimeinstall.OperationStateCancelled},
 		{name: "policy blocked", resolver: staticAuthorityResolver{authority: authority}, brokerErr: runtimeport.ErrPrivilegePolicy, state: runtimeinstall.OperationStatePausedForAdministrator},
@@ -86,10 +92,13 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			broker := &fakePrivilegeBroker{err: test.brokerErr}
+			consent := newFakeLinuxConsent()
+			consent.awaitErr = test.consentErr
 			rootless := &fakeRunner{authority: rootlessAuthority(t, authority)}
 			provisioner, err := NewLinuxProvisioner(Dependencies{
 				Authority: test.resolver, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 				Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
+				Consent: consent, ConsentAuth: consent, ConsentStore: consent,
 				Privilege: broker, Authenticator: acceptingAuthenticator{},
 				Replay: &fakeReplayLedger{consumed: make(map[runtimeport.Nonce]runtimeinstall.Hash)},
 				Nonces: &incrementingNonces{}, Clock: &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
@@ -101,8 +110,8 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 			other := completeOtherPhases{artifact: authority.ArtifactDigest()}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, Host: provisioner, Detector: provisioner,
-				Catalog: other, Consent: other, Fetcher: other, Verifier: other,
-				Prerequisites: provisioner, Installer: provisioner, Terms: other,
+				Catalog: provisioner, Consent: provisioner, Fetcher: other, Verifier: other,
+				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,
 			})
 			result, ensureError := application.Ensure(context.Background(), runtimeinstallapp.Command{
@@ -135,12 +144,14 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			authenticator := runtimeport.ReceiptAuthenticator(acceptingAuthenticator{})
+			consent := newFakeLinuxConsent()
 			if test.name == "bad signature" {
 				authenticator = rejectingAuthenticator{}
 			}
 			provisioner, err := NewLinuxProvisioner(Dependencies{
 				Authority: staticAuthorityResolver{authority: authority}, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 				Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
+				Consent: consent, ConsentAuth: consent, ConsentStore: consent,
 				Privilege: test.broker, Authenticator: authenticator, Replay: test.replay,
 				Nonces: &incrementingNonces{}, Clock: &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
 				RootlessTool: &fakeRunner{authority: rootlessAuthority(t, authority)},
@@ -151,8 +162,8 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 			other := completeOtherPhases{artifact: authority.ArtifactDigest()}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, Host: provisioner, Detector: provisioner,
-				Catalog: other, Consent: other, Fetcher: other, Verifier: other,
-				Prerequisites: provisioner, Installer: provisioner, Terms: other,
+				Catalog: provisioner, Consent: provisioner, Fetcher: other, Verifier: other,
+				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,
 			})
 			result, ensureError := application.Ensure(context.Background(), runtimeinstallapp.Command{
@@ -162,6 +173,50 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 				t.Fatalf("Ensure() = state:%s error:%v", result.State, ensureError)
 			}
 		})
+	}
+}
+
+func TestLinuxProvisionerConsentAuthorityFailsClosedBeforeHostMutation(t *testing.T) {
+	t.Parallel()
+	plan, authority := adapterPlanForAction(t, runtimeinstall.PlanActionInstallCertified)
+	request := captureRequest(t, plan)
+	newProvisioner := func() (*LinuxProvisioner, *fakeLinuxConsent, *fakePrivilegeBroker) {
+		broker := &fakePrivilegeBroker{}
+		provisioner := edgeProvisioner(
+			t, authority, &edgeRuntimeInspector{}, &edgeCapabilityProbe{}, broker,
+			&edgeRunner{authority: rootlessAuthority(t, authority)},
+		)
+		consent, ok := provisioner.consent.(*fakeLinuxConsent)
+		if !ok {
+			t.Fatal("test provisioner did not retain its consent authority")
+		}
+		return provisioner, consent, broker
+	}
+
+	for _, mutate := range []func(*LinuxProvisioner, *fakeLinuxConsent){
+		func(_ *LinuxProvisioner, consent *fakeLinuxConsent) { consent.authErr = errors.New("bad signature") },
+		func(_ *LinuxProvisioner, consent *fakeLinuxConsent) { consent.storeErr = errors.New("storage failed") },
+		func(provisioner *LinuxProvisioner, _ *fakeLinuxConsent) {
+			provisioner.clock = &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.FixedZone("offset", 3600))}
+		},
+	} {
+		provisioner, consent, broker := newProvisioner()
+		mutate(provisioner, consent)
+		if _, err := provisioner.AwaitRuntimeConsent(context.Background(), request); !errors.Is(err, ErrProvisionIntegrity) {
+			t.Fatalf("unsafe consent authority error = %v", err)
+		}
+		if len(broker.operations) != 0 {
+			t.Fatal("privileged mutation ran after unsafe consent authority")
+		}
+	}
+
+	provisioner, consent, broker := newProvisioner()
+	consent.loadErr = errors.New("load failed")
+	if _, err := provisioner.InstallPrerequisites(context.Background(), request); !errors.Is(err, ErrProvisionIntegrity) {
+		t.Fatalf("missing stored consent error = %v", err)
+	}
+	if len(broker.operations) != 0 {
+		t.Fatal("privileged mutation ran without reauthenticated stored consent")
 	}
 }
 
@@ -350,6 +405,112 @@ func (s *incrementingNonces) NewPrivilegeNonce(context.Context) (runtimeport.Non
 type fakeClock struct{ now time.Time }
 
 func (c *fakeClock) Now() time.Time { return c.now }
+
+type fakeLinuxConsent struct {
+	mu       sync.Mutex
+	grants   map[string]runtimeport.LinuxConsentGrant
+	awaitErr error
+	authErr  error
+	storeErr error
+	loadErr  error
+}
+
+func newFakeLinuxConsent() *fakeLinuxConsent {
+	return &fakeLinuxConsent{grants: make(map[string]runtimeport.LinuxConsentGrant)}
+}
+
+func (c *fakeLinuxConsent) AwaitLinuxConsent(
+	_ context.Context,
+	request runtimeport.LinuxConsentRequest,
+) (runtimeport.LinuxConsentReceipt, error) {
+	if c.awaitErr != nil {
+		return runtimeport.LinuxConsentReceipt{}, c.awaitErr
+	}
+	authority := request.Authority()
+	signature := make([]byte, 64)
+	return runtimeport.NewLinuxConsentReceipt(runtimeport.LinuxConsentReceiptInput{
+		RequestDigest: request.Digest(), PlanDigest: authority.PlanDigest(), AuthorityDigest: authority.Digest(),
+		CatalogDigest: authority.CatalogDigest(), ArtifactDigest: authority.ArtifactDigest(),
+		TermsDigest: authority.TermsDigest(), PrincipalID: authority.PrincipalID(),
+		MachineDigest: authority.MachineDigest(), Nonce: request.Nonce(),
+		AcceptedAt: request.IssuedAt(), ExpiresAt: request.IssuedAt().Add(24 * time.Hour),
+		Signature: signature, SignatureDigest: runtimeinstall.Sum(signature),
+	})
+}
+
+func (c *fakeLinuxConsent) VerifyLinuxConsent(
+	context.Context,
+	runtimeport.LinuxConsentRequest,
+	runtimeport.LinuxConsentReceipt,
+) error {
+	return c.authErr
+}
+
+func (c *fakeLinuxConsent) VerifyStoredLinuxConsent(
+	context.Context,
+	runtimeport.LinuxAuthority,
+	runtimeport.LinuxConsentReceipt,
+) error {
+	return c.authErr
+}
+
+func (c *fakeLinuxConsent) StoreLinuxConsent(
+	_ context.Context,
+	operationID string,
+	grant runtimeport.LinuxConsentGrant,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.storeErr != nil {
+		return c.storeErr
+	}
+	c.grants[operationID] = grant
+	return nil
+}
+
+func (c *fakeLinuxConsent) LoadLinuxConsent(
+	_ context.Context,
+	operationID string,
+	planDigest runtimeinstall.Hash,
+) (runtimeport.LinuxConsentGrant, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loadErr != nil {
+		return runtimeport.LinuxConsentGrant{}, c.loadErr
+	}
+	grant, present := c.grants[operationID]
+	if !present || grant.Request().Authority().PlanDigest() != planDigest {
+		return runtimeport.LinuxConsentGrant{}, runtimeport.ErrLinuxConsentIntegrity
+	}
+	return grant, nil
+}
+
+func seedLinuxConsent(
+	t *testing.T,
+	store *fakeLinuxConsent,
+	operationID string,
+	authority runtimeport.LinuxAuthority,
+	now time.Time,
+) {
+	t.Helper()
+	request, err := runtimeport.NewLinuxConsentRequest(
+		operationID, 1, authority, runtimeport.Nonce{1}, now, now.Add(2*time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.AwaitLinuxConsent(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := runtimeport.NewLinuxConsentGrant(request, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreLinuxConsent(context.Background(), operationID, grant); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type fakeRunner struct {
 	authority                       argvprocess.ExecutableAuthority

@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	privilegeRequestLifetime = 2 * time.Minute
-	runtimeStartDeadline     = 60 * time.Second
-	runtimePollInterval      = 100 * time.Millisecond
+	privilegeRequestLifetime    = 2 * time.Minute
+	linuxConsentRequestLifetime = 5 * time.Minute
+	runtimeStartDeadline        = 60 * time.Second
+	runtimePollInterval         = 100 * time.Millisecond
 )
 
 // RuntimeInspector is the read-only exact-endpoint discovery boundary.
@@ -31,6 +32,9 @@ type Dependencies struct {
 	Host          HostProbe
 	Runtime       RuntimeInspector
 	Capabilities  CapabilityProbe
+	Consent       runtimeport.LinuxConsentBroker
+	ConsentAuth   runtimeport.LinuxConsentAuthenticator
+	ConsentStore  runtimeport.LinuxConsentRepository
 	Privilege     runtimeport.PrivilegeBroker
 	Authenticator runtimeport.ReceiptAuthenticator
 	Replay        runtimeport.ReplayLedger
@@ -45,6 +49,9 @@ type LinuxProvisioner struct {
 	host          HostProbe
 	runtime       RuntimeInspector
 	capabilities  CapabilityProbe
+	consent       runtimeport.LinuxConsentBroker
+	consentAuth   runtimeport.LinuxConsentAuthenticator
+	consentStore  runtimeport.LinuxConsentRepository
 	privilege     runtimeport.PrivilegeBroker
 	authenticator runtimeport.ReceiptAuthenticator
 	replay        runtimeport.ReplayLedger
@@ -57,6 +64,7 @@ type LinuxProvisioner struct {
 func NewLinuxProvisioner(dependencies Dependencies) (*LinuxProvisioner, error) {
 	values := []any{
 		dependencies.Authority, dependencies.Host, dependencies.Runtime, dependencies.Capabilities,
+		dependencies.Consent, dependencies.ConsentAuth, dependencies.ConsentStore,
 		dependencies.Privilege, dependencies.Authenticator, dependencies.Replay,
 		dependencies.Nonces, dependencies.Clock, dependencies.RootlessTool,
 	}
@@ -74,9 +82,78 @@ func NewLinuxProvisioner(dependencies Dependencies) (*LinuxProvisioner, error) {
 	return &LinuxProvisioner{
 		authority: dependencies.Authority, host: dependencies.Host, runtime: dependencies.Runtime,
 		capabilities: dependencies.Capabilities, privilege: dependencies.Privilege,
+		consent: dependencies.Consent, consentAuth: dependencies.ConsentAuth, consentStore: dependencies.ConsentStore,
 		authenticator: dependencies.Authenticator, replay: dependencies.Replay,
 		nonces: dependencies.Nonces, clock: dependencies.Clock, rootlessTool: dependencies.RootlessTool,
 	}, nil
+}
+
+// PlanRuntime binds the decoded canonical decision to the exact signed Linux
+// authority before consent, acquisition, or any host mutation.
+func (p *LinuxProvisioner) PlanRuntime(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+) (runtimeinstallapp.Output, error) {
+	plan, authority, err := p.resolve(ctx, request)
+	if err != nil {
+		return mapExpectedOrError(err)
+	}
+	if plan.Action() == runtimeinstall.PlanActionBlock {
+		return blockOutput(plan.DecisionCode())
+	}
+	return p.completed(
+		request, authority, combineDigests(authority.Digest(), authority.CatalogDigest()),
+		runtimeinstall.OwnershipUnknown, false,
+	)
+}
+
+// AwaitRuntimeConsent obtains one non-preselected, authenticated decision
+// bound to the complete package plan and exact vendor terms.
+func (p *LinuxProvisioner) AwaitRuntimeConsent(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+) (runtimeinstallapp.Output, error) {
+	plan, authority, err := p.resolve(ctx, request)
+	if err != nil {
+		return mapExpectedOrError(err)
+	}
+	if plan.Action() == runtimeinstall.PlanActionBlock {
+		return blockOutput(plan.DecisionCode())
+	}
+	if passiveAction(plan.Action()) {
+		return p.completed(request, authority, authority.Digest(), runtimeinstall.OwnershipUnknown, false)
+	}
+	now, nonce, err := p.freshLinuxNonce(ctx)
+	if err != nil {
+		return runtimeinstallapp.Output{}, err
+	}
+	consentRequest, err := runtimeport.NewLinuxConsentRequest(
+		request.OperationID(), request.Attempt(), authority, nonce, now, now.Add(linuxConsentRequestLifetime),
+	)
+	if err != nil {
+		return runtimeinstallapp.Output{}, ErrProvisionIntegrity
+	}
+	receipt, err := p.consent.AwaitLinuxConsent(ctx, consentRequest)
+	if err != nil {
+		switch {
+		case errors.Is(err, runtimeport.ErrLinuxConsentDeclined):
+			return expected(runtimeinstallapp.OutcomeCancelled)
+		case errors.Is(err, runtimeport.ErrLinuxConsentUnavailable):
+			return expected(runtimeinstallapp.OutcomeAdministratorRequired)
+		default:
+			return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+		}
+	}
+	if !receipt.Matches(consentRequest, p.clock.Now()) ||
+		p.consentAuth.VerifyLinuxConsent(ctx, consentRequest, receipt) != nil ||
+		!receipt.Matches(consentRequest, p.clock.Now()) {
+		return runtimeinstallapp.Output{}, ErrProvisionIntegrity
+	}
+	grant, err := runtimeport.NewLinuxConsentGrant(consentRequest, receipt)
+	if err != nil || p.consentStore.StoreLinuxConsent(ctx, request.OperationID(), grant) != nil {
+		return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+	}
+	return p.completed(request, authority, receipt.Digest(), runtimeinstall.OwnershipUnknown, false)
 }
 
 func nilDependency(value any) bool {
@@ -170,6 +247,9 @@ func (p *LinuxProvisioner) InstallPrerequisites(
 	if plan.Action() != runtimeinstall.PlanActionInstallCertified && plan.Action() != runtimeinstall.PlanActionRepairManaged {
 		return runtimeinstallapp.Output{}, ErrProvisionIntegrity
 	}
+	if _, err := p.requireLinuxConsent(ctx, request, authority); err != nil {
+		return p.linuxConsentError(ctx, err)
+	}
 	repositoryReceipt, output, err := p.executePrivilege(ctx, request, authority, runtimeport.PrivilegeConfigureRepository)
 	if err != nil || output != nil {
 		return outputOrZero(output), err
@@ -200,6 +280,9 @@ func (p *LinuxProvisioner) InstallRuntime(
 	if plan.Action() == runtimeinstall.PlanActionBlock {
 		return blockOutput(plan.DecisionCode())
 	}
+	if _, err := p.requireLinuxConsent(ctx, request, authority); err != nil {
+		return p.linuxConsentError(ctx, err)
+	}
 	packageReceipt, output, err := p.executePrivilege(ctx, request, authority, runtimeport.PrivilegeInstallPackages)
 	if err != nil || output != nil {
 		return outputOrZero(output), err
@@ -223,6 +306,35 @@ func (p *LinuxProvisioner) InstallRuntime(
 	}
 	return p.completed(
 		request, authority, combineDigests(packageReceipt, authority.RootlessToolDigest()),
+		runtimeinstall.OwnershipUnknown, true,
+	)
+}
+
+// AwaitThirdPartyTerms reauthenticates the stored consent immediately before
+// runtime activation. Linux has no separate vendor UI in a certified cell;
+// the receipt itself is the exact terms observation.
+func (p *LinuxProvisioner) AwaitThirdPartyTerms(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+) (runtimeinstallapp.Output, error) {
+	plan, authority, err := p.resolve(ctx, request)
+	if err != nil {
+		return mapExpectedOrError(err)
+	}
+	if plan.Action() == runtimeinstall.PlanActionBlock {
+		return blockOutput(plan.DecisionCode())
+	}
+	if passiveAction(plan.Action()) {
+		return p.completed(
+			request, authority, authority.TermsDigest(), runtimeinstall.OwnershipUnknown, true,
+		)
+	}
+	grant, err := p.requireLinuxConsent(ctx, request, authority)
+	if err != nil {
+		return p.linuxConsentError(ctx, err)
+	}
+	return p.completed(
+		request, authority, combineDigests(grant.Receipt().Digest(), authority.TermsDigest()),
 		runtimeinstall.OwnershipUnknown, true,
 	)
 }
@@ -388,6 +500,46 @@ func (p *LinuxProvisioner) executePrivilege(
 	return receipt.Digest(), nil, nil
 }
 
+func (p *LinuxProvisioner) freshLinuxNonce(ctx context.Context) (time.Time, runtimeport.Nonce, error) {
+	now := p.clock.Now()
+	if now.Location() != time.UTC {
+		return time.Time{}, runtimeport.Nonce{}, ErrProvisionIntegrity
+	}
+	nonce, err := p.nonces.NewPrivilegeNonce(ctx)
+	if err != nil || nonce.IsZero() {
+		return time.Time{}, runtimeport.Nonce{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+	}
+	return now, nonce, nil
+}
+
+func (p *LinuxProvisioner) requireLinuxConsent(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+	authority runtimeport.LinuxAuthority,
+) (runtimeport.LinuxConsentGrant, error) {
+	grant, err := p.consentStore.LoadLinuxConsent(ctx, request.OperationID(), authority.PlanDigest())
+	if err != nil || !grant.ValidFor(request.OperationID(), authority) ||
+		!grant.Receipt().Authorizes(authority, p.clock.Now()) ||
+		p.consentAuth.VerifyStoredLinuxConsent(ctx, authority, grant.Receipt()) != nil ||
+		!grant.Receipt().Authorizes(authority, p.clock.Now()) {
+		return runtimeport.LinuxConsentGrant{}, errors.Join(runtimeport.ErrLinuxConsentIntegrity, err)
+	}
+	return grant, nil
+}
+
+func (p *LinuxProvisioner) linuxConsentError(
+	ctx context.Context,
+	err error,
+) (runtimeinstallapp.Output, error) {
+	if errors.Is(err, runtimeport.ErrLinuxConsentDeclined) {
+		return expected(runtimeinstallapp.OutcomeCancelled)
+	}
+	if errors.Is(err, runtimeport.ErrLinuxConsentUnavailable) {
+		return expected(runtimeinstallapp.OutcomeAdministratorRequired)
+	}
+	return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+}
+
 func (p *LinuxProvisioner) rootlessRunnerMatches(authority runtimeport.LinuxAuthority) bool {
 	runnerAuthority := p.rootlessTool.ExecutableAuthority()
 	return runnerAuthority.Valid() && runnerAuthority.Role() == argvprocess.ExecutableRoleRootlessSetup &&
@@ -539,8 +691,11 @@ func outputOrZero(output *runtimeinstallapp.Output) runtimeinstallapp.Output {
 var (
 	_ runtimeinstallapp.HostCapabilityProbe          = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.ContainerRuntimeDetector     = (*LinuxProvisioner)(nil)
+	_ runtimeinstallapp.RuntimeReleaseCatalog        = (*LinuxProvisioner)(nil)
+	_ runtimeinstallapp.RuntimeConsentPort           = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.RuntimePrerequisiteInstaller = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.ContainerRuntimeInstaller    = (*LinuxProvisioner)(nil)
+	_ runtimeinstallapp.ThirdPartyTermsPort          = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.ContainerRuntimeController   = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.RuntimeCapabilityProbe       = (*LinuxProvisioner)(nil)
 )

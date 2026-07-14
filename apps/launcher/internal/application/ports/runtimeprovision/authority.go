@@ -141,6 +141,7 @@ func (r Repository) MetadataDigest() runtimeinstall.Hash { return r.metadataDige
 type LinuxAuthorityInput struct {
 	PlanDigest             runtimeinstall.Hash
 	CatalogDigest          runtimeinstall.Hash
+	TermsDigest            runtimeinstall.Hash
 	ArtifactDigest         runtimeinstall.Hash
 	SigningKeyID           string
 	Architecture           runtimeinstall.Architecture
@@ -210,7 +211,8 @@ func NewLinuxAuthority(input LinuxAuthorityInput) (LinuxAuthority, error) {
 }
 
 func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
-	if input.PlanDigest.IsZero() || input.CatalogDigest.IsZero() || input.ArtifactDigest.IsZero() ||
+	if input.PlanDigest.IsZero() || input.CatalogDigest.IsZero() || input.TermsDigest.IsZero() ||
+		input.ArtifactDigest.IsZero() ||
 		!validIdentity(input.SigningKeyID) || input.Architecture != runtimeinstall.ArchitectureAMD64 &&
 		input.Architecture != runtimeinstall.ArchitectureARM64 || !validDistribution(input.Distribution) ||
 		!validVersion(input.VersionID) || !validIdentity(input.Codename) || !validVersion(input.MinimumKernel) ||
@@ -442,6 +444,7 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		ServiceSHA   string             `json:"service_unit_digest"`
 		SigningKey   string             `json:"signing_key_id"`
 		SubIDs       uint32             `json:"subordinate_id_count"`
+		Terms        string             `json:"terms_digest"`
 		UID          uint32             `json:"uid"`
 		Workloads    uint32             `json:"unrelated_workloads"`
 		Version      string             `json:"version_id"`
@@ -461,7 +464,8 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		Runtime:    a.input.RuntimeVersion,
 		RuntimeDir: a.input.RuntimeDirectory, SELinux: a.input.SELinuxEnforcing,
 		Service: a.input.ServiceID, ServiceSHA: a.input.ServiceUnitDigest.String(),
-		SigningKey: a.input.SigningKeyID, SubIDs: a.input.SubordinateIDCount, UID: a.input.InvokingUID,
+		SigningKey: a.input.SigningKeyID, SubIDs: a.input.SubordinateIDCount,
+		Terms: a.input.TermsDigest.String(), UID: a.input.InvokingUID,
 		Version: a.input.VersionID, Workloads: a.input.UnrelatedWorkloads,
 	}
 	return json.Marshal(document)
@@ -476,7 +480,7 @@ func (a LinuxAuthority) Valid() bool {
 // ValidFor binds this projection to a decoded canonical PF-006 plan.
 func (a LinuxAuthority) ValidFor(plan runtimeinstall.Plan) bool {
 	return a.Valid() && len(plan.CanonicalBytes()) != 0 && plan.Digest() == a.input.PlanDigest &&
-		plan.CatalogDigest() == a.input.CatalogDigest
+		plan.CatalogDigest() == a.input.CatalogDigest && plan.TermsDigest() == a.input.TermsDigest
 }
 
 // Digest returns the complete Linux execution-authority binding.
@@ -487,6 +491,10 @@ func (a LinuxAuthority) PlanDigest() runtimeinstall.Hash { return a.input.PlanDi
 
 // CatalogDigest returns the verified runtime-catalog binding.
 func (a LinuxAuthority) CatalogDigest() runtimeinstall.Hash { return a.input.CatalogDigest }
+
+// TermsDigest returns the exact third-party terms binding that must be shown
+// and accepted before a certified Linux runtime mutation.
+func (a LinuxAuthority) TermsDigest() runtimeinstall.Hash { return a.input.TermsDigest }
 
 // ArtifactDigest returns the publisher-verified runtime artifact binding.
 func (a LinuxAuthority) ArtifactDigest() runtimeinstall.Hash { return a.input.ArtifactDigest }

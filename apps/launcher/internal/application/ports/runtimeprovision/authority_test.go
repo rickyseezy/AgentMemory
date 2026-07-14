@@ -31,6 +31,7 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 		{name: "small subordinate range", mutate: func(input *LinuxAuthorityInput) { input.SubordinateIDCount = 65535 }},
 		{name: "missing native receipt", mutate: func(input *LinuxAuthorityInput) { input.Packages[2].NativeReceiptDigest = runtimeinstall.Hash{} }},
 		{name: "unbound catalog", mutate: func(input *LinuxAuthorityInput) { input.CatalogDigest = runtimeinstall.Hash{} }},
+		{name: "unbound terms", mutate: func(input *LinuxAuthorityInput) { input.TermsDigest = runtimeinstall.Hash{} }},
 		{name: "unknown architecture", mutate: func(input *LinuxAuthorityInput) { input.Architecture = runtimeinstall.ArchitectureUnknown }},
 		{name: "manager distribution mismatch", mutate: func(input *LinuxAuthorityInput) { input.PackageManager = PackageManagerDNF }},
 		{name: "repository suite mismatch", mutate: func(input *LinuxAuthorityInput) { input.Repository.Suite = "jammy" }},
@@ -105,6 +106,7 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 	}
 	repository := authority.Repository()
 	if authority.PlanDigest() != input.PlanDigest || authority.CatalogDigest() != input.CatalogDigest ||
+		authority.TermsDigest() != input.TermsDigest ||
 		authority.ArtifactDigest() != input.ArtifactDigest || authority.Architecture() != input.Architecture ||
 		authority.Distribution() != input.Distribution || authority.VersionID() != input.VersionID ||
 		authority.Codename() != input.Codename || authority.MinimumKernel() != input.MinimumKernel ||
@@ -210,8 +212,9 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 		packages[index].NativeReceiptDigest = runtimeinstall.Sum([]byte(packages[index].Name + packages[index].Version))
 	}
 	return LinuxAuthorityInput{
-		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
-		SigningKeyID: "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
+		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), TermsDigest: plan.TermsDigest(),
+		ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
+		SigningKeyID:   "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
 		Distribution: "ubuntu", VersionID: "24.04", Codename: "noble", MinimumKernel: "6.8.0",
 		MinimumCPUs: 4, MinimumTotalMemory: 16 << 30, MinimumAvailableMemory: 12 << 30,
 		MinimumFreeDisk: 30 << 30, PackageManager: PackageManagerAPT, PackageManagerVersion: "2.8.3",

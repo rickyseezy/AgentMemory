@@ -63,8 +63,9 @@ func adapterLinuxAuthorityForIdentity(
 		packages[index].NativeReceiptDigest = runtimeinstall.Sum([]byte(packages[index].Name + packages[index].Version))
 	}
 	authority, err := runtimeport.NewLinuxAuthority(runtimeport.LinuxAuthorityInput{
-		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
-		SigningKeyID: "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
+		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), TermsDigest: plan.TermsDigest(),
+		ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
+		SigningKeyID:   "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
 		Distribution: "ubuntu", VersionID: "24.04", Codename: "noble", MinimumKernel: "6.8.0",
 		MinimumCPUs: 4, MinimumTotalMemory: 16 << 30, MinimumAvailableMemory: 12 << 30,
 		MinimumFreeDisk: 30 << 30, PackageManager: runtimeport.PackageManagerAPT, PackageManagerVersion: "2.8.3",

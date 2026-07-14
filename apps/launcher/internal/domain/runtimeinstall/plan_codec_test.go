@@ -19,7 +19,8 @@ func TestCanonicalPlanV1RoundTripsEveryDecisionInput(t *testing.T) {
 	}
 	if decoded.Action() != PlanActionInstallCertified || decoded.DecisionCode() != DecisionOK ||
 		decoded.Digest() != Sum(plan.CanonicalBytes()) || decoded.Digest() != plan.Digest() ||
-		decoded.CatalogDigest() != certifiedCatalog(t).CatalogDigest() {
+		decoded.CatalogDigest() != certifiedCatalog(t).CatalogDigest() ||
+		decoded.TermsDigest() != certifiedCatalog(t).TermsDigest() {
 		t.Fatal("decoded runtime plan lost an exact derived binding")
 	}
 	mutable := decoded.CanonicalBytes()

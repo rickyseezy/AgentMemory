@@ -401,6 +401,7 @@ type Plan struct {
 	digest       Hash
 	canonical    []byte
 	catalogHash  Hash
+	termsHash    Hash
 }
 
 // Action returns the closed mutation decision.
@@ -418,6 +419,10 @@ func (p Plan) CanonicalBytes() []byte { return append([]byte(nil), p.canonical..
 
 // CatalogDigest returns the exact verified catalog bound into the plan.
 func (p Plan) CatalogDigest() Hash { return p.catalogHash }
+
+// TermsDigest returns the exact third-party terms document bound into the
+// verified runtime catalog and canonical plan.
+func (p Plan) TermsDigest() Hash { return p.termsHash }
 
 // PlanPolicy chooses a closed action from verified facts.
 type PlanPolicy struct{}

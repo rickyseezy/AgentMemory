@@ -48,6 +48,7 @@ func NewPlanV1(host HostCapabilities, discovery RuntimeDiscovery, catalog Certif
 		digest:       Sum(canonical),
 		canonical:    canonical,
 		catalogHash:  catalog.catalogDigest,
+		termsHash:    catalog.termsDigest,
 	}, nil
 }
 

@@ -88,6 +88,13 @@ func newInstallerPolicy(input InstallerPolicyInput, platform OSKind) (InstallerP
 			return InstallerPolicy{}, ErrManifestIntegrity
 		}
 	}
+	if platform == OSKindWindows {
+		if len(rebootExitCodes) != 2 || rebootExitCodes[0] != 1641 || rebootExitCodes[1] != 3010 {
+			return InstallerPolicy{}, ErrManifestIntegrity
+		}
+	} else if len(rebootExitCodes) != 0 {
+		return InstallerPolicy{}, ErrManifestIntegrity
+	}
 	ownershipChanges := append([]string(nil), input.OwnershipChanges...)
 	if !sort.StringsAreSorted(ownershipChanges) {
 		return InstallerPolicy{}, ErrManifestIntegrity

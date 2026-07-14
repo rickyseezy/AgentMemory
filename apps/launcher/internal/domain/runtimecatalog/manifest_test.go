@@ -103,8 +103,8 @@ func TestManifestProjectsEverySignedExecutionBoundaryDefensively(t *testing.T) {
 		platform.Edition() != "desktop" || platform.Distribution() != "macos" ||
 		platform.MinimumOSVersion() != "14.0.0" || platform.MaximumOSVersion() != "15.9.9" ||
 		platform.MinimumBuild() != 23000 || platform.MaximumBuild() != 25000 ||
-		platform.MinimumCPUCores() != 4 || platform.MinimumMemoryBytes() != 8_000_000_000 ||
-		platform.MinimumFreeDiskBytes() != 30_000_000_000 || !platform.VirtualizationRequired() {
+		platform.MinimumCPUCores() != 4 || platform.MinimumMemoryBytes() != 8_589_934_592 ||
+		platform.MinimumFreeDiskBytes() != 32_212_254_720 || !platform.VirtualizationRequired() {
 		t.Fatal("platform projection omitted a signed boundary")
 	}
 	host := mustHost(t, HostInput{
@@ -153,7 +153,7 @@ func TestManifestProjectsEverySignedExecutionBoundaryDefensively(t *testing.T) {
 	if install.Executable() != InstallerExecutableMacOSInstaller ||
 		install.ServiceIdentity() != "com.docker.backend" ||
 		install.RollbackStrategy() != RollbackStrategyPreserve || !install.VendorUIMandatory() ||
-		len(install.RebootExitCodes()) != 2 || len(install.OwnershipChanges()) != 2 {
+		len(install.RebootExitCodes()) != 0 || len(install.OwnershipChanges()) != 2 {
 		t.Fatal("installer projection omitted an execution boundary")
 	}
 	arguments := install.Arguments()
@@ -164,11 +164,6 @@ func TestManifestProjectsEverySignedExecutionBoundaryDefensively(t *testing.T) {
 	arguments[0] = ArgumentTemplate{}
 	if install.Arguments()[0].Kind() != ArgumentKindLiteral {
 		t.Fatal("argument template leaked mutable storage")
-	}
-	rebootCodes := install.RebootExitCodes()
-	rebootCodes[0] = 1
-	if install.RebootExitCodes()[0] != 1641 {
-		t.Fatal("reboot code projection leaked mutable storage")
 	}
 	ownership := install.OwnershipChanges()
 	ownership[0] = "changed:value"
@@ -215,9 +210,13 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 	windows.Artifact.Publisher.Identity = "microsoft-authenticode-docker-inc"
 	windows.Artifact.Publisher.SigningKeyIdentity = "docker-authenticode-2026"
 	windows.Install.Executable = InstallerExecutableWindowsHelper
+	windows.Install.RebootExitCodes = []uint32{1641, 3010}
 	windows.Artifact.Sources[0] = OfficialSourceInput{
 		Scheme: "https", Host: "desktop.docker.com", PathPrefix: "/win/main/amd64/",
 	}
+	windows.DesktopExecution.ArtifactFileName = "Docker Desktop Installer.exe"
+	windows.DesktopExecution.MinimumWSLVersion = "2.1.5"
+	windows.DesktopExecution.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 	windowsManifest := mustManifest(t, windows)
 	if windowsManifest.Artifact().Publisher().Verification() != NativeVerificationAuthenticode {
 		t.Fatal("Windows native trust policy was not preserved")
@@ -234,6 +233,7 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 		Name: ComponentRootlessExtras, Version: "28.3.2",
 	})
 	linux.Artifact = linuxArtifactPolicyInput(t)
+	linux.DesktopExecution = DesktopExecutionPolicyInput{}
 	linux.LinuxExecution = linuxExecutionPolicyInput(t, linux.Artifact)
 	linux.Install.Executable = InstallerExecutableRootlessSetup
 	linux.Install.ServiceIdentity = "docker.service"
@@ -408,6 +408,12 @@ func validManifestInput(t testReporter) ManifestInput {
 	t.Helper()
 	artifactDigest := DigestBytes([]byte("docker-desktop-artifact"))
 	termsDigest := DigestBytes([]byte("docker terms"))
+	probeDigest := DigestBytes([]byte("probe image"))
+	capabilities := []CapabilityProbe{
+		CapabilityBindReadOnly, CapabilityComposeVersion, CapabilityEngineAPI,
+		CapabilityLinuxContainers, CapabilityLocalEndpoint, CapabilityNetworkIsolation,
+		CapabilityNoTCPListener, CapabilitySecurityMode, CapabilityVolumePersistence,
+	}
 	return ManifestInput{
 		SchemaVersion:    SupportedSchemaVersion,
 		CatalogID:        "docker-desktop-macos-arm64",
@@ -419,8 +425,8 @@ func validManifestInput(t testReporter) ManifestInput {
 			Edition: "desktop", Distribution: "macos",
 			MinimumOSVersion: "14.0.0", MaximumOSVersion: "15.9.9",
 			MinimumBuild: 23000, MaximumBuild: 25000,
-			MinimumCPUCores: 4, MinimumMemoryBytes: 8_000_000_000,
-			MinimumFreeDiskBytes: 30_000_000_000, VirtualizationRequired: true,
+			MinimumCPUCores: 4, MinimumMemoryBytes: 8_589_934_592,
+			MinimumFreeDiskBytes: 32_212_254_720, VirtualizationRequired: true,
 		},
 		Runtime: RuntimePolicyInput{
 			Product: RuntimeProductDockerDesktop, Channel: StableChannel,
@@ -455,20 +461,22 @@ func validManifestInput(t testReporter) ManifestInput {
 				{Kind: ArgumentKindArtifactPath},
 				{Kind: ArgumentKindPlanDigest},
 			},
-			RebootExitCodes:   []uint32{1641, 3010},
+			RebootExitCodes:   nil,
 			ServiceIdentity:   "com.docker.backend",
 			RollbackStrategy:  RollbackStrategyPreserve,
 			OwnershipChanges:  []string{"application:com.docker.docker", "service:com.docker.backend"},
 			VendorUIMandatory: true,
 		},
+		DesktopExecution: DesktopExecutionPolicyInput{
+			MinimumAvailableMemory: 4_000_000_000, ArtifactFileName: "Docker.dmg",
+			ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.Hex(),
+			ProbeImageDigest: probeDigest, ProbeContractVersion: "1",
+			CapabilityPolicyDigest: RuntimeCapabilityPolicyDigest(capabilities),
+		},
 		Prerequisites: []PrerequisiteInput{
 			{Operation: PrerequisiteInstallVerifiedPackage, PackageIDs: []string{"com.docker.docker"}},
 		},
-		CapabilityProbes: []CapabilityProbe{
-			CapabilityBindReadOnly, CapabilityComposeVersion, CapabilityEngineAPI,
-			CapabilityLinuxContainers, CapabilityLocalEndpoint, CapabilityNetworkIsolation,
-			CapabilityNoTCPListener, CapabilitySecurityMode, CapabilityVolumePersistence,
-		},
+		CapabilityProbes: capabilities,
 		Terms: TermsPolicyInput{
 			ID: "docker-subscription-service-agreement", Version: "2025.07.02",
 			URL:    OfficialSourceInput{Scheme: "https", Host: "www.docker.com", PathPrefix: "/legal/docker-subscription-service-agreement"},

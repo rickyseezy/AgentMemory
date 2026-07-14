@@ -64,6 +64,10 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 	if err != nil {
 		return ManifestInput{}, err
 	}
+	desktopExecution, err := desktopExecutionInputFromCanonical(document.DesktopExecution)
+	if err != nil {
+		return ManifestInput{}, err
+	}
 	linuxExecution, err := linuxExecutionInputFromCanonical(document.LinuxExecution)
 	if err != nil {
 		return ManifestInput{}, err
@@ -134,6 +138,7 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 			OwnershipChanges:  append([]string(nil), document.Install.OwnershipChanges...),
 			VendorUIMandatory: document.Install.VendorUIMandatory,
 		},
+		DesktopExecution: desktopExecution,
 		LinuxExecution:   linuxExecution,
 		Prerequisites:    prerequisites,
 		CapabilityProbes: append([]CapabilityProbe(nil), document.CapabilityProbes...),
@@ -145,6 +150,29 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 			},
 			Digest: termsDigest, Presentation: document.Terms.Presentation,
 		},
+	}, nil
+}
+
+func desktopExecutionInputFromCanonical(
+	document *canonicalDesktopExecution,
+) (DesktopExecutionPolicyInput, error) {
+	if document == nil {
+		return DesktopExecutionPolicyInput{}, nil
+	}
+	probeDigest, err := ParseDigest(document.ProbeImageDigest)
+	if err != nil {
+		return DesktopExecutionPolicyInput{}, err
+	}
+	capabilityDigest, err := ParseDigest(document.CapabilityPolicyDigest)
+	if err != nil {
+		return DesktopExecutionPolicyInput{}, err
+	}
+	return DesktopExecutionPolicyInput{
+		MinimumAvailableMemory: document.MinimumAvailableMemory,
+		ArtifactFileName:       document.ArtifactFileName, ProbeImage: document.ProbeImage,
+		ProbeImageDigest: probeDigest, ProbeContractVersion: document.ProbeContractVersion,
+		CapabilityPolicyDigest: capabilityDigest, MinimumWSLVersion: document.MinimumWSLVersion,
+		WindowsFeatures: append([]string(nil), document.WindowsFeatures...),
 	}, nil
 }
 

@@ -1,19 +1,31 @@
 package runtimecatalog
 
 type canonicalManifest struct {
-	Artifact         canonicalArtifact        `json:"artifact"`
-	CapabilityProbes []CapabilityProbe        `json:"capability_probes"`
-	CatalogID        string                   `json:"catalog_id"`
-	CatalogSequence  uint64                   `json:"catalog_sequence"`
-	Install          canonicalInstall         `json:"install"`
-	LinuxExecution   *canonicalLinuxExecution `json:"linux_execution,omitempty"`
-	Platform         canonicalPlatform        `json:"platform"`
-	Prerequisites    []canonicalPrerequisite  `json:"prerequisites"`
-	Runtime          canonicalRuntime         `json:"runtime"`
-	SchemaVersion    uint32                   `json:"schema_version"`
-	SigningKeyID     string                   `json:"signing_key_id"`
-	SupportExpiresAt int64                    `json:"support_expires_at"`
-	Terms            canonicalTerms           `json:"terms"`
+	Artifact         canonicalArtifact          `json:"artifact"`
+	CapabilityProbes []CapabilityProbe          `json:"capability_probes"`
+	CatalogID        string                     `json:"catalog_id"`
+	CatalogSequence  uint64                     `json:"catalog_sequence"`
+	DesktopExecution *canonicalDesktopExecution `json:"desktop_execution,omitempty"`
+	Install          canonicalInstall           `json:"install"`
+	LinuxExecution   *canonicalLinuxExecution   `json:"linux_execution,omitempty"`
+	Platform         canonicalPlatform          `json:"platform"`
+	Prerequisites    []canonicalPrerequisite    `json:"prerequisites"`
+	Runtime          canonicalRuntime           `json:"runtime"`
+	SchemaVersion    uint32                     `json:"schema_version"`
+	SigningKeyID     string                     `json:"signing_key_id"`
+	SupportExpiresAt int64                      `json:"support_expires_at"`
+	Terms            canonicalTerms             `json:"terms"`
+}
+
+type canonicalDesktopExecution struct {
+	ArtifactFileName       string   `json:"artifact_file_name"`
+	CapabilityPolicyDigest string   `json:"capability_policy_digest"`
+	MinimumAvailableMemory uint64   `json:"minimum_available_memory"`
+	MinimumWSLVersion      string   `json:"minimum_wsl_version"`
+	ProbeContractVersion   string   `json:"probe_contract_version"`
+	ProbeImage             string   `json:"probe_image"`
+	ProbeImageDigest       string   `json:"probe_image_digest"`
+	WindowsFeatures        []string `json:"windows_features,omitempty"`
 }
 
 type canonicalPlatform struct {
@@ -229,6 +241,17 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			ServiceUnitDigest: policy.serviceUnitDigest.Hex(), SubordinateIDCount: policy.subordinateIDCount,
 		}
 	}
+	var desktopExecution *canonicalDesktopExecution
+	if manifest.desktopExecution != nil {
+		policy := manifest.desktopExecution
+		desktopExecution = &canonicalDesktopExecution{
+			ArtifactFileName: policy.artifactFileName, CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(),
+			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumWSLVersion: policy.minimumWSLVersion,
+			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
+			ProbeImageDigest: policy.probeImageDigest.Hex(),
+			WindowsFeatures:  append([]string(nil), policy.windowsFeatures...),
+		}
+	}
 	return canonicalManifest{
 		Artifact: canonicalArtifact{
 			DownloadBytes: manifest.artifact.downloadBytes, ExpandedBytes: manifest.artifact.expandedBytes,
@@ -245,6 +268,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 		CapabilityProbes: append([]CapabilityProbe(nil), manifest.capabilityProbes...),
 		CatalogID:        manifest.catalogID,
 		CatalogSequence:  manifest.sequence,
+		DesktopExecution: desktopExecution,
 		Install: canonicalInstall{
 			Arguments: arguments, Executable: manifest.install.executable,
 			OwnershipChanges:  append([]string(nil), manifest.install.ownershipChanges...),

@@ -18,6 +18,7 @@ type ManifestInput struct {
 	Runtime          RuntimePolicyInput
 	Artifact         ArtifactPolicyInput
 	Install          InstallerPolicyInput
+	DesktopExecution DesktopExecutionPolicyInput
 	LinuxExecution   LinuxExecutionPolicyInput
 	Prerequisites    []PrerequisiteInput
 	CapabilityProbes []CapabilityProbe
@@ -35,6 +36,7 @@ type Manifest struct {
 	runtime          RuntimePolicy
 	artifact         ArtifactPolicy
 	install          InstallerPolicy
+	desktopExecution *DesktopExecutionPolicy
 	linuxExecution   *LinuxExecutionPolicy
 	prerequisites    []Prerequisite
 	capabilityProbes []CapabilityProbe
@@ -85,6 +87,16 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, ErrManifestIntegrity
 	}
+	var desktopExecution *DesktopExecutionPolicy
+	if platform.operatingSystem == OSKindMacOS || platform.operatingSystem == OSKindWindows {
+		policy, policyError := newDesktopExecutionPolicy(input.DesktopExecution, platform, artifact, capabilities)
+		if policyError != nil {
+			return Manifest{}, ErrManifestIntegrity
+		}
+		desktopExecution = &policy
+	} else if !desktopExecutionInputZero(input.DesktopExecution) {
+		return Manifest{}, ErrManifestIntegrity
+	}
 	terms, err := newTermsPolicy(input.Terms)
 	if err != nil {
 		return Manifest{}, ErrManifestIntegrity
@@ -98,7 +110,7 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 		schemaVersion: input.SchemaVersion, catalogID: input.CatalogID, sequence: input.CatalogSequence,
 		signingKeyID: input.SigningKeyID, supportExpiresAt: input.SupportExpiresAt.UTC(),
 		platform: platform, runtime: runtimePolicy, artifact: artifact, install: install,
-		linuxExecution: linuxExecution, prerequisites: prerequisites,
+		desktopExecution: desktopExecution, linuxExecution: linuxExecution, prerequisites: prerequisites,
 		capabilityProbes: capabilities, terms: terms,
 	}
 	canonical, err := marshalCanonical(manifest)
@@ -197,6 +209,15 @@ func (m Manifest) Artifact() ArtifactPolicy { return m.artifact }
 // Install returns the closed installer policy.
 func (m Manifest) Install() InstallerPolicy { return m.install }
 
+// DesktopExecution returns the complete signed macOS/Windows execution
+// projection. Linux cells return false.
+func (m Manifest) DesktopExecution() (DesktopExecutionPolicy, bool) {
+	if m.desktopExecution == nil {
+		return DesktopExecutionPolicy{}, false
+	}
+	return *m.desktopExecution, true
+}
+
 // LinuxExecution returns the complete signed Linux execution projection when
 // this is a Linux catalog cell. Other platforms return false.
 func (m Manifest) LinuxExecution() (LinuxExecutionPolicy, bool) {
@@ -230,6 +251,7 @@ func (m Manifest) Valid() bool {
 	if m.schemaVersion != SupportedSchemaVersion || !m.platform.valid() ||
 		!m.runtime.valid(m.platform.operatingSystem) || !m.artifact.valid(m.platform.operatingSystem) ||
 		!m.terms.valid() || !m.install.valid(m.platform.operatingSystem) ||
+		!desktopManifestBindingsValid(m.desktopExecution, m.platform, m.artifact, m.capabilityProbes) ||
 		!linuxManifestBindingsValid(
 			m.linuxExecution, m.platform, m.artifact, m.install, m.prerequisites, m.capabilityProbes, m.terms,
 		) || !prerequisitesValid(m.prerequisites) ||
@@ -239,6 +261,18 @@ func (m Manifest) Valid() bool {
 	}
 	canonical, err := marshalCanonical(m)
 	return err == nil && bytes.Equal(canonical, m.canonical) && DigestBytes(canonical).Equal(m.digest)
+}
+
+func desktopManifestBindingsValid(
+	policy *DesktopExecutionPolicy,
+	platform PlatformPolicy,
+	artifact ArtifactPolicy,
+	capabilities []CapabilityProbe,
+) bool {
+	if platform.operatingSystem == OSKindLinux {
+		return policy == nil
+	}
+	return policy != nil && policy.valid(platform, artifact, capabilities)
 }
 
 func prerequisitesValid(prerequisites []Prerequisite) bool {

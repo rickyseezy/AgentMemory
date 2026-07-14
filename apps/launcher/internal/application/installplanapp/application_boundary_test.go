@@ -32,84 +32,96 @@ func TestPF001EveryPlanProjectionRejectsAbsentContextAndForeignAuthority(t *test
 		foreign func() error
 	}{
 		{name: "host", nilCall: func() error {
-			_, callErr := application.ResolveHostVerificationPlan(nil, plan.Digest()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveHostVerificationPlan(nil, plan.Digest()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveHostVerificationPlan(context.Background(), foreignDigest)
 			return callErr
 		}},
 		{name: "release", nilCall: func() error {
-			_, callErr := application.ResolveReleasePlan(nil, plan.Digest()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveReleasePlan(nil, plan.Digest()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveReleasePlan(context.Background(), foreignDigest)
 			return callErr
 		}},
 		{name: "artifacts", nilCall: func() error {
-			_, callErr := application.ResolveArtifactAcquisitionPlan(nil, plan.Digest()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveArtifactAcquisitionPlan(nil, plan.Digest()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveArtifactAcquisitionPlan(context.Background(), foreignDigest)
 			return callErr
 		}},
 		{name: "network", nilCall: func() error {
-			_, callErr := application.ResolveNetworkVolumePlan(nil, plan.Digest()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveNetworkVolumePlan(nil, plan.Digest()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveNetworkVolumePlan(context.Background(), foreignDigest)
 			return callErr
 		}},
 		{name: "directories", nilCall: func() error {
-			_, callErr := application.ResolveDirectoryCommand(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveDirectoryCommand(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveDirectoryCommand(context.Background(), plan.Digest(), foreignOperation, 1)
 			return callErr
 		}},
 		{name: "secrets", nilCall: func() error {
-			_, callErr := application.ResolveSecretCommand(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveSecretCommand(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveSecretCommand(context.Background(), plan.Digest(), foreignOperation, 1)
 			return callErr
 		}},
 		{name: "stack", nilCall: func() error {
-			_, callErr := application.ResolveStackAuthorization(nil, plan.Digest(), plan.OperationID(), 1, productstack.OperationMigrate) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveStackAuthorization(nil, plan.Digest(), plan.OperationID(), 1, productstack.OperationMigrate) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveStackAuthorization(context.Background(), plan.Digest(), foreignOperation, 1, productstack.OperationMigrate)
 			return callErr
 		}},
 		{name: "brain", nilCall: func() error {
-			_, callErr := application.ResolveBrainBootstrapAuthorization(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveBrainBootstrapAuthorization(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveBrainBootstrapAuthorization(context.Background(), plan.Digest(), foreignOperation, 1)
 			return callErr
 		}},
 		{name: "readiness", nilCall: func() error {
-			_, callErr := application.ResolveReadinessPlan(nil, plan.Digest()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveReadinessPlan(nil, plan.Digest()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveReadinessPlan(context.Background(), foreignDigest)
 			return callErr
 		}},
 		{name: "agent", nilCall: func() error {
-			_, callErr := application.ResolveAgentConfigurationPlan(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveAgentConfigurationPlan(nil, plan.Digest(), plan.OperationID(), 1) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveAgentConfigurationPlan(context.Background(), plan.Digest(), foreignOperation, 1)
 			return callErr
 		}},
 		{name: "runtime", nilCall: func() error {
-			_, callErr := application.ResolveRuntimePlan(nil, plan.Digest(), plan.OperationID()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveRuntimePlan(nil, plan.Digest(), plan.OperationID()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveRuntimePlan(context.Background(), plan.Digest(), foreignOperation)
 			return callErr
 		}},
 		{name: "activation", nilCall: func() error {
-			_, callErr := application.ResolveActivationPlan(nil, plan.Digest(), plan.OperationID()) //nolint:staticcheck // Boundary test.
+			//lint:ignore SA1012 Deliberate absent-context boundary test.
+			_, callErr := application.ResolveActivationPlan(nil, plan.Digest(), plan.OperationID()) //nolint:staticcheck // Security boundary fixture.
 			return callErr
 		}, foreign: func() error {
 			_, callErr := application.ResolveActivationPlan(context.Background(), plan.Digest(), foreignOperation)

@@ -19,7 +19,8 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 		Trust:      func() (nativeReleaseTrustMaterial, error) { return fixture.Trust, nil },
 		Clock:      fixture.Clock, AntiRollback: fixture.AntiRollback,
 	})
-	if err != nil || authority.templates() == nil || authority.verifier() == nil {
+	if err != nil || authority.templates() == nil || authority.verifier() == nil ||
+		authority.hostVerification() == nil || authority.releaseVerification() == nil {
 		t.Fatalf("authority=%#v error=%v", authority, err)
 	}
 	if err := authority.Close(t.Context()); err != nil {

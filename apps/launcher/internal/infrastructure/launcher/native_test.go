@@ -75,6 +75,7 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	}
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
+		composition.plans == nil || composition.operations == nil ||
 		composition.releaseAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
 		composition.capacityState == nil || composition.artifactStore == nil || composition.activations == nil ||
 		composition.hostPointers == nil || composition.installLock == nil {

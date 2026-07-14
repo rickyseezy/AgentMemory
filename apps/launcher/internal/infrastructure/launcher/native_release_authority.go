@@ -3,9 +3,13 @@ package launcher
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactfs"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/hostverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/hostverifyapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 )
 
@@ -24,8 +28,13 @@ type nativeReleaseAuthorityDependencies struct {
 // No environment variable, working directory, network locator, or MCP input
 // participates in its construction.
 type nativeReleaseAuthority struct {
-	source *artifactfs.BundleFetcher
-	stack  nativeReleaseStack
+	source          *artifactfs.BundleFetcher
+	stack           nativeReleaseStack
+	hostProbe       *hostverify.NativeProbe
+	hostVerifier    *hostverifyapp.Application
+	releaseVerifier *installphase.ReleaseApplicationAdapter
+	closeOnce       sync.Once
+	closeError      error
 }
 
 func newNativeReleaseAuthority(
@@ -64,8 +73,28 @@ func newNativeReleaseAuthority(
 	if err != nil {
 		return nil, firststartapp.ErrIntegrity
 	}
+	hostSignature, err := hostverify.NewEd25519Verifier(trust.HostPolicyKeys)
+	if err != nil {
+		return nil, firststartapp.ErrIntegrity
+	}
+	hostProbe := hostverify.NewNativeProbe()
+	hostApplication, err := hostverifyapp.NewApplication(hostverifyapp.Dependencies{
+		Signature: hostSignature, Probe: hostProbe,
+	})
+	if err != nil {
+		_ = hostProbe.Close(context.WithoutCancel(ctx))
+		return nil, firststartapp.ErrIntegrity
+	}
+	releaseApplication, err := installphase.NewReleaseApplicationAdapter(stack.application)
+	if err != nil {
+		_ = hostProbe.Close(context.WithoutCancel(ctx))
+		return nil, firststartapp.ErrIntegrity
+	}
 	failed = false
-	return &nativeReleaseAuthority{source: source, stack: stack}, nil
+	return &nativeReleaseAuthority{
+		source: source, stack: stack, hostProbe: hostProbe,
+		hostVerifier: hostApplication, releaseVerifier: releaseApplication,
+	}, nil
 }
 
 func (a *nativeReleaseAuthority) templates() firststartapp.VerifiedTemplateSource {
@@ -82,14 +111,43 @@ func (a *nativeReleaseAuthority) verifier() *appreleaseverify.Application {
 	return a.stack.application
 }
 
-func (a *nativeReleaseAuthority) Close(context.Context) error {
-	if a == nil || a.source == nil {
+func (a *nativeReleaseAuthority) hostVerification() *hostverifyapp.Application {
+	if a == nil {
 		return nil
 	}
-	if err := a.source.Close(); err != nil {
-		return errors.New("native release bundle close failed")
+	return a.hostVerifier
+}
+
+func (a *nativeReleaseAuthority) releaseVerification() *installphase.ReleaseApplicationAdapter {
+	if a == nil {
+		return nil
 	}
-	return nil
+	return a.releaseVerifier
+}
+
+func (a *nativeReleaseAuthority) Close(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
+	cleanup := context.Background()
+	if ctx != nil {
+		cleanup = context.WithoutCancel(ctx)
+	}
+	a.closeOnce.Do(func() {
+		var closeErrors []error
+		if a.hostProbe != nil {
+			if err := a.hostProbe.Close(cleanup); err != nil {
+				closeErrors = append(closeErrors, errors.New("native host probe close failed"))
+			}
+		}
+		if a.source != nil {
+			if err := a.source.Close(); err != nil {
+				closeErrors = append(closeErrors, errors.New("native release bundle close failed"))
+			}
+		}
+		a.closeError = errors.Join(closeErrors...)
+	})
+	return a.closeError
 }
 
 var _ interface{ Close(context.Context) error } = (*nativeReleaseAuthority)(nil)

@@ -143,6 +143,8 @@ func (r NativeRoots) valid() bool {
 type nativeComposition struct {
 	factory       *Factory
 	resources     *nativeResources
+	plans         *installplanfs.Repository
+	operations    *filesystem.InstallOperationRepository
 	preparations  firststartapp.PreparationRepository
 	binder        firststartapp.PreparationBinder
 	runtimeState  *filesystem.RuntimeOperationRepository
@@ -330,7 +332,8 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	return nativeComposition{
-		factory: factory, resources: resources, preparations: preparations, binder: binder,
+		factory: factory, resources: resources, plans: plans, operations: operations,
+		preparations: preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
 		artifacts: artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,

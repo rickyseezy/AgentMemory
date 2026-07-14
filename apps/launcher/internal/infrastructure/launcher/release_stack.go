@@ -24,11 +24,12 @@ type nativeReleaseContentSource interface {
 // release pipeline and compiled into a signed launcher build. It deliberately
 // contains no private key or credential.
 type nativeReleaseTrustMaterial struct {
-	ManifestKeys  map[string]ed25519.PublicKey
-	Offline       releaseverifyadapter.OfflineTrustPolicyInput
-	Provenance    releaseverifyadapter.ProvenanceTrustPolicyInput
-	Qualification releaseverifyadapter.QualificationTrustPolicyInput
-	Publishers    releaseverifyadapter.NativePublisherPolicyInput
+	ManifestKeys   map[string]ed25519.PublicKey
+	HostPolicyKeys map[string]ed25519.PublicKey
+	Offline        releaseverifyadapter.OfflineTrustPolicyInput
+	Provenance     releaseverifyadapter.ProvenanceTrustPolicyInput
+	Qualification  releaseverifyadapter.QualificationTrustPolicyInput
+	Publishers     releaseverifyadapter.NativePublisherPolicyInput
 }
 
 type nativeReleaseStackDependencies struct {

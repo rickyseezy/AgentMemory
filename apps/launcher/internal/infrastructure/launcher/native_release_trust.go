@@ -24,12 +24,13 @@ const (
 var embeddedNativeReleaseTrustBase64 string
 
 type nativeReleaseTrustDocument struct {
-	SchemaVersion uint16                      `json:"schemaVersion"`
-	ManifestKeys  map[string]string           `json:"manifestKeys"`
-	Offline       nativeOfflineTrustDocument  `json:"offline"`
-	Provenance    nativeProvenanceDocument    `json:"provenance"`
-	Qualification nativeQualificationDocument `json:"qualification"`
-	Publishers    map[string][]string         `json:"nativePublishers"`
+	SchemaVersion  uint16                      `json:"schemaVersion"`
+	ManifestKeys   map[string]string           `json:"manifestKeys"`
+	HostPolicyKeys map[string]string           `json:"hostPolicyKeys"`
+	Offline        nativeOfflineTrustDocument  `json:"offline"`
+	Provenance     nativeProvenanceDocument    `json:"provenance"`
+	Qualification  nativeQualificationDocument `json:"qualification"`
+	Publishers     map[string][]string         `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -77,6 +78,10 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	hostPolicyKeys, err := decodeNativeReleaseKeys(document.HostPolicyKeys)
+	if err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	revocationKeys, err := decodeNativeReleaseKeys(document.Offline.RevocationAuthorities)
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
@@ -104,7 +109,7 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	trust := nativeReleaseTrustMaterial{
-		ManifestKeys: manifestKeys,
+		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 			TrustDomain:           document.Offline.TrustDomain,
 			RevocationAuthorities: revocationKeys, TimeAuthorities: timeKeys,

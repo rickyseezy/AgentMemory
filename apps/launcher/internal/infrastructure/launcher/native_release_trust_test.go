@@ -16,7 +16,7 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	t.Parallel()
 	document := nativeReleaseTrustFixture()
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
-	if err != nil || len(trust.ManifestKeys) != 1 ||
+	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
 		len(trust.Offline.RevocationAuthorities) != 1 || len(trust.Offline.TimeAuthorities) != 1 ||
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
 		len(trust.Provenance.BuildIdentities) != 1 || len(trust.Provenance.RecipeDigests) != 1 ||
@@ -35,8 +35,9 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*nativeReleaseTrustDocument){
-		"schema":        func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
-		"manifest keys": func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
+		"schema":           func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
+		"manifest keys":    func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
+		"host policy keys": func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
 		"manifest key bytes": func(document *nativeReleaseTrustDocument) {
 			document.ManifestKeys["release-root"] = base64.StdEncoding.EncodeToString([]byte("short"))
 		},
@@ -125,8 +126,9 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 	license := releaseinventory.DigestBytes([]byte("license policy")).Hex()
 	vulnerability := releaseinventory.DigestBytes([]byte("vulnerability policy")).Hex()
 	return nativeReleaseTrustDocument{
-		SchemaVersion: nativeReleaseTrustSchemaVersion,
-		ManifestKeys:  map[string]string{"release-root": key},
+		SchemaVersion:  nativeReleaseTrustSchemaVersion,
+		ManifestKeys:   map[string]string{"release-root": key},
+		HostPolicyKeys: map[string]string{"host-policy-root": key},
 		Offline: nativeOfflineTrustDocument{
 			TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]string{"revocation-root": key},
 			TimeAuthorities: map[string]string{"time-root": key}, MaximumFutureSkewSeconds: 300,

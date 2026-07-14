@@ -28,7 +28,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	}
 	if roots.OperationState == roots.BootstrapPointer || roots.OperationState == roots.SetupDecisions ||
 		roots.BootstrapPointer == roots.SetupDecisions || roots.PreparationState == roots.OperationState ||
-		roots.PreparationState == roots.BootstrapPointer || roots.PreparationState == roots.SetupDecisions {
+		roots.PreparationState == roots.BootstrapPointer || roots.PreparationState == roots.SetupDecisions ||
+		roots.RuntimeState == roots.OperationState {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
 	}
 	root := t.TempDir()
@@ -39,15 +40,17 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	for name, candidate := range map[string]NativeRoots{
 		"empty": {},
 		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
 		"unclean": {OperationState: root + "/state/../other", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
 		"duplicate": {OperationState: valid.OperationState, BootstrapPointer: valid.OperationState, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.OperationState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.OperationState, RuntimeState: valid.OperationState, CanonicalPlans: valid.CanonicalPlans},
 		"missing preparation": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
-			SetupDecisions: valid.SetupDecisions, CanonicalPlans: valid.CanonicalPlans},
+			SetupDecisions: valid.SetupDecisions, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
+		"missing runtime": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
 		"missing plan": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
-			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState},
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState},
 	} {
 		if candidate.valid() {
 			t.Fatalf("%s roots accepted: %+v", name, candidate)
@@ -70,9 +73,9 @@ func TestPF001NativeCompositionUsesThreeDistinctJournalAuthoritiesAndResolvesMis
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 4 || observed[0] != roots.OperationState ||
+	if len(observed) != 5 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
-		observed[3] != roots.PreparationState {
+		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -119,7 +122,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 4; failAt++ {
+	for failAt := 1; failAt <= 5; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -609,7 +612,7 @@ func nativeTestRoots(root string) NativeRoots {
 	return NativeRoots{
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
-		CanonicalPlans: filepath.Join(root, "plans"),
+		RuntimeState: filepath.Join(root, "runtime"), CanonicalPlans: filepath.Join(root, "plans"),
 	}
 }
 

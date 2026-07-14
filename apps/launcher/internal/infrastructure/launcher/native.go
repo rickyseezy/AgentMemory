@@ -35,6 +35,7 @@ type NativeRoots struct {
 	BootstrapPointer string
 	SetupDecisions   string
 	PreparationState string
+	RuntimeState     string
 	CanonicalPlans   string
 }
 
@@ -97,6 +98,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		BootstrapPointer: filepath.Join(base, "bootstrap-pointer"),
 		SetupDecisions:   filepath.Join(base, "setup-decisions"),
 		PreparationState: filepath.Join(base, "preparation-state"),
+		RuntimeState:     filepath.Join(base, "runtime-state"),
 		CanonicalPlans:   filepath.Join(base, "canonical-plans"),
 	}, nil
 }
@@ -104,7 +106,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
-		r.PreparationState, r.CanonicalPlans,
+		r.PreparationState, r.RuntimeState, r.CanonicalPlans,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -124,6 +126,7 @@ type nativeComposition struct {
 	resources    *nativeResources
 	preparations firststartapp.PreparationRepository
 	binder       firststartapp.PreparationBinder
+	runtimeState *filesystem.RuntimeOperationRepository
 }
 
 func composeNative(
@@ -151,6 +154,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	runtimeLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operationJournals, err := journalFactory(operationLocator)
 	if err != nil || nilCapability(operationJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -167,7 +174,15 @@ func composeNative(
 	if err != nil || nilCapability(preparationJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	runtimeJournals, err := journalFactory(runtimeLocator)
+	if err != nil || nilCapability(runtimeJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	fence, err := filesystem.NewNativeOperationStateFence(operationLocator)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	runtimeFence, err := filesystem.NewNativeOperationStateFence(runtimeLocator)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -194,6 +209,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	runtimeState, err := filesystem.NewRuntimeOperationRepository(runtimeJournals, clock, runtimeFence)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	plans, err := installplanfs.NewRepository(ctx, roots.CanonicalPlans)
 	if err != nil {
 		return nativeComposition{}, err
@@ -216,6 +235,7 @@ func composeNative(
 	}
 	return nativeComposition{
 		factory: factory, resources: resources, preparations: preparations, binder: binder,
+		runtimeState: runtimeState,
 	}, nil
 }
 

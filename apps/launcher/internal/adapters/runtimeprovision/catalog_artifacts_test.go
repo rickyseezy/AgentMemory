@@ -187,7 +187,7 @@ func successfulLinuxArtifactCAS(plan artifactacquisition.Plan) *linuxArtifactCAS
 	artifact := plan.Artifacts()[0]
 	return &linuxArtifactCASFake{
 		reserveResult: artifactapp.ReserveResult{
-			ReservedBytes:     plan.Totals().RequiredBytes(),
+			ReservedBytes:     plan.Totals().DownloadBytes(),
 			AggregateEvidence: releaseinventory.DigestBytes([]byte("reservation-evidence")),
 		},
 		acquireResult: artifactapp.AcquireResult{

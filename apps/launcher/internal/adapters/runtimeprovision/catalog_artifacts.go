@@ -90,7 +90,7 @@ func (a *CatalogLinuxArtifactAcquirer) AcquireLinuxArtifacts(
 	if err != nil {
 		return runtimeport.LinuxArtifactEvidence{}, mapLinuxArtifactApplicationError(ctx, err)
 	}
-	if reservation.ReservedBytes != plan.Totals().RequiredBytes() || reservation.AggregateEvidence.IsZero() {
+	if reservation.ReservedBytes != plan.Totals().DownloadBytes() || reservation.AggregateEvidence.IsZero() {
 		return runtimeport.LinuxArtifactEvidence{}, runtimeport.ErrLinuxArtifactIntegrity
 	}
 	acquired, err := a.cas.Acquire(ctx, command)

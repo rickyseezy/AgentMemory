@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	dockerPublisherIdentity = "teamid:9BNSXJN65R"
-	darwinPublisherPolicy   = "apple:developer-id-notarized:v1"
-	windowsPublisherPolicy  = "windows:authenticode:v1"
-	linuxPublisherPolicy    = "linux:package-receipt:v1"
+	dockerPublisherIdentity     = "teamid:9BNSXJN65R"
+	agentMemoryDarwinIdentifier = "com.agentmemory.AgentMemory"
+	darwinPublisherPolicy       = "apple:developer-id-notarized:v1"
+	windowsPublisherPolicy      = "windows:authenticode:v1"
+	linuxPublisherPolicy        = "linux:package-receipt:v1"
 )
 
 // LinuxPackageReceiptVerifier proves that the exact executable evidence was

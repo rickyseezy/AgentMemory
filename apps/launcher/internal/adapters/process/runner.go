@@ -35,6 +35,10 @@ type ExecutableEvidence struct {
 	ReleaseManifestDigest [sha256.Size]byte
 	RuntimePlanDigest     [sha256.Size]byte
 	Role                  argvprocess.ExecutableRole
+	// retainedHandle is the exact open executable object held by the lease.
+	// It is consumed only by native code in this package and is never caller
+	// supplied or persisted as release evidence.
+	retainedHandle uintptr
 }
 
 // PublisherVerifier validates the signed publisher/policy identity against

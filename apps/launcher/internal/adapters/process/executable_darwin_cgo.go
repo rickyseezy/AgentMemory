@@ -62,8 +62,7 @@ func platformExecutablePathSupported(
 		// Rootless Engine setup is a Linux-only package capability.
 		return false
 	case argvprocess.ExecutableRoleAgentMemoryLauncher:
-		// Launcher verification is performed against its release-specific app bundle.
-		return false
+		expectedPath = "/Applications/AgentMemory.app/Contents/MacOS/AgentMemory"
 	default:
 		return false
 	}

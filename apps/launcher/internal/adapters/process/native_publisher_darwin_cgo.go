@@ -73,6 +73,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
@@ -111,28 +112,44 @@ func darwinPublisherRequirement(
 	evidence ExecutableEvidence,
 ) (string, error) {
 	if ctx == nil || ctx.Err() != nil || !authority.Valid() ||
-		authority.PublisherIdentity() != dockerPublisherIdentity ||
 		authority.PublisherPolicyID() != darwinPublisherPolicy || evidence.Digest != authority.SHA256() {
 		return "", argvprocess.ErrInvalidInvocation
 	}
-	identifier := ""
+	identifier, teamID := "", ""
 	switch authority.Role() {
 	case argvprocess.ExecutableRoleDockerCLI:
-		identifier = "docker"
+		identifier, teamID = "docker", strings.TrimPrefix(dockerPublisherIdentity, "teamid:")
 	case argvprocess.ExecutableRoleComposePlugin:
-		identifier = "docker-compose"
+		identifier, teamID = "docker-compose", strings.TrimPrefix(dockerPublisherIdentity, "teamid:")
 	case argvprocess.ExecutableRoleRootlessSetup:
 		// Rootless Engine setup is never authorized by Docker Desktop's
 		// macOS code-signing identity.
 		return "", argvprocess.ErrInvalidInvocation
 	case argvprocess.ExecutableRoleAgentMemoryLauncher:
-		// The AgentMemory publisher identity is separate from Docker Desktop.
-		return "", argvprocess.ErrInvalidInvocation
+		identifier = agentMemoryDarwinIdentifier
+		teamID = strings.TrimPrefix(authority.PublisherIdentity(), "teamid:")
 	default:
 		return "", argvprocess.ErrInvalidInvocation
 	}
+	if authority.PublisherIdentity() != "teamid:"+teamID || !validDarwinTeamID(teamID) {
+		return "", argvprocess.ErrInvalidInvocation
+	}
 	return fmt.Sprintf(
-		`identifier %q and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "9BNSXJN65R"`,
-		identifier,
+		`identifier %q and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = %q`,
+		identifier, teamID,
 	), nil
+}
+
+func validDarwinTeamID(value string) bool {
+	if len(value) != 10 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'A' || character > 'Z' {
+				return false
+			}
+		}
+	}
+	return true
 }

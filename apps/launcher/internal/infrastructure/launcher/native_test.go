@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
@@ -29,7 +30,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	if roots.OperationState == roots.BootstrapPointer || roots.OperationState == roots.SetupDecisions ||
 		roots.BootstrapPointer == roots.SetupDecisions || roots.PreparationState == roots.OperationState ||
 		roots.PreparationState == roots.BootstrapPointer || roots.PreparationState == roots.SetupDecisions ||
-		roots.RuntimeState == roots.OperationState {
+		roots.RuntimeState == roots.OperationState || roots.ReleaseAnchorState == roots.OperationState ||
+		roots.ReleaseAnchorState == roots.RuntimeState {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
 	}
 	root := t.TempDir()
@@ -40,17 +42,19 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	for name, candidate := range map[string]NativeRoots{
 		"empty": {},
 		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"unclean": {OperationState: root + "/state/../other", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"duplicate": {OperationState: valid.OperationState, BootstrapPointer: valid.OperationState, SetupDecisions: valid.SetupDecisions,
-			PreparationState: valid.OperationState, RuntimeState: valid.OperationState, CanonicalPlans: valid.CanonicalPlans},
+			PreparationState: valid.OperationState, RuntimeState: valid.OperationState, ReleaseAnchorState: valid.OperationState, CanonicalPlans: valid.CanonicalPlans},
 		"missing preparation": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
-			SetupDecisions: valid.SetupDecisions, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
+			SetupDecisions: valid.SetupDecisions, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
-			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
+		"missing release anchor": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
 		"missing plan": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
-			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState},
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState},
 	} {
 		if candidate.valid() {
 			t.Fatalf("%s roots accepted: %+v", name, candidate)
@@ -70,12 +74,14 @@ func TestPF001NativeCompositionUsesThreeDistinctJournalAuthoritiesAndResolvesMis
 		return nativeMissingJournalProvider{}, nil
 	}
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
-	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil {
+	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
+		composition.releaseAnchor == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 5 || observed[0] != roots.OperationState ||
+	if len(observed) != 6 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
-		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState {
+		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState ||
+		observed[5] != roots.ReleaseAnchorState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -122,7 +128,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 5; failAt++ {
+	for failAt := 1; failAt <= 6; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -141,9 +147,21 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			}
 		}
 	}
+	calls := 0
+	_, err := composeNative(context.Background(), roots,
+		func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+			calls++
+			if calls == 6 {
+				return nativePlainJournalProvider{}, nil
+			}
+			return nativeMissingJournalProvider{}, nil
+		}, pendingReadySurface{})
+	if err == nil || calls != 6 {
+		t.Fatalf("ordinary release-anchor journal accepted: calls=%d error=%v", calls, err)
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := composeNative(cancelled, roots, func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+	_, err = composeNative(cancelled, roots, func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
 		return nativeMissingJournalProvider{}, nil
 	}, pendingReadySurface{})
 	if !errors.Is(err, context.Canceled) {
@@ -612,13 +630,36 @@ func nativeTestRoots(root string) NativeRoots {
 	return NativeRoots{
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
-		RuntimeState: filepath.Join(root, "runtime"), CanonicalPlans: filepath.Join(root, "plans"),
+		RuntimeState: filepath.Join(root, "runtime"), ReleaseAnchorState: filepath.Join(root, "release-anchor"),
+		CanonicalPlans: filepath.Join(root, "plans"),
 	}
 }
 
 type nativeMissingJournalProvider struct{}
 
-func (nativeMissingJournalProvider) JournalFor(context.Context, install.OperationID) (journalport.Journal, error) {
+func (nativeMissingJournalProvider) JournalFor(ctx context.Context, operationID install.OperationID) (journalport.Journal, error) {
+	owner, err := install.BindOwner("native-test-machine", "native-test-principal")
+	if err != nil {
+		return nil, err
+	}
+	keys, err := bootstrapadapter.NewMemoryOperationKeySource(bytes.NewReader(bytes.Repeat([]byte{0x5a}, 64)))
+	if err != nil {
+		return nil, err
+	}
+	keyRef, err := keys.Ensure(ctx, operationID, owner)
+	if err != nil {
+		return nil, err
+	}
+	anchors, err := bootstrapadapter.NewMemoryRollbackAnchorStore(keys)
+	if err != nil {
+		return nil, err
+	}
+	return bootstrapadapter.NewAnchoredJournal(nativeMissingJournal{}, anchors, keyRef, operationID, owner)
+}
+
+type nativePlainJournalProvider struct{}
+
+func (nativePlainJournalProvider) JournalFor(context.Context, install.OperationID) (journalport.Journal, error) {
 	return nativeMissingJournal{}, nil
 }
 

@@ -15,7 +15,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
 )
 
-func TestPF001DarwinExecutablePathPolicyAcceptsOnlyDockerDesktopAuthorities(t *testing.T) {
+func TestPF001DarwinExecutablePathPolicyAcceptsInstalledAuthorities(t *testing.T) {
 	t.Parallel()
 	rootInfo := unixFileInfoStub{
 		mode:   os.ModeDir | 0o755,
@@ -42,6 +42,10 @@ func TestPF001DarwinExecutablePathPolicyAcceptsOnlyDockerDesktopAuthorities(t *t
 		{
 			name: "compose plugin", path: "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
 			role: argvprocess.ExecutableRoleComposePlugin, ancestors: ancestors, info: executableInfo, want: true,
+		},
+		{
+			name: "AgentMemory launcher", path: "/Applications/AgentMemory.app/Contents/MacOS/AgentMemory",
+			role: argvprocess.ExecutableRoleAgentMemoryLauncher, ancestors: ancestors, info: executableInfo, want: true,
 		},
 		{
 			name: "Linux rootless setup capability", path: "/usr/bin/dockerd-rootless-setuptool.sh",
@@ -130,25 +134,34 @@ func TestPF001DarwinPublisherRequirementBindsRoleAndPolicy(t *testing.T) {
 		name       string
 		path       string
 		role       argvprocess.ExecutableRole
+		publisher  string
 		identifier string
+		teamID     string
 	}{
 		{
 			name: "docker CLI", path: "/Applications/Docker.app/Contents/Resources/bin/docker",
-			role: argvprocess.ExecutableRoleDockerCLI, identifier: `identifier "docker"`,
+			role: argvprocess.ExecutableRoleDockerCLI, publisher: dockerPublisherIdentity,
+			identifier: `identifier "docker"`, teamID: dockerPublisherIdentity[7:],
 		},
 		{
 			name: "compose plugin", path: "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
-			role: argvprocess.ExecutableRoleComposePlugin, identifier: `identifier "docker-compose"`,
+			role: argvprocess.ExecutableRoleComposePlugin, publisher: dockerPublisherIdentity,
+			identifier: `identifier "docker-compose"`, teamID: dockerPublisherIdentity[7:],
+		},
+		{
+			name: "AgentMemory launcher", path: "/Applications/AgentMemory.app/Contents/MacOS/AgentMemory",
+			role: argvprocess.ExecutableRoleAgentMemoryLauncher, publisher: "teamid:AB12CD34EF",
+			identifier: `identifier "com.agentmemory.AgentMemory"`, teamID: "AB12CD34EF",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			authority := darwinAuthority(t, test.path, test.role, dockerPublisherIdentity, darwinPublisherPolicy)
+			authority := darwinAuthority(t, test.path, test.role, test.publisher, darwinPublisherPolicy)
 			requirement, err := darwinPublisherRequirement(context.Background(), authority, ExecutableEvidence{Digest: authority.SHA256()})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(requirement, test.identifier) || !strings.Contains(requirement, dockerPublisherIdentity[7:]) {
+			if !strings.Contains(requirement, test.identifier) || !strings.Contains(requirement, test.teamID) {
 				t.Fatalf("requirement = %q", requirement)
 			}
 		})
@@ -161,6 +174,22 @@ func TestPF001DarwinPublisherRequirementBindsRoleAndPolicy(t *testing.T) {
 		context.Background(), rootless, ExecutableEvidence{Digest: rootless.SHA256()},
 	); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
 		t.Fatalf("Linux rootless setup publisher error = %v", err)
+	}
+	for _, teamID := range []string{
+		"ab12cd34ef", "SHORT", `AB12CD34E"`, "9BNSXJN65R-extra",
+	} {
+		if validDarwinTeamID(teamID) {
+			t.Fatalf("invalid Team ID %q was accepted", teamID)
+		}
+	}
+	foreignDocker := darwinAuthority(
+		t, "/Applications/Docker.app/Contents/Resources/bin/docker",
+		argvprocess.ExecutableRoleDockerCLI, "teamid:AB12CD34EF", darwinPublisherPolicy,
+	)
+	if _, err := darwinPublisherRequirement(
+		context.Background(), foreignDocker, ExecutableEvidence{Digest: foreignDocker.SHA256()},
+	); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
+		t.Fatalf("foreign Docker publisher error = %v", err)
 	}
 }
 

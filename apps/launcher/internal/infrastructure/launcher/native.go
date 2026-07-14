@@ -16,6 +16,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installplanfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installprogress"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseanchor"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -31,12 +32,13 @@ import (
 // They are selected only by the platform composition root, never by an MCP
 // request or installation plan.
 type NativeRoots struct {
-	OperationState   string
-	BootstrapPointer string
-	SetupDecisions   string
-	PreparationState string
-	RuntimeState     string
-	CanonicalPlans   string
+	OperationState     string
+	BootstrapPointer   string
+	SetupDecisions     string
+	PreparationState   string
+	RuntimeState       string
+	ReleaseAnchorState string
+	CanonicalPlans     string
 }
 
 type nativeRootsResolver func() (NativeRoots, error)
@@ -94,19 +96,20 @@ func defaultNativeRoots() (NativeRoots, error) {
 	}
 	base := filepath.Join(filepath.Clean(configurationRoot), "AgentMemory", "launcher-v1")
 	return NativeRoots{
-		OperationState:   filepath.Join(base, "operation-state"),
-		BootstrapPointer: filepath.Join(base, "bootstrap-pointer"),
-		SetupDecisions:   filepath.Join(base, "setup-decisions"),
-		PreparationState: filepath.Join(base, "preparation-state"),
-		RuntimeState:     filepath.Join(base, "runtime-state"),
-		CanonicalPlans:   filepath.Join(base, "canonical-plans"),
+		OperationState:     filepath.Join(base, "operation-state"),
+		BootstrapPointer:   filepath.Join(base, "bootstrap-pointer"),
+		SetupDecisions:     filepath.Join(base, "setup-decisions"),
+		PreparationState:   filepath.Join(base, "preparation-state"),
+		RuntimeState:       filepath.Join(base, "runtime-state"),
+		ReleaseAnchorState: filepath.Join(base, "release-anchor-state"),
+		CanonicalPlans:     filepath.Join(base, "canonical-plans"),
 	}, nil
 }
 
 func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
-		r.PreparationState, r.RuntimeState, r.CanonicalPlans,
+		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.CanonicalPlans,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -122,11 +125,12 @@ func (r NativeRoots) valid() bool {
 }
 
 type nativeComposition struct {
-	factory      *Factory
-	resources    *nativeResources
-	preparations firststartapp.PreparationRepository
-	binder       firststartapp.PreparationBinder
-	runtimeState *filesystem.RuntimeOperationRepository
+	factory       *Factory
+	resources     *nativeResources
+	preparations  firststartapp.PreparationRepository
+	binder        firststartapp.PreparationBinder
+	runtimeState  *filesystem.RuntimeOperationRepository
+	releaseAnchor *releaseanchor.Repository
 }
 
 func composeNative(
@@ -158,6 +162,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	releaseAnchorLocator, err := bootstrapadapter.NewOperationLocator(roots.ReleaseAnchorState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operationJournals, err := journalFactory(operationLocator)
 	if err != nil || nilCapability(operationJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -178,6 +186,10 @@ func composeNative(
 	if err != nil || nilCapability(runtimeJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	releaseAnchorJournals, err := journalFactory(releaseAnchorLocator)
+	if err != nil || nilCapability(releaseAnchorJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	fence, err := filesystem.NewNativeOperationStateFence(operationLocator)
 	if err != nil {
 		return nativeComposition{}, err
@@ -187,6 +199,10 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	clock := setuphost.Clock{}
+	releaseAnchorRepository, err := releaseanchor.NewRepositoryFromProvider(ctx, releaseAnchorJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	preparations, err := firststartadapter.NewPreparationRepository(preparationJournals, clock)
 	if err != nil {
 		return nativeComposition{}, err
@@ -235,7 +251,7 @@ func composeNative(
 	}
 	return nativeComposition{
 		factory: factory, resources: resources, preparations: preparations, binder: binder,
-		runtimeState: runtimeState,
+		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
 	}, nil
 }
 

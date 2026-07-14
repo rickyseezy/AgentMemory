@@ -30,7 +30,8 @@ func (v nativePublisherVerifier) VerifyExecutablePublisher(
 ) error {
 	if ctx == nil || ctx.Err() != nil || !authority.Valid() ||
 		authority.PublisherPolicyID() != windowsPublisherPolicy || evidence.Digest != authority.SHA256() ||
-		nilTrustDependency(v.signer) {
+		nilTrustDependency(v.signer) || evidence.retainedHandle == 0 ||
+		windows.Handle(evidence.retainedHandle) == windows.InvalidHandle {
 		return argvprocess.ErrInvalidInvocation
 	}
 	path, err := windows.UTF16PtrFromString(authority.CanonicalPath())
@@ -39,14 +40,19 @@ func (v nativePublisherVerifier) VerifyExecutablePublisher(
 	}
 	fileInfo := &windows.WinTrustFileInfo{
 		Size: uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})), FilePath: path,
+		File: windows.Handle(evidence.retainedHandle),
 	}
 	data := &windows.WinTrustData{
 		Size: uint32(unsafe.Sizeof(windows.WinTrustData{})), UIChoice: windows.WTD_UI_NONE,
 		RevocationChecks: windows.WTD_REVOKE_WHOLECHAIN, UnionChoice: windows.WTD_CHOICE_FILE,
 		StateAction:                     windows.WTD_STATEACTION_VERIFY,
 		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(fileInfo),
-		ProvFlags:                       windows.WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | windows.WTD_DISABLE_MD2_MD4,
-		UIContext:                       windows.WTD_UICONTEXT_EXECUTE,
+		// Offline installation must not turn native signature validation into
+		// ambient network egress. Release qualification preloads and binds the
+		// required revocation material; absent cached evidence fails closed.
+		ProvFlags: windows.WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | windows.WTD_DISABLE_MD2_MD4 |
+			windows.WTD_CACHE_ONLY_URL_RETRIEVAL,
+		UIContext: windows.WTD_UICONTEXT_EXECUTE,
 	}
 	verifyError := windows.WinVerifyTrustEx(
 		windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data,

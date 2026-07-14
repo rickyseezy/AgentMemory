@@ -399,6 +399,7 @@ func (l *executableLease) evidence(authority argvprocess.ExecutableAuthority) Ex
 		CanonicalID: authority.CanonicalID(), FileIdentity: l.identityText, Digest: l.digest, OwnerIdentity: l.owner,
 		ReleaseManifestDigest: authority.ReleaseManifestDigest(),
 		RuntimePlanDigest:     authority.RuntimePlanDigest(), Role: authority.Role(),
+		retainedHandle: l.file.Fd(),
 	}
 }
 

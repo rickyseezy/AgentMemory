@@ -192,7 +192,9 @@ func (testPublisherVerifier) VerifyExecutablePublisher(
 	if evidence.CanonicalID != authority.CanonicalID() || evidence.Digest != authority.SHA256() ||
 		evidence.OwnerIdentity != authority.OwnerIdentity() || evidence.FileIdentity == "" ||
 		evidence.ReleaseManifestDigest != authority.ReleaseManifestDigest() ||
-		evidence.RuntimePlanDigest != authority.RuntimePlanDigest() || evidence.Role != authority.Role() {
+		evidence.RuntimePlanDigest != authority.RuntimePlanDigest() || evidence.Role != authority.Role() ||
+		runtime.GOOS == "windows" && evidence.retainedHandle == 0 ||
+		runtime.GOOS != "windows" && evidence.retainedHandle != 0 {
 		return argvprocess.ErrInvalidInvocation
 	}
 	return nil

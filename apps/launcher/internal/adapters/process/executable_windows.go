@@ -252,10 +252,20 @@ func windowsExecutableIdentity(handle windows.Handle, wantDirectory bool) (strin
 		information.FileAttributes&windows.FILE_ATTRIBUTE_DEVICE != 0 || !directory && information.NumberOfLinks != 1 {
 		return "", argvprocess.ErrInvalidInvocation
 	}
+	fileIndex := uint64(information.FileIndexHigh)<<32 | uint64(information.FileIndexLow)
+	if directory {
+		// A retained directory object's security identity is its volume and file
+		// index. Directory size and last-write time are mutable bookkeeping: a
+		// sibling process creating an unrelated child legitimately changes them.
+		// Including either would turn safe parallel activity into a false
+		// executable-substitution finding. The retained no-delete-share handle and
+		// the path SameFile check below protect name ownership independently.
+		return fmt.Sprintf("windows-dir:%d:%d", information.VolumeSerialNumber, fileIndex), nil
+	}
 	return fmt.Sprintf(
-		"windows:%d:%d:%d:%d",
+		"windows-file:%d:%d:%d:%d",
 		information.VolumeSerialNumber,
-		uint64(information.FileIndexHigh)<<32|uint64(information.FileIndexLow),
+		fileIndex,
 		uint64(information.FileSizeHigh)<<32|uint64(information.FileSizeLow),
 		uint64(information.LastWriteTime.HighDateTime)<<32|uint64(information.LastWriteTime.LowDateTime),
 	), nil

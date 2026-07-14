@@ -3,10 +3,36 @@
 package process
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestPF001WindowsExecutableDirectoryIdentityIgnoresSafeChildChurn(t *testing.T) {
+	t.Parallel()
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, before, err := openWindowsExecutableDirectoryAbsolute(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }()
+	if err := os.Mkdir(filepath.Join(directory, "unrelated-child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	after, err := windowsExecutableIdentity(windows.Handle(handle.Fd()), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("directory object identity changed after safe child churn: %q != %q", before, after)
+	}
+}
 
 func TestPF001WindowsExecutableDACLRejectsObjectAndCallbackAllowACEForms(t *testing.T) {
 	t.Parallel()

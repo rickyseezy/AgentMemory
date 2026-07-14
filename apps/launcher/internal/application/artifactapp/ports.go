@@ -5,6 +5,7 @@ package artifactapp
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/artifactacquisition"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
@@ -86,4 +87,14 @@ type Store interface {
 	WriteChunk(context.Context, artifactacquisition.PartialAuthorization, artifactacquisition.Chunk, []byte) error
 	Finalize(context.Context, artifactacquisition.PartialAuthorization, artifactacquisition.Artifact) (artifactacquisition.FinalProof, error)
 	ResetInvalidPartial(context.Context, artifactacquisition.PartialAuthorization) error
+}
+
+// VerifiedFinalReader opens one already-published CAS object through the same
+// exact artifact authority used by InspectFinal. Implementations must verify
+// the complete object before opening, require the consumer to read exactly to
+// EOF, and revalidate descriptor/path identity plus digest when it closes.
+// It is intentionally separate from Store so acquisition does not gain a read
+// capability it does not need.
+type VerifiedFinalReader interface {
+	OpenFinal(context.Context, artifactacquisition.Artifact) (io.ReadCloser, error)
 }

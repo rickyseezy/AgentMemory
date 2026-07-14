@@ -30,7 +30,10 @@ func makeSecureTestDirectory(t *testing.T, path string) {
 	ctx := context.Background()
 	ancestor := path
 	for {
-		if _, _, err := windowssecurity.OpenVerified(ctx, ancestor, true, false, true); err == nil {
+		if directory, _, err := windowssecurity.OpenVerified(ctx, ancestor, true, false, true); err == nil {
+			if closeErr := directory.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
 			break
 		} else if !errors.Is(err, os.ErrNotExist) && filepath.Dir(ancestor) == ancestor {
 			t.Fatal(err)

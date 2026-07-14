@@ -236,6 +236,31 @@ func TestPF001SignedCapacityRoutersExerciseEveryAuthorizedLifecycleBoundary(t *t
 	if _, routeErr := lifecycle.TransferLease(ctx, hostLease, "generation-active"); routeErr != nil {
 		t.Fatalf("host TransferLease()=%v", routeErr)
 	}
+	for _, release := range unconsumedExpandedReleases(t, hostLease, hostReceipt) {
+		settled, routeErr := lifecycle.ReleaseCapacity(ctx, release)
+		if routeErr != nil || settled.Token() != hostReceipt.Token() {
+			t.Fatalf("host unconsumed ReleaseCapacity()=%+v,%v from=%s", settled, routeErr, release.FromState())
+		}
+	}
+	freshLease, freshConsume := expandedDockerAuthorization(t, "host-release-fallback")
+	freshReceipt, _ := artifactacquisition.NewLeaseReceipt(
+		freshLease.ID(), freshLease.Pool(), freshLease.Bytes(), freshConsume.ReceiptToken(), true,
+	)
+	freshAuthority := explicitExpandedAuthority(t, freshConsume)
+	freshExpanded := newExpandedTargetAdapter(
+		t, staticExpandedTargetAuthority{freshAuthority},
+		&memoryExpandedTargetRepository{}, &fakeExpandedTargetEngine{authority: freshAuthority, reservationPresent: true},
+	)
+	freshHost := &recordingCapacityPort{receipt: freshReceipt}
+	freshLifecycle, err := NewCapacityLifecycle(freshHost, reservations, freshExpanded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumePending := pendingExpandedRelease(t, freshLease)
+	settled, routeErr := freshLifecycle.ReleaseCapacity(ctx, consumePending)
+	if routeErr != nil || settled.Token() != freshReceipt.Token() {
+		t.Fatalf("host consume-pending fallback=%+v,%v", settled, routeErr)
+	}
 
 	dockerRunner := newCapacityLeaseRunner(t)
 	dockerReservations, rollback := newCapacityLeaseAdapter(t, dockerRunner, artifactacquisition.LeaseRollback)
@@ -278,6 +303,10 @@ func TestPF001SignedCapacityRoutersExerciseEveryAuthorizedLifecycleBoundary(t *t
 	}
 	if _, err := dockerLifecycle.TransferLease(ctx, foreign, "generation-active"); !errors.Is(err, artifactapp.ErrReservationUnsupported) {
 		t.Fatalf("foreign TransferLease() error=%v", err)
+	}
+	foreignRelease := pendingExpandedRelease(t, foreign)
+	if _, err := dockerLifecycle.ReleaseCapacity(ctx, foreignRelease); !errors.Is(err, artifactapp.ErrReservationUnsupported) {
+		t.Fatalf("foreign ReleaseCapacity() error=%v", err)
 	}
 }
 
@@ -547,6 +576,38 @@ func pendingExpandedRelease(
 	_, _, _ = aggregate.BeginConsume(lease.ID())
 	releases, _ := aggregate.BeginCompensation()
 	return releases[0]
+}
+
+func unconsumedExpandedReleases(
+	t *testing.T,
+	lease artifactacquisition.CapacityLease,
+	receipt artifactacquisition.LeaseReceipt,
+) []artifactacquisition.CapacityReleaseAuthorization {
+	t.Helper()
+	pending, err := artifactacquisition.NewCapacityAggregate(
+		lease.Owner(), lease.PlanDigest(), []artifactacquisition.CapacityLease{lease},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingReleases, err := pending.BeginCompensation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := artifactacquisition.NewCapacityAggregate(
+		lease.Owner(), lease.PlanDigest(), []artifactacquisition.CapacityLease{lease},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reserved.RecordReserved(lease, receipt); err != nil {
+		t.Fatal(err)
+	}
+	reservedReleases, err := reserved.BeginCompensation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []artifactacquisition.CapacityReleaseAuthorization{pendingReleases[0], reservedReleases[0]}
 }
 
 func testArtifactPlan(t *testing.T) artifactacquisition.Plan {

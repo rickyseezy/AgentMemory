@@ -128,3 +128,90 @@ func TestPF001CancellationWaitHonorsContextWithoutBackgroundWorker(t *testing.T)
 		t.Fatalf("Wait() error/elapsed=%v/%s", err, time.Since(started))
 	}
 }
+
+func TestPF001CancellationRepositoryFailsClosedAtEveryPublicBoundary(t *testing.T) {
+	t.Parallel()
+	repository := mustOperationRepository(t, &repositoryJournalStub{})
+	operation, plan := repositoryTestOperation(t, "cancellation-boundaries")
+	foreign, _ := install.BindPlan([]byte("foreign cancellation plan"))
+	validRequest := installapp.CancellationRequest{
+		OperationID: operation.ID(), PlanDigest: plan, ObservedAggregateVersion: operation.AggregateVersion(),
+	}
+	//lint:ignore SA1012 Deliberate absent-context boundary tests.
+	if _, err := repository.Request(nil, validRequest); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) { //nolint:staticcheck
+		t.Fatalf("nil Request context error=%v", err)
+	}
+	if _, err := repository.Request(t.Context(), installapp.CancellationRequest{}); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("empty Request error=%v", err)
+	}
+	if _, err := repository.Request(t.Context(), validRequest); !errors.Is(err, installapp.ErrCancellationIntentNotFound) {
+		t.Fatalf("missing Request error=%v", err)
+	}
+	if err := repository.Save(t.Context(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Observe(t.Context(), operation.ID(), plan); !errors.Is(err, installapp.ErrCancellationIntentNotFound) {
+		t.Fatalf("pristine Observe error=%v", err)
+	}
+	stale := validRequest
+	stale.ObservedAggregateVersion += 10
+	if _, err := repository.Request(t.Context(), stale); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("future Request error=%v", err)
+	}
+	wrongPlan := validRequest
+	wrongPlan.PlanDigest = foreign
+	if _, err := repository.Request(t.Context(), wrongPlan); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("foreign Request error=%v", err)
+	}
+	intent, err := repository.Request(t.Context(), validRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := repository.Request(t.Context(), validRequest)
+	if err != nil || replayed != intent {
+		t.Fatalf("Request replay=(%+v,%v)", replayed, err)
+	}
+	if _, err := repository.Acknowledge(t.Context(), intent, install.StateRunning); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("premature Acknowledge error=%v", err)
+	}
+	if _, err := repository.Acknowledge(t.Context(), intent, install.StateCancelled); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("uncancelled Acknowledge error=%v", err)
+	}
+	invalidIntent := intent
+	invalidIntent.Revision = 0
+	if _, err := repository.Acknowledge(t.Context(), invalidIntent, install.StateCancelled); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("invalid Acknowledge error=%v", err)
+	}
+	//lint:ignore SA1012 Deliberate absent-context boundary tests.
+	if _, err := repository.Observe(nil, operation.ID(), plan); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) { //nolint:staticcheck
+		t.Fatalf("nil Observe context error=%v", err)
+	}
+	//lint:ignore SA1012 Deliberate absent-context boundary tests.
+	if _, err := repository.Wait(nil, operation.ID(), plan); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) { //nolint:staticcheck
+		t.Fatalf("nil Wait context error=%v", err)
+	}
+	if _, err := cancellationIntentFromOperation(nil); !errors.Is(err, installapp.ErrCancellationIntentIntegrity) {
+		t.Fatalf("nil aggregate intent error=%v", err)
+	}
+}
+
+func TestPF001CancellationRepositoryMapsOnlyClosedAuthorityErrors(t *testing.T) {
+	t.Parallel()
+	private := errors.New("private")
+	for _, test := range []struct {
+		input error
+		want  error
+	}{
+		{installapp.ErrCancellationIntentNotFound, installapp.ErrCancellationIntentNotFound},
+		{installapp.ErrCancellationIntentIntegrity, installapp.ErrCancellationIntentIntegrity},
+		{installapp.ErrCancellationIntentConflict, installapp.ErrCancellationIntentConflict},
+		{installapp.ErrOperationNotFound, installapp.ErrCancellationIntentNotFound},
+		{installapp.ErrOperationIntegrity, installapp.ErrCancellationIntentIntegrity},
+		{installapp.ErrOperationConflict, installapp.ErrCancellationIntentConflict},
+		{private, private},
+	} {
+		if observed := mapCancellationRepositoryError(test.input); !errors.Is(observed, test.want) {
+			t.Fatalf("map(%v)=%v want=%v", test.input, observed, test.want)
+		}
+	}
+}

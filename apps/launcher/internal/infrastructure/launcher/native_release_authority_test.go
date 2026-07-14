@@ -1,0 +1,99 @@
+package launcher
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
+)
+
+func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *testing.T) {
+	t.Parallel()
+	root := nativeReleaseAuthorityBundleRoot(t)
+	fixture := nativeReleaseStackFixture(t)
+	authority, err := newNativeReleaseAuthority(t.Context(), nativeReleaseAuthorityDependencies{
+		BundleRoot: func() (string, error) { return root, nil },
+		Trust:      func() (nativeReleaseTrustMaterial, error) { return fixture.Trust, nil },
+		Clock:      fixture.Clock, AntiRollback: fixture.AntiRollback,
+	})
+	if err != nil || authority.templates() == nil || authority.verifier() == nil {
+		t.Fatalf("authority=%#v error=%v", authority, err)
+	}
+	if err := authority.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.Close(t.Context()); err != nil {
+		t.Fatalf("idempotent close error=%v", err)
+	}
+}
+
+func TestPF001NativeReleaseAuthorityFailsClosedBeforePublishingCapability(t *testing.T) {
+	t.Parallel()
+	root := nativeReleaseAuthorityBundleRoot(t)
+	fixture := nativeReleaseStackFixture(t)
+	valid := nativeReleaseAuthorityDependencies{
+		BundleRoot: func() (string, error) { return root, nil },
+		Trust:      func() (nativeReleaseTrustMaterial, error) { return fixture.Trust, nil },
+		Clock:      fixture.Clock, AntiRollback: fixture.AntiRollback,
+	}
+	var nilClock *nativeReleaseClock
+	var nilAnchor *nativeReleasePorts
+	for _, test := range []struct {
+		name   string
+		mutate func(*nativeReleaseAuthorityDependencies)
+		want   error
+	}{
+		{name: "bundle resolver", mutate: func(d *nativeReleaseAuthorityDependencies) { d.BundleRoot = nil }, want: firststartapp.ErrIntegrity},
+		{name: "trust loader", mutate: func(d *nativeReleaseAuthorityDependencies) { d.Trust = nil }, want: firststartapp.ErrIntegrity},
+		{name: "clock", mutate: func(d *nativeReleaseAuthorityDependencies) { d.Clock = nilClock }, want: firststartapp.ErrIntegrity},
+		{name: "anchor", mutate: func(d *nativeReleaseAuthorityDependencies) { d.AntiRollback = nilAnchor }, want: firststartapp.ErrIntegrity},
+		{name: "bundle failure", mutate: func(d *nativeReleaseAuthorityDependencies) {
+			d.BundleRoot = func() (string, error) { return "", errors.New("private path") }
+		}, want: firststartapp.ErrUnavailable},
+		{name: "unsafe bundle", mutate: func(d *nativeReleaseAuthorityDependencies) {
+			d.BundleRoot = func() (string, error) { return "relative", nil }
+		}, want: firststartapp.ErrUnavailable},
+		{name: "trust failure", mutate: func(d *nativeReleaseAuthorityDependencies) {
+			d.Trust = func() (nativeReleaseTrustMaterial, error) {
+				return nativeReleaseTrustMaterial{}, errors.New("private trust")
+			}
+		}, want: firststartapp.ErrIntegrity},
+		{name: "invalid trust", mutate: func(d *nativeReleaseAuthorityDependencies) {
+			d.Trust = func() (nativeReleaseTrustMaterial, error) { return nativeReleaseTrustMaterial{}, nil }
+		}, want: firststartapp.ErrIntegrity},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			test.mutate(&candidate)
+			authority, err := newNativeReleaseAuthority(t.Context(), candidate)
+			if authority != nil || !errors.Is(err, test.want) {
+				t.Fatalf("authority=%#v error=%v want=%v", authority, err, test.want)
+			}
+		})
+	}
+	//lint:ignore SA1012 Deliberate absent-context production boundary.
+	if authority, err := newNativeReleaseAuthority(nil, valid); authority != nil || !errors.Is(err, firststartapp.ErrIntegrity) { //nolint:staticcheck
+		t.Fatalf("nil context authority=%#v error=%v", authority, err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if authority, err := newNativeReleaseAuthority(canceled, valid); authority != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled authority=%#v error=%v", authority, err)
+	}
+}
+
+func nativeReleaseAuthorityBundleRoot(t testing.TB) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "bundle")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}

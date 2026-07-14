@@ -216,10 +216,32 @@ jobs:
         run: go test -race -shuffle=on -count=1 ./apps/launcher/...
 
   mutation-changed:
-    name: Changed launcher mutation gate
+    name: Changed launcher mutation gate (${{ matrix.name }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: commands
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/cmd/'
+          - name: adapters-a-d
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/[a-d]'
+          - name: adapters-e-p
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/[e-p]'
+          - name: adapters-q-z
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/[q-z]'
+          - name: application-a-m
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/application/[a-m]'
+          - name: application-n-z
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/application/[n-z]'
+          - name: domain-a-m
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/[a-m]'
+          - name: domain-n-z
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/[n-z]'
+          - name: composition
+            package_pattern: '^github\.com/rickyseezy/AgentMemory/apps/launcher/internal/(capacityhelper|infrastructure|secretprojector)'
     steps:
       - name: Check out source and mutation base
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -247,7 +269,16 @@ jobs:
           if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
             base="origin/main"
           fi
+          mapfile -t targets < <(
+            go list ./apps/launcher/... |
+              awk -v pattern='${{ matrix.package_pattern }}' '$0 ~ pattern'
+          )
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "No launcher packages matched mutation shard ${{ matrix.name }}" >&2
+            exit 1
+          fi
           # mutago v2.7.7, pinned to the peeled tag commit.
+          status=0
           go run github.com/quality-gates/mutago/v2/cmd/mutago@5e268a05d68c37d3b89a56447b4e80f791f824c2 \
             --noop \
             --coverage \
@@ -258,12 +289,25 @@ jobs:
             --min-msi 80 \
             --min-covered-msi 80 \
             --timeout-coefficient 5 \
-            --workers 2 \
+            --workers 1 \
             --logger-github \
             --logger-summary-json \
             --quiet \
             --no-diffs \
-            ./apps/launcher/...
+            "${targets[@]}" || status=$?
+          if [ -f mutago-summary.json ]; then
+            mv mutago-summary.json "mutago-summary-${{ matrix.name }}.json"
+          fi
+          exit "$status"
+
+      - name: Preserve changed mutation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: changed-mutation-${{ matrix.name }}
+          path: mutago-summary-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 30
 
   mutation-nightly:
     name: Full critical launcher mutation gate

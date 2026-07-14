@@ -227,7 +227,10 @@ jobs:
       - name: Enforce changed critical-code mutation score
         shell: bash
         run: |
-          base="${{ github.event.before }}"
+          # Every branch push is evaluated against the trusted integration
+          # branch, not merely the immediately preceding branch commit. This
+          # prevents a sequence of small pushes from evading the release gate.
+          base="origin/main"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="origin/${{ github.base_ref }}"
           fi

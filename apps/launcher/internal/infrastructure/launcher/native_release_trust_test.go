@@ -145,6 +145,7 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 			Verification:       runtimecatalog.NativeVerificationAppleNotarized,
 			Identity:           "developer-id-application-docker-inc-9bnsxjn65r",
 			SigningKeyIdentity: "apple-developer-id-9bnsxjn65r", PackageIdentity: "com.docker.docker",
+			NativeTrustSHA256: releaseinventory.DigestBytes([]byte("docker native certificate")).Hex(),
 		}},
 		Offline: nativeOfflineTrustDocument{
 			TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]string{"revocation-root": key},

@@ -111,6 +111,7 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 				Verification:       runtimecatalog.NativeVerificationAppleNotarized,
 				Identity:           "developer-id-application-docker-inc-9bnsxjn65r",
 				SigningKeyIdentity: "apple-developer-id-9bnsxjn65r", PackageIdentity: "com.docker.docker",
+				NativeTrustSHA256: releaseinventory.DigestBytes([]byte("docker native certificate")).Hex(),
 			}},
 			Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 				TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]ed25519.PublicKey{"revocations": evidencePublic},

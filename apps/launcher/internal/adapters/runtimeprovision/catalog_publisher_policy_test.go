@@ -20,6 +20,9 @@ func TestRuntimePublisherPolicyVerifierAuthorizesOnlyExactIndependentTuple(t *te
 	if err := verifier.VerifyNativePublisherPolicy(t.Context(), policy); err != nil {
 		t.Fatal(err)
 	}
+	if digest, resolveError := verifier.NativeTrustDigest(policy); resolveError != nil || digest.IsZero() {
+		t.Fatalf("native trust digest=%s error=%v", digest.Hex(), resolveError)
+	}
 	input.Identity = "substituted.publisher"
 	if err := verifier.VerifyNativePublisherPolicy(t.Context(), policy); err != nil {
 		t.Fatalf("verifier aliases input: %v", err)
@@ -55,6 +58,8 @@ func TestRuntimePublisherPolicyVerifierRejectsMalformedDuplicateAndIncompleteTru
 		"blank identity":       {{Verification: valid.Verification, SigningKeyIdentity: valid.SigningKeyIdentity, PackageIdentity: valid.PackageIdentity}},
 		"unsafe key":           {{Verification: valid.Verification, Identity: valid.Identity, SigningKeyIdentity: " key", PackageIdentity: valid.PackageIdentity}},
 		"unsafe package":       {{Verification: valid.Verification, Identity: valid.Identity, SigningKeyIdentity: valid.SigningKeyIdentity, PackageIdentity: "package?"}},
+		"missing native digest": {{Verification: valid.Verification, Identity: valid.Identity,
+			SigningKeyIdentity: valid.SigningKeyIdentity, PackageIdentity: valid.PackageIdentity}},
 	} {
 		verifier, err := NewRuntimePublisherPolicyVerifier(input)
 		if verifier != nil || !errors.Is(err, runtimecatalogapp.ErrNativePublisherInvalid) {
@@ -78,6 +83,12 @@ func TestRuntimePublisherPolicyVerifierFailsClosedOnInvalidInvocation(t *testing
 	if err := absent.VerifyNativePublisherPolicy(t.Context(), policy); !errors.Is(err, runtimecatalogapp.ErrNativePublisherInvalid) {
 		t.Fatalf("nil verifier error=%v", err)
 	}
+	if digest, resolveError := absent.NativeTrustDigest(policy); !errors.Is(resolveError, runtimecatalogapp.ErrNativePublisherInvalid) || !digest.IsZero() {
+		t.Fatalf("nil verifier digest=%s error=%v", digest.Hex(), resolveError)
+	}
+	if digest, resolveError := verifier.NativeTrustDigest(runtimecatalog.PublisherPolicy{}); !errors.Is(resolveError, runtimecatalogapp.ErrNativePublisherInvalid) || !digest.IsZero() {
+		t.Fatalf("zero policy digest=%s error=%v", digest.Hex(), resolveError)
+	}
 	//lint:ignore SA1012 Deliberate nil-context trust-boundary regression fixture.
 	if err := verifier.VerifyNativePublisherPolicy(nil, policy); !errors.Is(err, runtimecatalogapp.ErrNativePublisherInvalid) { //nolint:staticcheck
 		t.Fatalf("nil context error=%v", err)
@@ -96,5 +107,6 @@ func publisherInput(policy runtimecatalog.PublisherPolicy) RuntimePublisherPolic
 	return RuntimePublisherPolicyInput{
 		Verification: policy.Verification(), Identity: policy.Identity(),
 		SigningKeyIdentity: policy.SigningKeyIdentity(), PackageIdentity: policy.PackageIdentity(),
+		NativeTrustSHA256: runtimecatalog.DigestBytes([]byte("native publisher trust anchor")).Hex(),
 	}
 }

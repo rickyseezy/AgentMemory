@@ -18,6 +18,7 @@ type RuntimePublisherPolicyInput struct {
 	Identity           string                            `json:"identity"`
 	SigningKeyIdentity string                            `json:"signingKeyIdentity"`
 	PackageIdentity    string                            `json:"packageIdentity"`
+	NativeTrustSHA256  string                            `json:"nativeTrustSHA256"`
 }
 
 type runtimePublisherIdentity struct {
@@ -30,7 +31,7 @@ type runtimePublisherIdentity struct {
 // RuntimePublisherPolicyVerifier authorizes exact, independently embedded
 // native verification/publisher/key/package tuples.
 type RuntimePublisherPolicyVerifier struct {
-	policies map[runtimePublisherIdentity]struct{}
+	policies map[runtimePublisherIdentity]runtimecatalog.Digest
 }
 
 // NewRuntimePublisherPolicyVerifier validates, de-duplicates, and closes the allowlist.
@@ -40,21 +41,41 @@ func NewRuntimePublisherPolicyVerifier(
 	if len(input) == 0 || len(input) > maximumRuntimePublisherPolicies {
 		return nil, runtimecatalogapp.ErrNativePublisherInvalid
 	}
-	policies := make(map[runtimePublisherIdentity]struct{}, len(input))
+	policies := make(map[runtimePublisherIdentity]runtimecatalog.Digest, len(input))
 	for _, candidate := range input {
 		identity := runtimePublisherIdentity{
 			verification: candidate.Verification, identity: candidate.Identity,
 			signingKeyIdentity: candidate.SigningKeyIdentity, packageIdentity: candidate.PackageIdentity,
 		}
-		if !validRuntimePublisherIdentity(identity) {
+		digest, digestError := runtimecatalog.ParseDigest(candidate.NativeTrustSHA256)
+		if !validRuntimePublisherIdentity(identity) || digestError != nil {
 			return nil, runtimecatalogapp.ErrNativePublisherInvalid
 		}
 		if _, duplicate := policies[identity]; duplicate {
 			return nil, runtimecatalogapp.ErrNativePublisherInvalid
 		}
-		policies[identity] = struct{}{}
+		policies[identity] = digest
 	}
 	return &RuntimePublisherPolicyVerifier{policies: policies}, nil
+}
+
+// NativeTrustDigest resolves the exact independently embedded certificate or
+// publisher-key digest for a previously authorized catalog tuple.
+func (v *RuntimePublisherPolicyVerifier) NativeTrustDigest(
+	policy runtimecatalog.PublisherPolicy,
+) (runtimecatalog.Digest, error) {
+	if v == nil || len(v.policies) == 0 {
+		return runtimecatalog.Digest{}, runtimecatalogapp.ErrNativePublisherInvalid
+	}
+	identity := runtimePublisherIdentity{
+		verification: policy.Verification(), identity: policy.Identity(),
+		signingKeyIdentity: policy.SigningKeyIdentity(), packageIdentity: policy.PackageIdentity(),
+	}
+	digest, authorized := v.policies[identity]
+	if !authorized || digest.IsZero() {
+		return runtimecatalog.Digest{}, runtimecatalogapp.ErrNativePublisherInvalid
+	}
+	return digest, nil
 }
 
 // VerifyNativePublisherPolicy allows only one exact embedded tuple. Actual

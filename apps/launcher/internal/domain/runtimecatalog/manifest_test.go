@@ -263,7 +263,9 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 	decoded, err := DecodeManifestV1(raw)
 	decodedExecution, decodedPresent := decoded.LinuxExecution()
 	if err != nil || !decodedPresent || !decoded.Digest().Equal(linuxManifest.Digest()) ||
-		!decodedExecution.PackageSetDigest().Equal(linuxExecution.PackageSetDigest()) {
+		!decodedExecution.PackageSetDigest().Equal(linuxExecution.PackageSetDigest()) ||
+		len(decodedExecution.Repository().VerificationArtifacts()) != 3 ||
+		!decodedExecution.Repository().MetadataDigest().Equal(linuxExecution.Repository().MetadataDigest()) {
 		t.Fatalf("DecodeManifestV1(Linux) = present:%v error:%v", decodedPresent, err)
 	}
 }

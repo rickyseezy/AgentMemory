@@ -87,14 +87,22 @@ type canonicalLinuxExecution struct {
 }
 
 type canonicalLinuxRepository struct {
-	Component             string          `json:"component"`
-	ConfigurationDigest   string          `json:"configuration_digest"`
-	ID                    string          `json:"id"`
-	MetadataDigest        string          `json:"metadata_digest"`
-	SigningKeyDigest      string          `json:"signing_key_digest"`
-	SigningKeyFingerprint string          `json:"signing_key_fingerprint"`
-	Suite                 string          `json:"suite"`
-	URL                   canonicalSource `json:"url"`
+	Component             string                             `json:"component"`
+	ConfigurationDigest   string                             `json:"configuration_digest"`
+	ID                    string                             `json:"id"`
+	MetadataDigest        string                             `json:"metadata_digest"`
+	SigningKeyDigest      string                             `json:"signing_key_digest"`
+	SigningKeyFingerprint string                             `json:"signing_key_fingerprint"`
+	Suite                 string                             `json:"suite"`
+	URL                   canonicalSource                    `json:"url"`
+	VerificationArtifacts []canonicalLinuxRepositoryArtifact `json:"verification_artifacts"`
+}
+
+type canonicalLinuxRepositoryArtifact struct {
+	DownloadBytes uint64                      `json:"download_bytes"`
+	Role          LinuxRepositoryArtifactRole `json:"role"`
+	SHA256        string                      `json:"sha256"`
+	Source        canonicalSource             `json:"source"`
 }
 
 type canonicalLinuxPackage struct {
@@ -180,6 +188,15 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 				Version: pkg.version,
 			})
 		}
+		verification := make([]canonicalLinuxRepositoryArtifact, 0, len(manifest.linuxExecution.repository.verification))
+		for _, resource := range manifest.linuxExecution.repository.verification {
+			verification = append(verification, canonicalLinuxRepositoryArtifact{
+				DownloadBytes: resource.downloadBytes, Role: resource.role, SHA256: resource.sha256.Hex(),
+				Source: canonicalSource{
+					Scheme: resource.source.scheme, Host: resource.source.host, PathPrefix: resource.source.pathPrefix,
+				},
+			})
+		}
 		policy := manifest.linuxExecution
 		linuxExecution = &canonicalLinuxExecution{
 			AcquisitionSafetyBytes: policy.acquisitionSafetyBytes,
@@ -194,7 +211,8 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 				ID: policy.repository.id, MetadataDigest: policy.repository.metadataDigest.Hex(),
 				SigningKeyDigest:      policy.repository.signingKeyDigest.Hex(),
 				SigningKeyFingerprint: policy.repository.signingKeyFingerprint, Suite: policy.repository.suite,
-				URL: canonicalSource{Scheme: policy.repository.url.scheme, Host: policy.repository.url.host, PathPrefix: policy.repository.url.pathPrefix},
+				URL:                   canonicalSource{Scheme: policy.repository.url.scheme, Host: policy.repository.url.host, PathPrefix: policy.repository.url.pathPrefix},
+				VerificationArtifacts: verification,
 			},
 			RollbackHeadroomBytes: policy.rollbackHeadroomBytes,
 			RootlessToolDigest:    policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,

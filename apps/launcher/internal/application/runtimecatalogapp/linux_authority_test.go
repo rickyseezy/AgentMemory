@@ -5,6 +5,7 @@ import (
 	"time"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
@@ -45,8 +46,11 @@ func TestVerifiedCatalogProjectsLinuxPackagesIntoHardenedCASPlan(t *testing.T) {
 		t.Fatalf("LinuxArtifactPlan() error = %v", err)
 	}
 	artifacts := plan.Artifacts()
-	if len(artifacts) != 7 || artifacts[0].ID() != "containerd.io" ||
-		artifacts[0].Sources()[0] != "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io.deb" ||
+	if len(artifacts) != 10 || artifacts[0].ID() != "repo-signing_key" ||
+		!plan.Digest().Equal(releaseinventory.Digest(catalog.Manifest().Digest())) ||
+		artifacts[0].Sources()[0] != "https://download.docker.com/linux/ubuntu/gpg" ||
+		artifacts[3].ID() != "containerd.io" ||
+		artifacts[3].Sources()[0] != "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io.deb" ||
 		len(artifacts[0].Chunks()) != 1 || artifacts[0].Chunks()[0].Size() != artifacts[0].Size() ||
 		plan.Totals().DownloadBytes() != catalog.Manifest().Artifact().DownloadBytes() ||
 		plan.Totals().ExpandedBytes() != 0 ||
@@ -191,6 +195,7 @@ func linuxHostBinding(t testing.TB, version string) LinuxHostBinding {
 func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 	t.Helper()
 	packages := linuxCatalogPackages()
+	verification := linuxCatalogRepositoryArtifacts()
 	capabilities := []runtimecatalog.CapabilityProbe{
 		runtimecatalog.CapabilityBindReadOnly, runtimecatalog.CapabilityComposeVersion,
 		runtimecatalog.CapabilityEngineAPI, runtimecatalog.CapabilityLinuxContainers,
@@ -204,6 +209,9 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 	for _, pkg := range packages {
 		downloadBytes += pkg.DownloadBytes
 		packageIDs = append(packageIDs, pkg.Name)
+	}
+	for _, resource := range verification {
+		downloadBytes += resource.DownloadBytes
 	}
 	input := runtimecatalog.ManifestInput{
 		SchemaVersion: runtimecatalog.SupportedSchemaVersion, CatalogID: "docker-engine-ubuntu-noble-amd64",
@@ -231,7 +239,7 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 		Artifact: runtimecatalog.ArtifactPolicyInput{
 			DownloadBytes: downloadBytes, ExpandedBytes: downloadBytes + 200_000_000,
 			ReserveBytes: downloadBytes + 400_000_000, SHA256: packageSetDigest,
-			Sources:       []runtimecatalog.OfficialSourceInput{{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/dists/noble/pool/stable/amd64/"}},
+			Sources:       []runtimecatalog.OfficialSourceInput{{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/"}},
 			ProxyMode:     runtimecatalog.ProxyModeSystem,
 			OfflinePolicy: runtimecatalog.OfflinePolicyUserSelectedOfficial,
 			Publisher: runtimecatalog.PublisherPolicyInput{
@@ -255,9 +263,10 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 			Repository: runtimecatalog.LinuxRepositoryInput{
 				ID: "docker-stable", URL: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/"},
 				Suite: "noble", Component: "stable", SigningKeyFingerprint: "9DC858229FC7DD38854AE2D88D81803C0EBFCD88",
-				SigningKeyDigest:    runtimecatalog.DigestBytes([]byte("key")),
-				ConfigurationDigest: runtimecatalog.DigestBytes([]byte("configuration")),
-				MetadataDigest:      runtimecatalog.DigestBytes([]byte("metadata")),
+				SigningKeyDigest:      verification[0].SHA256,
+				ConfigurationDigest:   runtimecatalog.DigestBytes([]byte("configuration")),
+				MetadataDigest:        runtimecatalog.LinuxRepositoryMetadataDigest(verification),
+				VerificationArtifacts: verification,
 			},
 			Packages: packages, PackageSetDigest: packageSetDigest, SubordinateIDCount: 65536,
 			RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
@@ -288,6 +297,26 @@ func linuxManifest(t testing.TB) runtimecatalog.Manifest {
 		t.Fatalf("NewManifest() error = %v", err)
 	}
 	return manifest
+}
+
+func linuxCatalogRepositoryArtifacts() []runtimecatalog.LinuxRepositoryArtifactInput {
+	return []runtimecatalog.LinuxRepositoryArtifactInput{
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactSigningKey, DownloadBytes: 4_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("key")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/gpg"},
+		},
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactSignedMetadata, DownloadBytes: 50_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("InRelease")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/dists/noble/InRelease"},
+		},
+		{
+			Role: runtimecatalog.LinuxRepositoryArtifactPackageIndex, DownloadBytes: 200_000,
+			SHA256: runtimecatalog.DigestBytes([]byte("Packages")),
+			Source: runtimecatalog.OfficialSourceInput{Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/dists/noble/stable/binary-amd64/Packages.gz"},
+		},
+	}
 }
 
 func linuxCatalogPackages() []runtimecatalog.LinuxPackageInput {

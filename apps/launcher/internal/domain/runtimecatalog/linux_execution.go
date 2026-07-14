@@ -37,6 +37,48 @@ func (p LinuxPackagePurpose) valid() bool {
 	return p == LinuxPackagePurposePrerequisite || p == LinuxPackagePurposeRuntime
 }
 
+// LinuxRepositoryArtifactRole identifies one exact native trust-chain input.
+type LinuxRepositoryArtifactRole string
+
+const (
+	// LinuxRepositoryArtifactSigningKey identifies the pinned repository signing key.
+	LinuxRepositoryArtifactSigningKey LinuxRepositoryArtifactRole = "signing_key"
+	// LinuxRepositoryArtifactSignedMetadata identifies inline- or detached-signed repository metadata.
+	LinuxRepositoryArtifactSignedMetadata LinuxRepositoryArtifactRole = "signed_metadata"
+	// LinuxRepositoryArtifactMetadataSignature identifies a detached repository-metadata signature.
+	LinuxRepositoryArtifactMetadataSignature LinuxRepositoryArtifactRole = "metadata_signature"
+	// LinuxRepositoryArtifactPackageIndex identifies the package index authenticated by repository metadata.
+	LinuxRepositoryArtifactPackageIndex LinuxRepositoryArtifactRole = "package_index"
+)
+
+// LinuxRepositoryArtifactInput is one exact official trust-chain resource.
+type LinuxRepositoryArtifactInput struct {
+	Role          LinuxRepositoryArtifactRole
+	DownloadBytes uint64
+	SHA256        Digest
+	Source        OfficialSourceInput
+}
+
+// LinuxRepositoryArtifact is an immutable retained trust-chain resource.
+type LinuxRepositoryArtifact struct {
+	role          LinuxRepositoryArtifactRole
+	downloadBytes uint64
+	sha256        Digest
+	source        SourceLocation
+}
+
+// Role returns the resource's fixed trust-chain role.
+func (a LinuxRepositoryArtifact) Role() LinuxRepositoryArtifactRole { return a.role }
+
+// DownloadBytes returns the exact retained resource size.
+func (a LinuxRepositoryArtifact) DownloadBytes() uint64 { return a.downloadBytes }
+
+// SHA256 returns the signed expected resource digest.
+func (a LinuxRepositoryArtifact) SHA256() Digest { return a.sha256 }
+
+// Source returns the exact official resource location.
+func (a LinuxRepositoryArtifact) Source() SourceLocation { return a.source }
+
 // LinuxRepositoryInput binds the exact official repository state consumed by
 // the unprivileged acquisition adapter and later installed by the helper.
 type LinuxRepositoryInput struct {
@@ -48,6 +90,7 @@ type LinuxRepositoryInput struct {
 	SigningKeyDigest      Digest
 	ConfigurationDigest   Digest
 	MetadataDigest        Digest
+	VerificationArtifacts []LinuxRepositoryArtifactInput
 }
 
 // LinuxRepository is immutable signed repository authority.
@@ -60,9 +103,14 @@ type LinuxRepository struct {
 	signingKeyDigest      Digest
 	configurationDigest   Digest
 	metadataDigest        Digest
+	verification          []LinuxRepositoryArtifact
 }
 
-func newLinuxRepository(input LinuxRepositoryInput, codename string) (LinuxRepository, error) {
+func newLinuxRepository(
+	input LinuxRepositoryInput,
+	codename string,
+	manager LinuxPackageManager,
+) (LinuxRepository, error) {
 	url, err := NewSourceLocation(input.URL)
 	if err != nil || !strings.HasSuffix(input.URL.PathPrefix, "/") || !validIdentifier(input.ID) ||
 		!validIdentifier(input.Suite) || input.Suite != codename || input.Component != "stable" ||
@@ -70,11 +118,18 @@ func newLinuxRepository(input LinuxRepositoryInput, codename string) (LinuxRepos
 		input.ConfigurationDigest.IsZero() || input.MetadataDigest.IsZero() {
 		return LinuxRepository{}, ErrManifestIntegrity
 	}
+	verification, err := newLinuxRepositoryArtifacts(
+		input.VerificationArtifacts, manager, url, codename, input.Component,
+	)
+	if err != nil || len(verification) == 0 || !verification[0].sha256.Equal(input.SigningKeyDigest) ||
+		!LinuxRepositoryMetadataDigest(input.VerificationArtifacts).Equal(input.MetadataDigest) {
+		return LinuxRepository{}, ErrManifestIntegrity
+	}
 	return LinuxRepository{
 		id: input.ID, url: url, suite: input.Suite, component: input.Component,
 		signingKeyFingerprint: input.SigningKeyFingerprint,
 		signingKeyDigest:      input.SigningKeyDigest, configurationDigest: input.ConfigurationDigest,
-		metadataDigest: input.MetadataDigest,
+		metadataDigest: input.MetadataDigest, verification: verification,
 	}, nil
 }
 
@@ -101,6 +156,133 @@ func (r LinuxRepository) ConfigurationDigest() Digest { return r.configurationDi
 
 // MetadataDigest returns the pinned authenticated metadata-set digest.
 func (r LinuxRepository) MetadataDigest() Digest { return r.metadataDigest }
+
+// VerificationArtifacts returns the fixed-order native trust-chain inputs.
+func (r LinuxRepository) VerificationArtifacts() []LinuxRepositoryArtifact {
+	return append([]LinuxRepositoryArtifact(nil), r.verification...)
+}
+
+func newLinuxRepositoryArtifacts(
+	inputs []LinuxRepositoryArtifactInput,
+	manager LinuxPackageManager,
+	repository SourceLocation,
+	codename string,
+	component string,
+) ([]LinuxRepositoryArtifact, error) {
+	expected := []LinuxRepositoryArtifactRole{
+		LinuxRepositoryArtifactSigningKey,
+		LinuxRepositoryArtifactSignedMetadata,
+		LinuxRepositoryArtifactPackageIndex,
+	}
+	if manager == LinuxPackageManagerDNF {
+		expected = []LinuxRepositoryArtifactRole{
+			LinuxRepositoryArtifactSigningKey,
+			LinuxRepositoryArtifactSignedMetadata,
+			LinuxRepositoryArtifactMetadataSignature,
+			LinuxRepositoryArtifactPackageIndex,
+		}
+	}
+	if len(inputs) != len(expected) {
+		return nil, ErrManifestIntegrity
+	}
+	result := make([]LinuxRepositoryArtifact, 0, len(inputs))
+	for index, input := range inputs {
+		source, err := NewSourceLocation(input.Source)
+		if err != nil || input.Role != expected[index] || input.DownloadBytes == 0 ||
+			input.DownloadBytes > maximumLinuxRepositoryArtifactBytes(input.Role) || input.SHA256.IsZero() ||
+			source.Scheme() != repository.Scheme() || source.Host() != repository.Host() ||
+			!linuxRepositoryArtifactPathValid(manager, input.Role, source.PathPrefix(), repository.PathPrefix(), codename, component) {
+			return nil, ErrManifestIntegrity
+		}
+		result = append(result, LinuxRepositoryArtifact{
+			role: input.Role, downloadBytes: input.DownloadBytes, sha256: input.SHA256, source: source,
+		})
+	}
+	if manager == LinuxPackageManagerDNF &&
+		result[2].source.PathPrefix() != result[1].source.PathPrefix()+".asc" {
+		return nil, ErrManifestIntegrity
+	}
+	return result, nil
+}
+
+func maximumLinuxRepositoryArtifactBytes(role LinuxRepositoryArtifactRole) uint64 {
+	if role == LinuxRepositoryArtifactSigningKey || role == LinuxRepositoryArtifactMetadataSignature {
+		return 1 << 20
+	}
+	return 64 << 20
+}
+
+func linuxRepositoryArtifactPathValid(
+	manager LinuxPackageManager,
+	role LinuxRepositoryArtifactRole,
+	path string,
+	repositoryPath string,
+	codename string,
+	component string,
+) bool {
+	base := strings.TrimSuffix(repositoryPath, "/")
+	if role == LinuxRepositoryArtifactSigningKey {
+		return path == base+"/gpg"
+	}
+	if manager == LinuxPackageManagerAPT {
+		switch role {
+		case LinuxRepositoryArtifactSignedMetadata:
+			return path == base+"/dists/"+codename+"/InRelease"
+		case LinuxRepositoryArtifactPackageIndex:
+			prefix := base + "/dists/" + codename + "/" + component + "/binary-"
+			return strings.HasPrefix(path, prefix) &&
+				(strings.HasSuffix(path, "/Packages") || strings.HasSuffix(path, "/Packages.gz") ||
+					strings.HasSuffix(path, "/Packages.xz"))
+		case LinuxRepositoryArtifactSigningKey, LinuxRepositoryArtifactMetadataSignature:
+			return false
+		}
+	}
+	if manager != LinuxPackageManagerDNF || !strings.HasPrefix(path, base+"/") {
+		return false
+	}
+	switch role {
+	case LinuxRepositoryArtifactSignedMetadata:
+		return strings.HasSuffix(path, "/"+component+"/repodata/repomd.xml")
+	case LinuxRepositoryArtifactMetadataSignature:
+		return strings.HasSuffix(path, "/"+component+"/repodata/repomd.xml.asc")
+	case LinuxRepositoryArtifactPackageIndex:
+		return strings.Contains(path, "/"+component+"/repodata/") && strings.HasSuffix(path, "-primary.xml.gz")
+	case LinuxRepositoryArtifactSigningKey:
+		return false
+	}
+	return false
+}
+
+// LinuxRepositoryMetadataDigest binds every native metadata/signature/index
+// artifact in fixed verification order. The signing key has its own digest.
+func LinuxRepositoryMetadataDigest(inputs []LinuxRepositoryArtifactInput) Digest {
+	if len(inputs) < 3 || inputs[0].Role != LinuxRepositoryArtifactSigningKey {
+		return Digest{}
+	}
+	type canonicalRepositoryArtifact struct {
+		DownloadBytes uint64                      `json:"download_bytes"`
+		Role          LinuxRepositoryArtifactRole `json:"role"`
+		SHA256        string                      `json:"sha256"`
+		Source        canonicalSource             `json:"source"`
+	}
+	document := make([]canonicalRepositoryArtifact, 0, len(inputs)-1)
+	for _, input := range inputs[1:] {
+		if input.DownloadBytes == 0 || input.SHA256.IsZero() {
+			return Digest{}
+		}
+		document = append(document, canonicalRepositoryArtifact{
+			DownloadBytes: input.DownloadBytes, Role: input.Role, SHA256: input.SHA256.Hex(),
+			Source: canonicalSource{
+				Scheme: input.Source.Scheme, Host: input.Source.Host, PathPrefix: input.Source.PathPrefix,
+			},
+		})
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return Digest{}
+	}
+	return DigestBytes(encoded)
+}
 
 // LinuxPackageInput is one exact retained native package. Source is a complete
 // official file location, never a mutable repository query or package name.
@@ -211,16 +393,21 @@ func newLinuxExecutionPolicy(
 		!validLinuxProbeImage(input.ProbeImage, input.ProbeImageDigest) {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
-	repository, err := newLinuxRepository(input.Repository, input.Codename)
-	if err != nil || !repositoryMatchesManager(repository, input.PackageManager) {
+	repository, err := newLinuxRepository(input.Repository, input.Codename, input.PackageManager)
+	if err != nil || !repositoryMatchesManager(repository, input.PackageManager) ||
+		!repositoryArtifactsAuthorized(repository.verification, artifact) {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
 	packages, err := newLinuxPackages(input.PackageManager, input.Packages, artifact)
 	reserved, reserveOverflow := checkedLinuxBytes(
 		artifact.downloadBytes, input.RollbackHeadroomBytes, input.AcquisitionSafetyBytes,
 	)
+	packageAndTrustBytes, packageAndTrustOverflow := checkedLinuxBytes(
+		packageDownloadBytes(packages), repositoryArtifactDownloadBytes(repository.verification),
+	)
 	if err != nil || !LinuxPackageSetDigest(input.Packages).Equal(input.PackageSetDigest) ||
-		!input.PackageSetDigest.Equal(artifact.sha256) || packageDownloadBytes(packages) != artifact.downloadBytes ||
+		!input.PackageSetDigest.Equal(artifact.sha256) || packageAndTrustOverflow ||
+		packageAndTrustBytes != artifact.downloadBytes ||
 		reserveOverflow || reserved != artifact.reserveBytes {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
@@ -239,6 +426,21 @@ func newLinuxExecutionPolicy(
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest,
 	}, nil
+}
+
+func repositoryArtifactsAuthorized(
+	resources []LinuxRepositoryArtifact,
+	artifact ArtifactPolicy,
+) bool {
+	if len(resources) == 0 {
+		return false
+	}
+	for _, resource := range resources {
+		if !artifactAuthorizesSource(artifact, resource.source) {
+			return false
+		}
+	}
+	return true
 }
 
 func checkedLinuxBytes(values ...uint64) (uint64, bool) {
@@ -408,14 +610,31 @@ func packageDownloadBytes(packages []LinuxPackage) uint64 {
 	return total
 }
 
+func repositoryArtifactDownloadBytes(artifacts []LinuxRepositoryArtifact) uint64 {
+	var total uint64
+	for _, artifact := range artifacts {
+		if total > maximumSafeJSONInteger-artifact.downloadBytes {
+			return maximumSafeJSONInteger
+		}
+		total += artifact.downloadBytes
+	}
+	return total
+}
+
 func linuxExecutionInputZero(input LinuxExecutionPolicyInput) bool {
 	return input.PackageManager == "" && input.PackageManagerVersion == "" && input.Codename == "" &&
-		input.MinimumKernel == "" && input.MinimumAvailableMemory == 0 && input.Repository == (LinuxRepositoryInput{}) &&
+		input.MinimumKernel == "" && input.MinimumAvailableMemory == 0 && linuxRepositoryInputZero(input.Repository) &&
 		len(input.Packages) == 0 && input.PackageSetDigest.IsZero() && input.SubordinateIDCount == 0 &&
 		input.RollbackHeadroomBytes == 0 && input.AcquisitionSafetyBytes == 0 &&
 		!input.SELinuxEnforcingSupported && input.ServiceID == "" && input.ServiceUnitDigest.IsZero() &&
 		input.RootlessToolPath == "" && input.RootlessToolDigest.IsZero() && input.ProbeImage == "" &&
 		input.ProbeImageDigest.IsZero() && input.ProbeContractVersion == "" && input.CapabilityPolicyDigest.IsZero()
+}
+
+func linuxRepositoryInputZero(input LinuxRepositoryInput) bool {
+	return input.ID == "" && input.URL == (OfficialSourceInput{}) && input.Suite == "" && input.Component == "" &&
+		input.SigningKeyFingerprint == "" && input.SigningKeyDigest.IsZero() && input.ConfigurationDigest.IsZero() &&
+		input.MetadataDigest.IsZero() && len(input.VerificationArtifacts) == 0
 }
 
 func linuxExecutionValid(policy *LinuxExecutionPolicy, platform PlatformPolicy, artifact ArtifactPolicy) bool {
@@ -581,6 +800,15 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 			Source:              OfficialSourceInput{Scheme: pkg.source.scheme, Host: pkg.source.host, PathPrefix: pkg.source.pathPrefix},
 		})
 	}
+	verification := make([]LinuxRepositoryArtifactInput, 0, len(p.repository.verification))
+	for _, resource := range p.repository.verification {
+		verification = append(verification, LinuxRepositoryArtifactInput{
+			Role: resource.role, DownloadBytes: resource.downloadBytes, SHA256: resource.sha256,
+			Source: OfficialSourceInput{
+				Scheme: resource.source.scheme, Host: resource.source.host, PathPrefix: resource.source.pathPrefix,
+			},
+		})
+	}
 	validated, err := newLinuxExecutionPolicy(LinuxExecutionPolicyInput{
 		PackageManager: p.packageManager, PackageManagerVersion: p.packageManagerVersion,
 		Codename: p.codename, MinimumKernel: p.minimumKernel,
@@ -593,6 +821,7 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 			SigningKeyDigest:      p.repository.signingKeyDigest,
 			ConfigurationDigest:   p.repository.configurationDigest,
 			MetadataDigest:        p.repository.metadataDigest,
+			VerificationArtifacts: verification,
 		},
 		Packages: inputs, PackageSetDigest: p.packageSetDigest,
 		RollbackHeadroomBytes:     p.rollbackHeadroomBytes,

@@ -126,7 +126,7 @@ func hostileNilContext() context.Context { return nil }
 
 func adapterLinuxArtifactPlan(t *testing.T, authority runtimeport.LinuxAuthority) artifactacquisition.Plan {
 	t.Helper()
-	return adapterLinuxArtifactPlanWithDigest(t, releaseinventory.Digest(authority.ArtifactDigest()))
+	return adapterLinuxArtifactPlanWithDigest(t, releaseinventory.Digest(authority.CatalogDigest()))
 }
 
 func adapterLinuxArtifactPlanWithDigest(t *testing.T, planDigest releaseinventory.Digest) artifactacquisition.Plan {

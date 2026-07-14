@@ -82,7 +82,7 @@ func (a *CatalogLinuxArtifactAcquirer) AcquireLinuxArtifacts(
 		return runtimeport.LinuxArtifactEvidence{}, err
 	}
 	plan, err := a.projector.ProjectLinuxArtifactPlan(authority)
-	if err != nil || !plan.Digest().Equal(releaseinventory.Digest(authority.ArtifactDigest())) {
+	if err != nil || !plan.Digest().Equal(releaseinventory.Digest(authority.CatalogDigest())) {
 		return runtimeport.LinuxArtifactEvidence{}, runtimeport.ErrLinuxArtifactIntegrity
 	}
 	command := artifactapp.Command{OperationID: linuxArtifactOperationID(authority), Plan: plan}

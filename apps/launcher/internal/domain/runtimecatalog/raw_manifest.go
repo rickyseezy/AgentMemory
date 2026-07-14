@@ -184,6 +184,19 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
 	}
+	verificationArtifacts := make([]LinuxRepositoryArtifactInput, 0, len(document.Repository.VerificationArtifacts))
+	for _, resource := range document.Repository.VerificationArtifacts {
+		resourceDigest, parseError := ParseDigest(resource.SHA256)
+		if parseError != nil {
+			return LinuxExecutionPolicyInput{}, parseError
+		}
+		verificationArtifacts = append(verificationArtifacts, LinuxRepositoryArtifactInput{
+			Role: resource.Role, DownloadBytes: resource.DownloadBytes, SHA256: resourceDigest,
+			Source: OfficialSourceInput{
+				Scheme: resource.Source.Scheme, Host: resource.Source.Host, PathPrefix: resource.Source.PathPrefix,
+			},
+		})
+	}
 	packages := make([]LinuxPackageInput, 0, len(document.Packages))
 	for _, pkg := range document.Packages {
 		sha256Digest, parseError := ParseDigest(pkg.SHA256)
@@ -211,7 +224,7 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 			Suite: document.Repository.Suite, Component: document.Repository.Component,
 			SigningKeyFingerprint: document.Repository.SigningKeyFingerprint,
 			SigningKeyDigest:      signingKeyDigest, ConfigurationDigest: configurationDigest,
-			MetadataDigest: metadataDigest,
+			MetadataDigest: metadataDigest, VerificationArtifacts: verificationArtifacts,
 		},
 		Packages: packages, PackageSetDigest: packageSetDigest,
 		RollbackHeadroomBytes:     document.RollbackHeadroomBytes,

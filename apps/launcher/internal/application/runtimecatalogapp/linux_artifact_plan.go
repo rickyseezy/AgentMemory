@@ -25,7 +25,16 @@ func (c VerifiedCatalog) LinuxArtifactPlan(
 		!linuxAuthorityPackageSetMatches(execution.Packages(), authority.Packages()) {
 		return artifactacquisition.Plan{}, errors.New("verified Linux artifact authority is invalid")
 	}
-	artifacts := make([]artifactacquisition.ArtifactInput, 0, len(execution.Packages()))
+	verification := execution.Repository().VerificationArtifacts()
+	artifacts := make([]artifactacquisition.ArtifactInput, 0, len(verification)+len(execution.Packages()))
+	for _, resource := range verification {
+		digest := releaseinventory.Digest(resource.SHA256())
+		artifacts = append(artifacts, artifactacquisition.ArtifactInput{
+			ID: "repo-" + string(resource.Role()), Digest: digest, Size: resource.DownloadBytes(),
+			Sources: []string{catalogSourceURL(resource.Source())},
+			Chunks:  []artifactacquisition.ChunkInput{{Offset: 0, Size: resource.DownloadBytes(), Digest: digest}},
+		})
+	}
 	for _, pkg := range execution.Packages() {
 		digest := releaseinventory.Digest(pkg.SHA256())
 		artifacts = append(artifacts, artifactacquisition.ArtifactInput{
@@ -42,7 +51,10 @@ func (c VerifiedCatalog) LinuxArtifactPlan(
 		return artifactacquisition.Plan{}, errors.New("verified Linux artifact capacity is invalid")
 	}
 	return artifactacquisition.NewPlan(artifactacquisition.PlanInput{
-		PlanDigest: releaseinventory.Digest(execution.PackageSetDigest()),
+		// The signed catalog digest binds the exact packages and every retained
+		// repository trust-chain input. The package-set digest alone would permit
+		// distinct metadata snapshots to share an acquisition identity.
+		PlanDigest: releaseinventory.Digest(c.manifest.Digest()),
 		Artifacts:  artifacts,
 		Totals: artifactacquisition.TotalsInput{
 			DownloadBytes: download, ExpandedBytes: 0,

@@ -236,7 +236,8 @@ func NewDesktopAuthority(input DesktopAuthorityInput) (DesktopAuthority, error) 
 		!safeVersion(input.RuntimeVersion) || !safeVersion(input.EngineVersion) || !safeVersion(input.ComposeVersion) ||
 		input.ArtifactBytes == 0 || input.ArtifactBytes > 1<<53-1 ||
 		!validDesktopPaths(input) || !validDesktopSource(input.ArtifactSourceURL, input.Platform, input.Architecture) ||
-		!validDesktopArguments(input.Platform, input.UserName, input.InstallerArguments) || !validDesktopProbe(input) {
+		!validDesktopArguments(input.Platform, input.UserName, input.InstallerArguments) || !validDesktopProbe(input) ||
+		input.VendorUIMandatory {
 		return DesktopAuthority{}, ErrDesktopAuthorityIntegrity
 	}
 	publisher, err := newDesktopPublisher(input.Publisher, input.Platform)
@@ -314,12 +315,12 @@ func validDesktopPaths(input DesktopAuthorityInput) bool {
 			input.DockerCLIPath == "/Applications/Docker.app/Contents/Resources/bin/docker" &&
 			input.ComposePluginPath == "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose"
 	case runtimeinstall.PlatformWindows:
+		root := input.HomeDirectory + `\AppData\Local\Programs\DockerDesktop`
 		return safeWindowsAbsolute(input.HomeDirectory) && safeWindowsAbsolute(input.ArtifactPath) &&
 			input.Endpoint == "npipe:////./pipe/docker_engine" &&
-			input.ApplicationPath == `C:\Program Files\Docker\Docker` &&
-			input.ApplicationExecutable == `C:\Program Files\Docker\Docker\Docker Desktop.exe` &&
-			input.DockerCLIPath == `C:\Program Files\Docker\Docker\resources\bin\docker.exe` &&
-			input.ComposePluginPath == `C:\Program Files\Docker\Docker\resources\cli-plugins\docker-compose.exe`
+			input.ApplicationPath == root && input.ApplicationExecutable == root+`\Docker Desktop.exe` &&
+			input.DockerCLIPath == root+`\resources\bin\docker.exe` &&
+			input.ComposePluginPath == root+`\resources\cli-plugins\docker-compose.exe`
 	case runtimeinstall.PlatformUnknown, runtimeinstall.PlatformLinux:
 		return false
 	}
@@ -365,7 +366,7 @@ func validDesktopArguments(platform runtimeinstall.Platform, userName string, ar
 		wanted := []string{"--accept-license", "--user=" + userName}
 		return equalStrings(arguments, wanted)
 	}
-	wanted := []string{"install", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
+	wanted := []string{"install", "--user", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
 	return equalStrings(arguments, wanted)
 }
 
@@ -467,7 +468,8 @@ func (a DesktopAuthority) Valid() bool {
 // ValidFor proves this authority belongs to the decoded canonical plan.
 func (a DesktopAuthority) ValidFor(plan runtimeinstall.Plan) bool {
 	return a.Valid() && len(plan.CanonicalBytes()) != 0 && plan.Digest() == a.planDigest &&
-		plan.CatalogDigest() == a.catalogDigest
+		plan.CatalogDigest() == a.catalogDigest &&
+		plan.TermsPresentation() == runtimeinstall.TermsPresentationAgentMemory
 }
 
 // Digest returns the complete immutable authority digest.

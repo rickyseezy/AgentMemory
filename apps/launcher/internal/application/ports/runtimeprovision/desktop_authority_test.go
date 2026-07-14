@@ -100,7 +100,7 @@ func TestDesktopAuthorityRejectsEveryAmbientOrBroadenedExecutionField(t *testing
 	}
 }
 
-func TestWindowsDesktopAuthorityRejectsPerUserARMAndDockerUsersPolicies(t *testing.T) {
+func TestWindowsDesktopAuthorityRejectsMissingPerUserARMAndDockerUsersPolicies(t *testing.T) {
 	t.Parallel()
 	plan := desktopTestPlan(t, runtimeinstall.PlatformWindows, runtimeinstall.ArchitectureAMD64)
 	valid := desktopAuthorityInput(plan, runtimeinstall.PlatformWindows)
@@ -109,7 +109,9 @@ func TestWindowsDesktopAuthorityRejectsPerUserARMAndDockerUsersPolicies(t *testi
 		mutate func(*DesktopAuthorityInput)
 	}{
 		{name: "ARM preview", mutate: func(v *DesktopAuthorityInput) { v.Architecture = runtimeinstall.ArchitectureARM64 }},
-		{name: "per-user mode", mutate: func(v *DesktopAuthorityInput) { v.InstallerArguments = append(v.InstallerArguments, "--user") }},
+		{name: "missing per-user mode", mutate: func(v *DesktopAuthorityInput) {
+			v.InstallerArguments = append(v.InstallerArguments[:1], v.InstallerArguments[2:]...)
+		}},
 		{name: "always-run service", mutate: func(v *DesktopAuthorityInput) {
 			v.InstallerArguments = append(v.InstallerArguments, "--always-run-service")
 		}},
@@ -150,7 +152,7 @@ func desktopTestPlan(
 		runtimeinstall.RuntimeTermsInput{
 			ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
 			URL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
-			Digest: runtimeinstall.Sum([]byte("docker-terms")), Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+			Digest: runtimeinstall.Sum([]byte("docker-terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
 		}, 500<<20, 2<<30,
 	)
 	if err != nil {
@@ -194,7 +196,7 @@ func desktopAuthorityInput(plan runtimeinstall.Plan, platform runtimeinstall.Pla
 		ProbeImage:             "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + runtimeinstall.Sum([]byte("desktop-probe-image")).String(),
 		ProbeImageDigest:       runtimeinstall.Sum([]byte("desktop-probe-image")),
 		ProbeContractVersion:   "1",
-		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("desktop-capability-policy")), VendorUIMandatory: true,
+		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("desktop-capability-policy")), VendorUIMandatory: false,
 	}
 	if platform == runtimeinstall.PlatformWindows {
 		input.Architecture = runtimeinstall.ArchitectureAMD64
@@ -214,11 +216,11 @@ func desktopAuthorityInput(plan runtimeinstall.Plan, platform runtimeinstall.Pla
 			SigningKeyIdentity: "docker-authenticode-2026", PackageIdentity: "com.docker.docker",
 			CertificateSHA256: runtimeinstall.Sum([]byte("docker-windows-certificate")),
 		}
-		input.InstallerArguments = []string{"install", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
-		input.ApplicationPath = `C:\Program Files\Docker\Docker`
-		input.ApplicationExecutable = `C:\Program Files\Docker\Docker\Docker Desktop.exe`
-		input.DockerCLIPath = `C:\Program Files\Docker\Docker\resources\bin\docker.exe`
-		input.ComposePluginPath = `C:\Program Files\Docker\Docker\resources\cli-plugins\docker-compose.exe`
+		input.InstallerArguments = []string{"install", "--user", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
+		input.ApplicationPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop`
+		input.ApplicationExecutable = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe`
+		input.DockerCLIPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe`
+		input.ComposePluginPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\cli-plugins\docker-compose.exe`
 		input.RebootExitCodes = []uint32{1641, 3010}
 		input.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 		input.MinimumWSLVersion = "2.1.5"

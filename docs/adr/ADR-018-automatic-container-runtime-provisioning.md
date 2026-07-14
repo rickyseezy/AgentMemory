@@ -55,7 +55,7 @@ ADR-016. Each closed platform tuple declares:
 - closed installer executable and typed argument template, permitted prerequisite operations, known
   reboot exit codes, service identity, and capability probes;
 - terms identifier/version/URL/digest, license presentation behavior, redistribution permission, and
-  whether a vendor UI remains mandatory;
+  the exact non-interactive acceptance policy;
 - required disk, expanded size, proxy capability, rollback limits, and ownership changes.
 
 No `latest`, vendor convenience script, PATH discovery, unsigned mirror, arbitrary URL, mutable package
@@ -138,21 +138,23 @@ User refusal is `Cancelled`; policy/MDM denial or unavailable certified native p
 Supported macOS ARM64/x86_64 catalog cells use the architecture-correct stable Docker Desktop artifact
 from the exact official source. Verify TLS, manifest digest, Apple Developer ID, and notarization.
 Mount/copy/install with argv-based OS APIs and documented installer behavior only after exact terms
-consent. If the vendor requires an interactive first-run decision, foreground and observe it rather
-than synthesizing input. Launch Desktop and wait for Engine, Compose, Linux container, read-only bind,
+consent. The authenticated AgentMemory consent surface is the sole decision point before the
+documented `--accept-license` invocation; a catalog cannot both pass that flag and require a second
+vendor decision surface. Launch Desktop and wait for Engine, Compose, Linux container, read-only bind,
 network, volume, and persistence probes. No drag/drop, PATH edit, onboarding, account sign-in, or
 settings navigation is delegated to the user.
 
 #### Windows
 
-Supported Windows 11 x86_64 cells use the stable all-users Docker Desktop installer in WSL2/Linux
-container mode. Verify digest and Authenticode with `WinVerifyTrust`. Probe build/edition,
+Supported Windows 11 x86_64 cells use Docker's recommended per-user Docker Desktop installation in
+WSL2/Linux-container mode below `%LOCALAPPDATA%\Programs\DockerDesktop`. Verify digest and
+Authenticode with `WinVerifyTrust`. Probe build/edition,
 virtualization/firmware, Windows features, WSL version, and existing distributions. Install only
-catalog-bound Microsoft-signed WSL prerequisites through the fixed UAC plan; never mutate existing WSL
-distributions. Journal before reboot and resume once after sign-in. Add the invoking user to
-`docker-users` only when the certified install demonstrably requires it and after a distinct
-root-equivalence warning/consent. Per-user channels and Windows ARM64 remain blocked while vendor
-status is pre-GA.
+the per-user Desktop payload without elevation. Catalog-bound Microsoft-signed WSL prerequisites may
+use the fixed UAC plan only when the host proves they are absent or outdated; never mutate existing
+WSL distributions. Journal before reboot and resume once after sign-in. The certified Linux-container
+flow forbids `docker-users`, `--always-run-service`, Windows containers, and a system-wide Docker
+Desktop destination. Windows ARM64 remains outside the current certified cell.
 
 #### Linux
 

@@ -83,3 +83,24 @@ func TestDesktopExecutionPolicyRejectsEveryUnsignedOrCrossPlatformBoundary(t *te
 		t.Fatal("Linux cell accepted desktop execution authority")
 	}
 }
+
+func TestDesktopManifestRequiresLauncherTermsDecisionBeforeAcceptLicense(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(*ManifestInput){
+		"mandatory vendor UI": func(value *ManifestInput) {
+			value.Install.VendorUIMandatory = true
+		},
+		"native-only terms": func(value *ManifestInput) {
+			value.Terms.Presentation = TermsPresentationNative
+		},
+		"duplicated launcher and vendor terms": func(value *ManifestInput) {
+			value.Terms.Presentation = TermsPresentationAgentMemoryThenNative
+		},
+	} {
+		candidate := validManifestInput(t)
+		mutate(&candidate)
+		if manifest, err := NewManifest(candidate); err == nil || manifest.Valid() {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}

@@ -83,3 +83,19 @@ func TestDesktopAuthorityProjectionRejectsUnverifiedOrForeignInputs(t *testing.T
 		t.Fatalf("zero verified catalog error=%v", err)
 	}
 }
+
+func TestDesktopFixedAuthorityRequiresDocumentedPerUserWindowsInstall(t *testing.T) {
+	t.Parallel()
+	root := `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop`
+	application, executable, dockerCLI, composePlugin, arguments := desktopFixedAuthority(
+		runtimeinstall.PlatformWindows, "Agent User", `C:\Users\Agent User`,
+	)
+	if application != root || executable != root+`\Docker Desktop.exe` ||
+		dockerCLI != root+`\resources\bin\docker.exe` ||
+		composePlugin != root+`\resources\cli-plugins\docker-compose.exe` ||
+		len(arguments) != 6 || arguments[0] != "install" || arguments[1] != "--user" ||
+		arguments[2] != "--quiet" || arguments[3] != "--accept-license" ||
+		arguments[4] != "--backend=wsl-2" || arguments[5] != "--no-windows-containers" {
+		t.Fatalf("authority=%q %q %q %q %#v", application, executable, dockerCLI, composePlugin, arguments)
+	}
+}

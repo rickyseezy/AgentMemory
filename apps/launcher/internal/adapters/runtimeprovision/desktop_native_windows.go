@@ -576,7 +576,7 @@ func (nativeDesktopRuntimeLauncher) LaunchDesktopRuntime(
 	authority runtimeport.DesktopAuthority,
 ) (runtimeinstall.Hash, error) {
 	if ctx == nil || ctx.Err() != nil || !authority.Valid() || authority.Platform() != runtimeinstall.PlatformWindows ||
-		authority.ApplicationExecutable() != `C:\Program Files\Docker\Docker\Docker Desktop.exe` {
+		filepath.Dir(authority.ApplicationExecutable()) != authority.ApplicationPath() {
 		return runtimeinstall.Hash{}, ErrProvisionIntegrity
 	}
 	if !verifyWindowsAuthenticode(authority.ApplicationExecutable()) {

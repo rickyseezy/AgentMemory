@@ -103,7 +103,7 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 	}
 	if !linuxManifestBindingsValid(
 		linuxExecution, platform, artifact, install, prerequisites, capabilities, terms,
-	) {
+	) || !desktopConsentBindingsValid(desktopExecution, platform, install, terms) {
 		return Manifest{}, ErrManifestIntegrity
 	}
 	manifest := Manifest{
@@ -120,6 +120,27 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 	manifest.canonical = canonical
 	manifest.digest = DigestBytes(canonical)
 	return manifest, nil
+}
+
+// desktopManifestBindingsValid keeps the catalog's consent contract aligned
+// with Docker Desktop's documented non-interactive installer contract. The
+// launcher displays and authenticates the exact signed terms before passing
+// --accept-license; a second vendor decision surface is therefore forbidden.
+func desktopConsentBindingsValid(
+	execution *DesktopExecutionPolicy,
+	platform PlatformPolicy,
+	install InstallerPolicy,
+	terms TermsPolicy,
+) bool {
+	switch platform.operatingSystem {
+	case OSKindMacOS, OSKindWindows:
+		return execution != nil && !install.vendorUIMandatory &&
+			terms.presentation == TermsPresentationAgentMemory
+	case OSKindLinux:
+		return execution == nil
+	default:
+		return false
+	}
 }
 
 func buildPrerequisites(inputs []PrerequisiteInput) ([]Prerequisite, error) {
@@ -252,6 +273,7 @@ func (m Manifest) Valid() bool {
 		!m.runtime.valid(m.platform.operatingSystem) || !m.artifact.valid(m.platform.operatingSystem) ||
 		!m.terms.valid() || !m.install.valid(m.platform.operatingSystem) ||
 		!desktopManifestBindingsValid(m.desktopExecution, m.platform, m.artifact, m.capabilityProbes) ||
+		!desktopConsentBindingsValid(m.desktopExecution, m.platform, m.install, m.terms) ||
 		!linuxManifestBindingsValid(
 			m.linuxExecution, m.platform, m.artifact, m.install, m.prerequisites, m.capabilityProbes, m.terms,
 		) || !prerequisitesValid(m.prerequisites) ||

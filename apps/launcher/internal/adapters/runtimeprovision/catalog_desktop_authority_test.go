@@ -25,6 +25,14 @@ func TestCatalogDesktopAuthorityResolverJoinsVerifiedProjectionHostAndNativeTrus
 	}
 }
 
+func TestVerifiedCatalogDesktopProjectorFailsClosedWithoutVerifiedCatalog(t *testing.T) {
+	t.Parallel()
+	projector := verifiedCatalogDesktopProjector{}
+	if authority, err := projector.ProjectDesktopAuthority(nil, runtimecatalogapp.DesktopHostBinding{}, runtimecatalog.Digest{}); err == nil || authority.Valid() {
+		t.Fatalf("zero catalog projection=valid:%t error:%v", authority.Valid(), err)
+	}
+}
+
 func TestCatalogDesktopAuthorityResolverFailsClosedAtEveryBoundary(t *testing.T) {
 	t.Parallel()
 	plan, authority := catalogDesktopAuthorityFixture(t)

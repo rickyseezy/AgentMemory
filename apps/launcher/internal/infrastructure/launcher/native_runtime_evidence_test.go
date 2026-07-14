@@ -229,7 +229,7 @@ func nativeRuntimeCertifiedCatalog(t testing.TB) runtimeinstall.CertifiedRuntime
 		runtimeinstall.Sum([]byte("inner manifest")), runtimeinstall.RuntimeTermsInput{
 			ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
 			URL:    "https://www.docker.com/legal/docker-subscription-service-agreement/",
-			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
 		}, 700_000_000, 2_000_000_000,
 	)
 	if err != nil {

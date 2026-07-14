@@ -46,7 +46,7 @@ func TestDesktopProvisionerCompletesWindowsInstallWithExactConsentNativeMutation
 	if consent.calls != 1 || consentRepository.stores != 1 || artifacts.acquireCalls != 1 || artifacts.verifyCalls != 2 ||
 		!slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{
 			runtimeport.DesktopMutationInstallPrerequisites, runtimeport.DesktopMutationInstallRuntime,
-		}) || terms.calls != 1 || launcher.calls != 1 || capabilities.calls != 1 || runtimeInspector.calls != 3 {
+		}) || terms.calls != 0 || launcher.calls != 1 || capabilities.calls != 1 || runtimeInspector.calls != 3 {
 		t.Fatalf("effects: consent=%d stores=%d acquire=%d verify=%d mutations=%v terms=%d launch=%d caps=%d runtime=%d",
 			consent.calls, consentRepository.stores, artifacts.acquireCalls, artifacts.verifyCalls,
 			mutations.operations, terms.calls, launcher.calls, capabilities.calls, runtimeInspector.calls)
@@ -56,7 +56,7 @@ func TestDesktopProvisionerCompletesWindowsInstallWithExactConsentNativeMutation
 	}
 }
 
-func TestDesktopProvisionerSkipsWindowsPrerequisitesOnMacAndObservesMandatoryVendorUI(t *testing.T) {
+func TestDesktopProvisionerSkipsWindowsPrerequisitesAndVendorUIOnMac(t *testing.T) {
 	t.Parallel()
 	plan, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
 	clock := &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)}
@@ -74,7 +74,7 @@ func TestDesktopProvisionerSkipsWindowsPrerequisitesOnMacAndObservesMandatoryVen
 	if err != nil || result.State != runtimeinstall.OperationStateReady {
 		t.Fatalf("macOS Ensure() = state:%s error:%v", result.State, err)
 	}
-	if !slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{runtimeport.DesktopMutationInstallRuntime}) || terms.calls != 1 {
+	if !slices.Equal(mutations.operations, []runtimeport.DesktopMutationOperation{runtimeport.DesktopMutationInstallRuntime}) || terms.calls != 0 {
 		t.Fatalf("macOS mutations=%v terms=%d", mutations.operations, terms.calls)
 	}
 }
@@ -131,7 +131,6 @@ func TestDesktopProvisionerRejectsForgedConsentArtifactMutationAndCapabilities(t
 			v.mutationAuthenticatorError = runtimeport.ErrDesktopMutationIntegrity
 		}},
 		{name: "mutation replay", mutate: func(v *desktopTestDependencies) { v.mutationReplayError = errors.New("replayed details") }},
-		{name: "terms zero", mutate: func(v *desktopTestDependencies) { v.terms.zero = true }},
 		{name: "launch zero", mutate: func(v *desktopTestDependencies) { v.launcher.zero = true }},
 		{name: "capability zero", mutate: func(v *desktopTestDependencies) { v.capabilities.zero = true }},
 	}
@@ -748,7 +747,7 @@ func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (ru
 		ComposePluginPath:     "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
 		ProbeImage:            "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + runtimeinstall.Sum([]byte("desktop-probe-image")).String(),
 		ProbeImageDigest:      runtimeinstall.Sum([]byte("desktop-probe-image")), ProbeContractVersion: "1",
-		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("desktop-capability-policy")), VendorUIMandatory: true,
+		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("desktop-capability-policy")), VendorUIMandatory: false,
 	}
 	if platform == runtimeinstall.PlatformWindows {
 		input.PrincipalID = "sid:S-1-5-21-1000-1001-1002-1003"
@@ -765,11 +764,11 @@ func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (ru
 			SigningKeyIdentity: "docker-authenticode-2026", PackageIdentity: "com.docker.docker",
 			CertificateSHA256: runtimeinstall.Sum([]byte("docker-windows-certificate")),
 		}
-		input.InstallerArguments = []string{"install", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
-		input.ApplicationPath = `C:\Program Files\Docker\Docker`
-		input.ApplicationExecutable = `C:\Program Files\Docker\Docker\Docker Desktop.exe`
-		input.DockerCLIPath = `C:\Program Files\Docker\Docker\resources\bin\docker.exe`
-		input.ComposePluginPath = `C:\Program Files\Docker\Docker\resources\cli-plugins\docker-compose.exe`
+		input.InstallerArguments = []string{"install", "--user", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
+		input.ApplicationPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop`
+		input.ApplicationExecutable = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe`
+		input.DockerCLIPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe`
+		input.ComposePluginPath = `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\cli-plugins\docker-compose.exe`
 		input.RebootExitCodes = []uint32{1641, 3010}
 		input.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 		input.MinimumWSLVersion = "2.1.5"

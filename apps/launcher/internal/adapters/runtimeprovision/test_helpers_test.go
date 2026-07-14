@@ -131,6 +131,6 @@ func desktopTerms(digest runtimeinstall.Hash) runtimeinstall.RuntimeTermsInput {
 	return runtimeinstall.RuntimeTermsInput{
 		ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
 		URL: "https://www.docker.com/legal/docker-subscription-service-agreement/", Digest: digest,
-		Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+		Presentation: runtimeinstall.TermsPresentationAgentMemory,
 	}
 }

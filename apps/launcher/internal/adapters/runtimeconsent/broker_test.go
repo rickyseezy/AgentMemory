@@ -158,7 +158,7 @@ func brokerRuntimeTerms(platform runtimeinstall.Platform, digest runtimeinstall.
 	return runtimeinstall.RuntimeTermsInput{
 		ID: runtimeinstall.DockerDesktopTermsID, Version: "2025.07.02",
 		URL: "https://www.docker.com/legal/docker-subscription-service-agreement/", Digest: digest,
-		Presentation: runtimeinstall.TermsPresentationAgentMemoryThenNative,
+		Presentation: runtimeinstall.TermsPresentationAgentMemory,
 	}
 }
 
@@ -229,14 +229,14 @@ func brokerDesktopAuthority(t testing.TB) runtimeport.DesktopAuthority {
 			PackageIdentity: "com.docker.docker", CertificateSHA256: runtimeinstall.Sum([]byte("certificate"))},
 		Terms: runtimeport.DesktopTermsInput{ID: "docker-subscription-service-agreement", Version: "2025.07.02",
 			URL: "https://www.docker.com/legal/docker-subscription-service-agreement/", Digest: plan.TermsDigest()},
-		InstallerArguments: []string{"install", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"},
-		ApplicationPath:    `C:\Program Files\Docker\Docker`, ApplicationExecutable: `C:\Program Files\Docker\Docker\Docker Desktop.exe`,
-		DockerCLIPath:     `C:\Program Files\Docker\Docker\resources\bin\docker.exe`,
-		ComposePluginPath: `C:\Program Files\Docker\Docker\resources\cli-plugins\docker-compose.exe`,
+		InstallerArguments: []string{"install", "--user", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"},
+		ApplicationPath:    `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop`, ApplicationExecutable: `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\Docker Desktop.exe`,
+		DockerCLIPath:     `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe`,
+		ComposePluginPath: `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop\resources\cli-plugins\docker-compose.exe`,
 		ProbeImage:        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
 		ProbeContractVersion: "1", CapabilityPolicyDigest: runtimeinstall.Sum([]byte("policy")),
 		RebootExitCodes: []uint32{1641, 3010}, WindowsFeatures: []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"},
-		MinimumWSLVersion: "2.1.5", VendorUIMandatory: true,
+		MinimumWSLVersion: "2.1.5", VendorUIMandatory: false,
 	})
 	if err != nil {
 		t.Fatal(err)

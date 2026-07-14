@@ -19,10 +19,8 @@ import (
 )
 
 const (
-	catalogWindowsDockerApplication = `C:\Program Files\Docker\Docker`
-	catalogWindowsDockerExecutable  = `C:\Program Files\Docker\Docker\Docker Desktop.exe`
-	catalogWindowsDockerEndpoint    = `npipe:////./pipe/docker_engine`
-	catalogWindowsDockerPipe        = `\\.\pipe\docker_engine`
+	catalogWindowsDockerEndpoint = `npipe:////./pipe/docker_engine`
+	catalogWindowsDockerPipe     = `\\.\pipe\docker_engine`
 )
 
 type nativeCatalogObservationBackend struct {
@@ -54,8 +52,12 @@ func (b nativeCatalogObservationBackend) ObserveCatalogRuntime(
 	if err != nil {
 		return CatalogObservationResult{}, err
 	}
+	applicationPath, executablePath, err := catalogWindowsDesktopPaths()
+	if err != nil {
+		return CatalogObservationResult{}, err
+	}
 	discovery, applicationPresent, endpointPresent, err := b.runtime(
-		ctx, input, catalogWindowsDockerApplication, catalogWindowsDockerExecutable, catalogWindowsDockerPipe,
+		ctx, input, applicationPath, executablePath, catalogWindowsDockerPipe,
 	)
 	if err != nil {
 		return CatalogObservationResult{}, err
@@ -71,6 +73,15 @@ func (b nativeCatalogObservationBackend) ObserveCatalogRuntime(
 		Endpoint: endpointPresent, Host: version, Publisher: input.NativePublisherTrust.Hex(),
 	})
 	return CatalogObservationResult{Host: host, Discovery: discovery, Evidence: runtimeinstall.Sum(encoded)}, nil
+}
+
+func catalogWindowsDesktopPaths() (string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) || filepath.Clean(home) != home {
+		return "", "", ErrProbeFailed
+	}
+	root := filepath.Join(home, "AppData", "Local", "Programs", "DockerDesktop")
+	return root, filepath.Join(root, "Docker Desktop.exe"), nil
 }
 
 func observeWindowsCatalogHost(input CatalogObservationInput) (runtimeinstall.HostCapabilities, string, error) {

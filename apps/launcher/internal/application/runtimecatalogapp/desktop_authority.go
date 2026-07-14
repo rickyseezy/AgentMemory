@@ -95,7 +95,9 @@ func (c VerifiedCatalog) DesktopAuthority(
 	if err != nil {
 		return runtimeport.DesktopAuthority{}, runtimeport.ErrDesktopAuthorityIntegrity
 	}
-	application, executable, dockerCLI, composePlugin, arguments := desktopFixedAuthority(projectedPlatform, host.input.UserName)
+	application, executable, dockerCLI, composePlugin, arguments := desktopFixedAuthority(
+		projectedPlatform, host.input.UserName, host.input.HomeDirectory,
+	)
 	terms := c.manifest.Terms()
 	termsURL := sourceURL(terms.URL())
 	if !strings.HasSuffix(termsURL, "/") {
@@ -174,6 +176,7 @@ func desktopPublisherKind(value runtimecatalog.NativeVerification) (runtimeport.
 func desktopFixedAuthority(
 	platform runtimeinstall.Platform,
 	userName string,
+	homeDirectory string,
 ) (string, string, string, string, []string) {
 	if platform == runtimeinstall.PlatformDarwin {
 		return "/Applications/Docker.app", "/Applications/Docker.app/Contents/MacOS/Docker Desktop",
@@ -181,8 +184,8 @@ func desktopFixedAuthority(
 			"/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
 			[]string{"--accept-license", "--user=" + userName}
 	}
-	return `C:\Program Files\Docker\Docker`, `C:\Program Files\Docker\Docker\Docker Desktop.exe`,
-		`C:\Program Files\Docker\Docker\resources\bin\docker.exe`,
-		`C:\Program Files\Docker\Docker\resources\cli-plugins\docker-compose.exe`,
-		[]string{"install", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
+	root := homeDirectory + `\AppData\Local\Programs\DockerDesktop`
+	return root, root + `\Docker Desktop.exe`, root + `\resources\bin\docker.exe`,
+		root + `\resources\cli-plugins\docker-compose.exe`,
+		[]string{"install", "--user", "--quiet", "--accept-license", "--backend=wsl-2", "--no-windows-containers"}
 }

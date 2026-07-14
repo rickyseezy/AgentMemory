@@ -38,7 +38,7 @@ func TestDesktopAuthorityProjectsImmutableExactExecutionContract(t *testing.T) {
 		authority.ApplicationExecutable() == "" || authority.DockerCLIPath() == "" || authority.ComposePluginPath() == "" ||
 		authority.ProbeImage() == "" || authority.ProbeImageDigest().IsZero() || authority.ProbeContractVersion() != "1" ||
 		authority.CapabilityPolicyDigest().IsZero() || authority.MinimumWSLVersion() != "2.1.5" ||
-		!authority.VendorUIMandatory() {
+		authority.VendorUIMandatory() {
 		t.Fatal("desktop authority omitted an execution-relevant field")
 	}
 	reboots := authority.RebootExitCodes()

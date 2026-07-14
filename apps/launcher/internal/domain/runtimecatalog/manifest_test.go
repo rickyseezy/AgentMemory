@@ -152,7 +152,7 @@ func TestManifestProjectsEverySignedExecutionBoundaryDefensively(t *testing.T) {
 	install := manifest.Install()
 	if install.Executable() != InstallerExecutableMacOSInstaller ||
 		install.ServiceIdentity() != "com.docker.backend" ||
-		install.RollbackStrategy() != RollbackStrategyPreserve || !install.VendorUIMandatory() ||
+		install.RollbackStrategy() != RollbackStrategyPreserve || install.VendorUIMandatory() ||
 		len(install.RebootExitCodes()) != 0 || len(install.OwnershipChanges()) != 2 {
 		t.Fatal("installer projection omitted an execution boundary")
 	}
@@ -190,7 +190,7 @@ func TestManifestProjectsEverySignedExecutionBoundaryDefensively(t *testing.T) {
 	}
 	terms := manifest.Terms()
 	if terms.Version() != "2025.07.02" || terms.Digest().IsZero() ||
-		terms.Presentation() != TermsPresentationAgentMemoryThenNative ||
+		terms.Presentation() != TermsPresentationAgentMemory ||
 		manifest.SupportExpiresAt() != time.Date(2027, 7, 1, 0, 0, 0, 0, time.UTC) ||
 		!manifest.SupportedAt(time.Date(2027, 6, 30, 0, 0, 0, 0, time.UTC)) ||
 		manifest.SupportedAt(time.Date(2027, 7, 1, 0, 0, 0, 0, time.UTC)) {
@@ -468,7 +468,7 @@ func validManifestInput(t testReporter) ManifestInput {
 			ServiceIdentity:   "com.docker.backend",
 			RollbackStrategy:  RollbackStrategyPreserve,
 			OwnershipChanges:  []string{"application:com.docker.docker", "service:com.docker.backend"},
-			VendorUIMandatory: true,
+			VendorUIMandatory: false,
 		},
 		DesktopExecution: DesktopExecutionPolicyInput{
 			AcquisitionSafetyBytes: 100_000_000,
@@ -485,7 +485,7 @@ func validManifestInput(t testReporter) ManifestInput {
 		Terms: TermsPolicyInput{
 			ID: "docker-subscription-service-agreement", Version: "2025.07.02",
 			URL:    OfficialSourceInput{Scheme: "https", Host: "www.docker.com", PathPrefix: "/legal/docker-subscription-service-agreement"},
-			Digest: termsDigest, Presentation: TermsPresentationAgentMemoryThenNative,
+			Digest: termsDigest, Presentation: TermsPresentationAgentMemory,
 		},
 	}
 }

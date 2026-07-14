@@ -60,3 +60,12 @@ func TestWindowsRuntimeSurfaceObservationRejectsUntrustedAuthority(t *testing.T)
 		t.Fatalf("foreign pipe error=%v", err)
 	}
 }
+
+func TestWindowsCatalogObservationUsesInvokingUserInstallRoot(t *testing.T) {
+	t.Setenv("USERPROFILE", `C:\Users\Agent User`)
+	application, executable, err := catalogWindowsDesktopPaths()
+	root := `C:\Users\Agent User\AppData\Local\Programs\DockerDesktop`
+	if err != nil || application != root || executable != root+`\Docker Desktop.exe` {
+		t.Fatalf("paths=%q/%q error=%v", application, executable, err)
+	}
+}

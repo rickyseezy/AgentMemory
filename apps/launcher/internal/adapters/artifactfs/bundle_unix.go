@@ -15,6 +15,54 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 )
 
+const (
+	distributionEnvelopePath         = "bootstrap/distribution-manifest.json"
+	maximumDistributionEnvelopeBytes = 32 * 1024 * 1024
+)
+
+// ReadDistributionEnvelope reads the one fixed, separately signed bootstrap
+// catalog envelope from the retained offline bundle. Its bytes are not trusted
+// by this adapter: the release-verification application must decode and verify
+// the signature before selecting any resource. Keeping the path closed here
+// prevents an MCP request or environment variable from selecting another
+// manifest.
+func (f *BundleFetcher) ReadDistributionEnvelope(ctx context.Context) ([]byte, error) {
+	if !f.beginOperation() {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	defer f.endOperation()
+	if ctx == nil {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(artifactapp.ErrFetchUnavailable, err)
+	}
+	file, err := openSecureRelativeBundleFile(f.rootDirectory, distributionEnvelopePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, artifactapp.ErrFetchUnavailable
+	}
+	if err != nil {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	defer file.close()
+	info, err := file.file.Stat()
+	size, valid := nonNegativeInt64(infoSize(info, err))
+	if err != nil || !valid || size == 0 || size > maximumDistributionEnvelopeBytes ||
+		file.verifyExactSize(size) != nil || file.verifyPathIdentity() != nil {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	limited := &io.LimitedReader{R: file.file, N: int64(maximumDistributionEnvelopeBytes) + 1}
+	value, err := io.ReadAll(limited)
+	if err != nil || limited.N == 0 || uint64(len(value)) != size ||
+		file.verifyExactSize(size) != nil || file.verifyPathIdentity() != nil {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(artifactapp.ErrFetchUnavailable, err)
+	}
+	return value, nil
+}
+
 // Fetch reads one exact offline-bundle range without following symlinks.
 func (f *BundleFetcher) Fetch(
 	ctx context.Context,

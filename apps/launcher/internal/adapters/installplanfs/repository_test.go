@@ -332,6 +332,7 @@ func filesystemRuntimeAuthority(t testing.TB, parent installplan.Plan, discovery
 	authority, err := installplanapp.NewRuntimePlanAuthority(
 		parent.OperationID(), parent.Digest(), plan, install.DigestBytes([]byte("host")),
 		install.DigestBytes([]byte(discoveryEvidence)), parent.RuntimeCatalogDigest(),
+		parent.RuntimeCatalogDigest(),
 	)
 	if err != nil {
 		t.Fatal(err)

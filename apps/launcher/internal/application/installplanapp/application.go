@@ -493,7 +493,7 @@ func (a *Application) ResolveRuntimePlan(
 		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
 	})
 	if err != nil || !evidence.HostEvidenceDigest().Equal(hostEvidence.OutputDigest()) ||
-		!evidence.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) {
+		!evidence.CatalogResourceEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) {
 		return installphase.RuntimePlan{}, ErrRuntimeEvidenceUnavailable
 	}
 	nested, err := runtimeinstall.NewPlanV1(evidence.Host(), evidence.Discovery(), evidence.Catalog())
@@ -501,12 +501,13 @@ func (a *Application) ResolveRuntimePlan(
 		return installphase.RuntimePlan{}, ErrRuntimePlanIntegrity
 	}
 	nestedCatalog, err := install.ParseDigest(nested.CatalogDigest().String())
-	if err != nil || !nestedCatalog.Equal(plan.RuntimeCatalogDigest()) {
+	if err != nil || !nestedCatalog.Equal(evidence.SignedCatalogEvidenceDigest()) {
 		return installphase.RuntimePlan{}, ErrRuntimePlanIntegrity
 	}
 	authority, err = NewRuntimePlanAuthority(
 		operationID, digest, nested, evidence.HostEvidenceDigest(),
-		evidence.DiscoveryEvidenceDigest(), evidence.SignedCatalogEvidenceDigest(),
+		evidence.DiscoveryEvidenceDigest(), evidence.CatalogResourceEvidenceDigest(),
+		evidence.SignedCatalogEvidenceDigest(),
 	)
 	if err != nil {
 		return installphase.RuntimePlan{}, err
@@ -693,14 +694,14 @@ func runtimeProjection(
 ) (installphase.RuntimePlan, error) {
 	if authority.OperationID() != operationID || !authority.ParentPlanDigest().Equal(parent.Digest()) ||
 		!authority.HostEvidenceDigest().Equal(hostEvidence) ||
-		!authority.SignedCatalogEvidenceDigest().Equal(parent.RuntimeCatalogDigest()) {
+		!authority.CatalogResourceEvidenceDigest().Equal(parent.RuntimeCatalogDigest()) {
 		return installphase.RuntimePlan{}, ErrRuntimePlanIntegrity
 	}
 	nested := authority.Plan()
 	decoded, err := runtimeinstall.DecodePlanV1(nested.CanonicalBytes())
 	catalogDigest, digestError := install.ParseDigest(decoded.CatalogDigest().String())
 	if err != nil || digestError != nil || decoded.Digest() != nested.Digest() ||
-		!catalogDigest.Equal(parent.RuntimeCatalogDigest()) {
+		!catalogDigest.Equal(authority.SignedCatalogEvidenceDigest()) {
 		return installphase.RuntimePlan{}, ErrRuntimePlanIntegrity
 	}
 	projection, err := installphase.NewRuntimePlan(

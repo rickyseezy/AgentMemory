@@ -84,14 +84,15 @@ func (r *Repository) LoadRuntimePlan(
 func encodeRuntimeAuthority(authority installplanapp.RuntimePlanAuthority) ([]byte, error) {
 	record := authority.Record()
 	document := canonicalRuntimeAuthority{
-		BindingDigest:               record.BindingDigest,
-		CanonicalPlan:               base64.StdEncoding.EncodeToString(record.CanonicalPlan),
-		DiscoveryEvidenceDigest:     record.DiscoveryEvidenceDigest,
-		HostEvidenceDigest:          record.HostEvidenceDigest,
-		OperationID:                 record.OperationID,
-		ParentPlanDigest:            record.ParentPlanDigest,
-		SchemaVersion:               record.SchemaVersion,
-		SignedCatalogEvidenceDigest: record.SignedCatalogEvidenceDigest,
+		BindingDigest:                 record.BindingDigest,
+		CanonicalPlan:                 base64.StdEncoding.EncodeToString(record.CanonicalPlan),
+		DiscoveryEvidenceDigest:       record.DiscoveryEvidenceDigest,
+		CatalogResourceEvidenceDigest: record.CatalogResourceEvidenceDigest,
+		HostEvidenceDigest:            record.HostEvidenceDigest,
+		OperationID:                   record.OperationID,
+		ParentPlanDigest:              record.ParentPlanDigest,
+		SchemaVersion:                 record.SchemaVersion,
+		SignedCatalogEvidenceDigest:   record.SignedCatalogEvidenceDigest,
 	}
 	return json.Marshal(document)
 }
@@ -114,10 +115,11 @@ func decodeRuntimeAuthority(raw []byte) (installplanapp.RuntimePlanAuthority, er
 	authority, err := installplanapp.RestoreRuntimePlanAuthority(installplanapp.RuntimePlanAuthorityRecord{
 		SchemaVersion: document.SchemaVersion, OperationID: document.OperationID,
 		ParentPlanDigest: document.ParentPlanDigest, CanonicalPlan: canonicalPlan,
-		HostEvidenceDigest:          document.HostEvidenceDigest,
-		DiscoveryEvidenceDigest:     document.DiscoveryEvidenceDigest,
-		SignedCatalogEvidenceDigest: document.SignedCatalogEvidenceDigest,
-		BindingDigest:               document.BindingDigest,
+		HostEvidenceDigest:            document.HostEvidenceDigest,
+		DiscoveryEvidenceDigest:       document.DiscoveryEvidenceDigest,
+		CatalogResourceEvidenceDigest: document.CatalogResourceEvidenceDigest,
+		SignedCatalogEvidenceDigest:   document.SignedCatalogEvidenceDigest,
+		BindingDigest:                 document.BindingDigest,
 	})
 	if err != nil {
 		return installplanapp.RuntimePlanAuthority{}, installplanapp.ErrRuntimePlanIntegrity
@@ -135,14 +137,15 @@ func runtimeAuthorityFilename(operationID install.OperationID, parent install.Pl
 }
 
 type canonicalRuntimeAuthority struct {
-	BindingDigest               string `json:"binding_digest"`
-	CanonicalPlan               string `json:"canonical_plan"`
-	DiscoveryEvidenceDigest     string `json:"discovery_evidence_digest"`
-	HostEvidenceDigest          string `json:"host_evidence_digest"`
-	OperationID                 string `json:"operation_id"`
-	ParentPlanDigest            string `json:"parent_plan_digest"`
-	SchemaVersion               uint16 `json:"schema_version"`
-	SignedCatalogEvidenceDigest string `json:"signed_catalog_evidence_digest"`
+	BindingDigest                 string `json:"binding_digest"`
+	CanonicalPlan                 string `json:"canonical_plan"`
+	DiscoveryEvidenceDigest       string `json:"discovery_evidence_digest"`
+	CatalogResourceEvidenceDigest string `json:"catalog_resource_evidence_digest"`
+	HostEvidenceDigest            string `json:"host_evidence_digest"`
+	OperationID                   string `json:"operation_id"`
+	ParentPlanDigest              string `json:"parent_plan_digest"`
+	SchemaVersion                 uint16 `json:"schema_version"`
+	SignedCatalogEvidenceDigest   string `json:"signed_catalog_evidence_digest"`
 }
 
 var _ installplanapp.RuntimePlanRepository = (*Repository)(nil)

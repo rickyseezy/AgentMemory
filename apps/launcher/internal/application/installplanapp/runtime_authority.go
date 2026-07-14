@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	runtimeAuthoritySchemaVersion = uint16(1)
-	runtimeAuthorityDomain        = "agentmemory.runtime-plan-authority.v1"
+	runtimeAuthoritySchemaVersion = uint16(2)
+	runtimeAuthorityDomain        = "agentmemory.runtime-plan-authority.v2"
 )
 
 // RuntimeEvidenceRequest identifies the exact parent authority and signed
@@ -32,12 +32,13 @@ type RuntimeEvidenceResolver interface {
 // RuntimeEvidence contains only constructor-validated typed facts and their
 // authenticated evidence bindings.
 type RuntimeEvidence struct {
-	host                  runtimeinstall.HostCapabilities
-	discovery             runtimeinstall.RuntimeDiscovery
-	catalog               runtimeinstall.CertifiedRuntime
-	hostEvidence          install.Digest
-	discoveryEvidence     install.Digest
-	signedCatalogEvidence install.Digest
+	host                    runtimeinstall.HostCapabilities
+	discovery               runtimeinstall.RuntimeDiscovery
+	catalog                 runtimeinstall.CertifiedRuntime
+	hostEvidence            install.Digest
+	discoveryEvidence       install.Digest
+	catalogResourceEvidence install.Digest
+	signedCatalogEvidence   install.Digest
 }
 
 // NewRuntimeEvidence rejects unbound facts and requires the signed catalog
@@ -48,19 +49,21 @@ func NewRuntimeEvidence(
 	catalog runtimeinstall.CertifiedRuntime,
 	hostEvidence install.Digest,
 	discoveryEvidence install.Digest,
+	catalogResourceEvidence install.Digest,
 	signedCatalogEvidence install.Digest,
 ) (RuntimeEvidence, error) {
 	plan, err := runtimeinstall.NewPlanV1(host, discovery, catalog)
 	catalogDigest, digestError := install.ParseDigest(catalog.CatalogDigest().String())
 	if err != nil || digestError != nil || len(plan.CanonicalBytes()) == 0 || hostEvidence.IsZero() ||
-		discoveryEvidence.IsZero() || signedCatalogEvidence.IsZero() ||
+		discoveryEvidence.IsZero() || catalogResourceEvidence.IsZero() || signedCatalogEvidence.IsZero() ||
 		!signedCatalogEvidence.Equal(catalogDigest) {
 		return RuntimeEvidence{}, ErrRuntimePlanIntegrity
 	}
 	return RuntimeEvidence{
 		host: host, discovery: discovery, catalog: catalog,
 		hostEvidence: hostEvidence, discoveryEvidence: discoveryEvidence,
-		signedCatalogEvidence: signedCatalogEvidence,
+		catalogResourceEvidence: catalogResourceEvidence,
+		signedCatalogEvidence:   signedCatalogEvidence,
 	}, nil
 }
 
@@ -79,31 +82,39 @@ func (e RuntimeEvidence) HostEvidenceDigest() install.Digest { return e.hostEvid
 // DiscoveryEvidenceDigest returns the authenticated runtime discovery binding.
 func (e RuntimeEvidence) DiscoveryEvidenceDigest() install.Digest { return e.discoveryEvidence }
 
+// CatalogResourceEvidenceDigest returns the verified outer signed-envelope
+// resource digest bound by the parent release.
+func (e RuntimeEvidence) CatalogResourceEvidenceDigest() install.Digest {
+	return e.catalogResourceEvidence
+}
+
 // SignedCatalogEvidenceDigest returns the exact verified signed catalog digest.
 func (e RuntimeEvidence) SignedCatalogEvidenceDigest() install.Digest { return e.signedCatalogEvidence }
 
 // RuntimePlanAuthorityRecord is the persistence-neutral immutable authority.
 type RuntimePlanAuthorityRecord struct {
-	SchemaVersion               uint16
-	OperationID                 string
-	ParentPlanDigest            string
-	CanonicalPlan               []byte
-	HostEvidenceDigest          string
-	DiscoveryEvidenceDigest     string
-	SignedCatalogEvidenceDigest string
-	BindingDigest               string
+	SchemaVersion                 uint16
+	OperationID                   string
+	ParentPlanDigest              string
+	CanonicalPlan                 []byte
+	HostEvidenceDigest            string
+	DiscoveryEvidenceDigest       string
+	CatalogResourceEvidenceDigest string
+	SignedCatalogEvidenceDigest   string
+	BindingDigest                 string
 }
 
 // RuntimePlanAuthority binds one strict nested plan and all evidence to one
 // operation and one PF-001 parent plan.
 type RuntimePlanAuthority struct {
-	operationID           install.OperationID
-	parentPlanDigest      install.PlanDigest
-	plan                  runtimeinstall.Plan
-	hostEvidence          install.Digest
-	discoveryEvidence     install.Digest
-	signedCatalogEvidence install.Digest
-	binding               install.Digest
+	operationID             install.OperationID
+	parentPlanDigest        install.PlanDigest
+	plan                    runtimeinstall.Plan
+	hostEvidence            install.Digest
+	discoveryEvidence       install.Digest
+	catalogResourceEvidence install.Digest
+	signedCatalogEvidence   install.Digest
+	binding                 install.Digest
 }
 
 // NewRuntimePlanAuthority constructs one immutable operation-scoped binding.
@@ -113,6 +124,7 @@ func NewRuntimePlanAuthority(
 	plan runtimeinstall.Plan,
 	hostEvidence install.Digest,
 	discoveryEvidence install.Digest,
+	catalogResourceEvidence install.Digest,
 	signedCatalogEvidence install.Digest,
 ) (RuntimePlanAuthority, error) {
 	canonical := plan.CanonicalBytes()
@@ -120,13 +132,15 @@ func NewRuntimePlanAuthority(
 	catalogDigest, digestError := install.ParseDigest(decoded.CatalogDigest().String())
 	if operationID.IsZero() || parent.IsZero() || err != nil || len(canonical) == 0 ||
 		decoded.Digest() != plan.Digest() || hostEvidence.IsZero() || discoveryEvidence.IsZero() ||
-		signedCatalogEvidence.IsZero() || digestError != nil || !signedCatalogEvidence.Equal(catalogDigest) {
+		catalogResourceEvidence.IsZero() || signedCatalogEvidence.IsZero() || digestError != nil ||
+		!signedCatalogEvidence.Equal(catalogDigest) {
 		return RuntimePlanAuthority{}, ErrRuntimePlanIntegrity
 	}
 	authority := RuntimePlanAuthority{
 		operationID: operationID, parentPlanDigest: parent, plan: decoded,
 		hostEvidence: hostEvidence, discoveryEvidence: discoveryEvidence,
-		signedCatalogEvidence: signedCatalogEvidence,
+		catalogResourceEvidence: catalogResourceEvidence,
+		signedCatalogEvidence:   signedCatalogEvidence,
 	}
 	authority.binding = runtimeAuthorityBinding(authority)
 	return authority, nil
@@ -141,14 +155,15 @@ func RestoreRuntimePlanAuthority(record RuntimePlanAuthorityRecord) (RuntimePlan
 	parent, parentError := install.ParsePlanDigest(record.ParentPlanDigest)
 	host, hostError := install.ParseDigest(record.HostEvidenceDigest)
 	discovery, discoveryError := install.ParseDigest(record.DiscoveryEvidenceDigest)
+	resource, resourceError := install.ParseDigest(record.CatalogResourceEvidenceDigest)
 	catalog, catalogError := install.ParseDigest(record.SignedCatalogEvidenceDigest)
 	binding, bindingError := install.ParseDigest(record.BindingDigest)
 	plan, planError := runtimeinstall.DecodePlanV1(record.CanonicalPlan)
-	if operationError != nil || parentError != nil || hostError != nil || discoveryError != nil ||
+	if operationError != nil || parentError != nil || hostError != nil || discoveryError != nil || resourceError != nil ||
 		catalogError != nil || bindingError != nil || planError != nil {
 		return RuntimePlanAuthority{}, ErrRuntimePlanIntegrity
 	}
-	authority, err := NewRuntimePlanAuthority(operationID, parent, plan, host, discovery, catalog)
+	authority, err := NewRuntimePlanAuthority(operationID, parent, plan, host, discovery, resource, catalog)
 	if err != nil || !authority.binding.Equal(binding) {
 		return RuntimePlanAuthority{}, ErrRuntimePlanIntegrity
 	}
@@ -161,8 +176,9 @@ func (a RuntimePlanAuthority) Record() RuntimePlanAuthorityRecord {
 		SchemaVersion: runtimeAuthoritySchemaVersion,
 		OperationID:   a.operationID.String(), ParentPlanDigest: a.parentPlanDigest.String(),
 		CanonicalPlan: a.plan.CanonicalBytes(), HostEvidenceDigest: a.hostEvidence.String(),
-		DiscoveryEvidenceDigest:     a.discoveryEvidence.String(),
-		SignedCatalogEvidenceDigest: a.signedCatalogEvidence.String(), BindingDigest: a.binding.String(),
+		DiscoveryEvidenceDigest:       a.discoveryEvidence.String(),
+		CatalogResourceEvidenceDigest: a.catalogResourceEvidence.String(),
+		SignedCatalogEvidenceDigest:   a.signedCatalogEvidence.String(), BindingDigest: a.binding.String(),
 	}
 }
 
@@ -180,6 +196,11 @@ func (a RuntimePlanAuthority) HostEvidenceDigest() install.Digest { return a.hos
 
 // DiscoveryEvidenceDigest returns the authenticated runtime observation binding.
 func (a RuntimePlanAuthority) DiscoveryEvidenceDigest() install.Digest { return a.discoveryEvidence }
+
+// CatalogResourceEvidenceDigest returns the exact outer release-resource binding.
+func (a RuntimePlanAuthority) CatalogResourceEvidenceDigest() install.Digest {
+	return a.catalogResourceEvidence
+}
 
 // SignedCatalogEvidenceDigest returns the exact verified catalog binding.
 func (a RuntimePlanAuthority) SignedCatalogEvidenceDigest() install.Digest {
@@ -202,6 +223,7 @@ func runtimeAuthorityBinding(authority RuntimePlanAuthority) install.Digest {
 	writeRuntimeAuthorityField(&canonical, authority.plan.Digest().String())
 	writeRuntimeAuthorityField(&canonical, authority.hostEvidence.String())
 	writeRuntimeAuthorityField(&canonical, authority.discoveryEvidence.String())
+	writeRuntimeAuthorityField(&canonical, authority.catalogResourceEvidence.String())
 	writeRuntimeAuthorityField(&canonical, authority.signedCatalogEvidence.String())
 	return install.DigestBytes(canonical.Bytes())
 }

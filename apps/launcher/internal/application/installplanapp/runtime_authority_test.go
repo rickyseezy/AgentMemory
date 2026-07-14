@@ -49,7 +49,8 @@ func TestRuntimePlanAuthorityRejectsEveryTamperedBinding(t *testing.T) {
 	if _, err := NewRuntimePlanAuthority(
 		fixture.runtimePlans.authority.OperationID(), fixture.runtimePlans.authority.ParentPlanDigest(),
 		fixture.runtimePlans.authority.Plan(), install.DigestBytes([]byte("host")),
-		install.DigestBytes([]byte("discovery")), install.DigestBytes([]byte("foreign catalog")),
+		install.DigestBytes([]byte("discovery")), install.DigestBytes([]byte("catalog resource")),
+		install.DigestBytes([]byte("foreign catalog")),
 	); !errors.Is(err, ErrRuntimePlanIntegrity) {
 		t.Fatalf("foreign signed catalog authority error = %v", err)
 	}
@@ -61,6 +62,9 @@ func TestRuntimePlanAuthorityRejectsEveryTamperedBinding(t *testing.T) {
 		{name: "operation", mutate: func(record *RuntimePlanAuthorityRecord) { record.OperationID = "foreign" }},
 		{name: "parent", mutate: func(record *RuntimePlanAuthorityRecord) {
 			record.ParentPlanDigest = install.DigestBytes([]byte("foreign")).String()
+		}},
+		{name: "catalog resource", mutate: func(record *RuntimePlanAuthorityRecord) {
+			record.CatalogResourceEvidenceDigest = install.DigestBytes([]byte("foreign resource")).String()
 		}},
 		{name: "plan", mutate: func(record *RuntimePlanAuthorityRecord) { record.CanonicalPlan = []byte(`{"schema_version":1}`) }},
 		{name: "host", mutate: func(record *RuntimePlanAuthorityRecord) {

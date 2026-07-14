@@ -127,7 +127,8 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 	runtimePlan, err := application.ResolveRuntimePlan(context.Background(), plan.Digest(), plan.OperationID())
 	if err != nil || !runtimePlan.ParentPlanDigest().Equal(plan.Digest()) ||
 		runtimePlan.PlanDigest() != runtimeinstall.Sum(runtimePlan.CanonicalPlan()) ||
-		!runtimePlan.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) || fixture.runtimeEvidence.calls != 1 {
+		!runtimePlan.SignedCatalogEvidenceDigest().Equal(fixture.runtimeEvidence.evidence.SignedCatalogEvidenceDigest()) ||
+		runtimePlan.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) || fixture.runtimeEvidence.calls != 1 {
 		t.Fatalf("runtime projection = %+v/%v", runtimePlan, err)
 	}
 	if _, err := runtimeinstall.DecodePlanV1(runtimePlan.CanonicalPlan()); err != nil {
@@ -210,7 +211,8 @@ func TestApplicationRuntimeAuthorityFailsClosedAndReconcilesOnePublisherRace(t *
 			base := fixture.runtimeEvidence.evidence
 			foreign, err := NewRuntimeEvidence(
 				base.Host(), base.Discovery(), base.Catalog(), install.DigestBytes([]byte("foreign host")),
-				base.DiscoveryEvidenceDigest(), base.SignedCatalogEvidenceDigest(),
+				base.DiscoveryEvidenceDigest(), base.CatalogResourceEvidenceDigest(),
+				base.SignedCatalogEvidenceDigest(),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -240,7 +242,7 @@ func TestApplicationRuntimeAuthorityFailsClosedAndReconcilesOnePublisherRace(t *
 			contradictory, err := NewRuntimePlanAuthority(
 				persisted.OperationID(), persisted.ParentPlanDigest(), persisted.Plan(),
 				install.DigestBytes([]byte("foreign host")), persisted.DiscoveryEvidenceDigest(),
-				persisted.SignedCatalogEvidenceDigest(),
+				persisted.CatalogResourceEvidenceDigest(), persisted.SignedCatalogEvidenceDigest(),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -464,7 +466,8 @@ func newApplicationFixture(t testing.TB, plan installplan.Plan) *applicationFixt
 			hostEvidence = evidence.OutputDigest()
 		}
 	}
-	catalogHash, err := runtimeinstall.ParseHash(plan.RuntimeCatalogDigest().String())
+	innerCatalogDigest := install.DigestBytes([]byte("inner signed runtime catalog manifest"))
+	catalogHash, err := runtimeinstall.ParseHash(innerCatalogDigest.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,6 +488,7 @@ func newApplicationFixture(t testing.TB, plan installplan.Plan) *applicationFixt
 	runtimeEvidence, err := NewRuntimeEvidence(
 		host, runtimeinstall.NewAbsentRuntimeDiscovery(), catalog, hostEvidence,
 		install.DigestBytes([]byte("runtime discovery evidence")), plan.RuntimeCatalogDigest(),
+		innerCatalogDigest,
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -163,6 +163,9 @@ func TestLinuxAuthorityRejectsMalformedIdentityPathRepositoryAndProbeImageForms(
 		},
 		func(input *LinuxAuthorityInput) { input.PackageManagerVersion = "latest" },
 		func(input *LinuxAuthorityInput) { input.Repository.Component = "testing" },
+		func(input *LinuxAuthorityInput) { input.TermsID = "" },
+		func(input *LinuxAuthorityInput) { input.TermsURL = "https://example.invalid/terms" },
+		func(input *LinuxAuthorityInput) { input.TermsPresentation = "native_vendor_ui" },
 	}
 	for index, mutate := range mutations {
 		candidate := cloneAuthorityInput(valid)
@@ -213,8 +216,11 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 	}
 	return LinuxAuthorityInput{
 		PlanDigest: plan.Digest(), CatalogDigest: plan.CatalogDigest(), TermsDigest: plan.TermsDigest(),
-		ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
-		SigningKeyID:   "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
+		TermsID: "docker-subscription-service-agreement", TermsVersion: "2025.07.02",
+		TermsURL:          "https://www.docker.com/legal/docker-subscription-service-agreement/",
+		TermsPresentation: "agentmemory",
+		ArtifactDigest:    runtimeinstall.Sum([]byte("artifact")),
+		SigningKeyID:      "agentmemory-runtime-root-2026", Architecture: runtimeinstall.ArchitectureAMD64,
 		Distribution: "ubuntu", VersionID: "24.04", Codename: "noble", MinimumKernel: "6.8.0",
 		MinimumCPUs: 4, MinimumTotalMemory: 16 << 30, MinimumAvailableMemory: 12 << 30,
 		MinimumFreeDisk: 30 << 30, PackageManager: PackageManagerAPT, PackageManagerVersion: "2.8.3",

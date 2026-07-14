@@ -1,18 +1,19 @@
 package runtimecatalog
 
 type canonicalManifest struct {
-	Artifact         canonicalArtifact       `json:"artifact"`
-	CapabilityProbes []CapabilityProbe       `json:"capability_probes"`
-	CatalogID        string                  `json:"catalog_id"`
-	CatalogSequence  uint64                  `json:"catalog_sequence"`
-	Install          canonicalInstall        `json:"install"`
-	Platform         canonicalPlatform       `json:"platform"`
-	Prerequisites    []canonicalPrerequisite `json:"prerequisites"`
-	Runtime          canonicalRuntime        `json:"runtime"`
-	SchemaVersion    uint32                  `json:"schema_version"`
-	SigningKeyID     string                  `json:"signing_key_id"`
-	SupportExpiresAt int64                   `json:"support_expires_at"`
-	Terms            canonicalTerms          `json:"terms"`
+	Artifact         canonicalArtifact        `json:"artifact"`
+	CapabilityProbes []CapabilityProbe        `json:"capability_probes"`
+	CatalogID        string                   `json:"catalog_id"`
+	CatalogSequence  uint64                   `json:"catalog_sequence"`
+	Install          canonicalInstall         `json:"install"`
+	LinuxExecution   *canonicalLinuxExecution `json:"linux_execution,omitempty"`
+	Platform         canonicalPlatform        `json:"platform"`
+	Prerequisites    []canonicalPrerequisite  `json:"prerequisites"`
+	Runtime          canonicalRuntime         `json:"runtime"`
+	SchemaVersion    uint32                   `json:"schema_version"`
+	SigningKeyID     string                   `json:"signing_key_id"`
+	SupportExpiresAt int64                    `json:"support_expires_at"`
+	Terms            canonicalTerms           `json:"terms"`
 }
 
 type canonicalPlatform struct {
@@ -60,6 +61,48 @@ type canonicalPublisher struct {
 	PackageIdentity    string             `json:"package_identity"`
 	SigningKeyIdentity string             `json:"signing_key_identity"`
 	Verification       NativeVerification `json:"verification"`
+}
+
+type canonicalLinuxExecution struct {
+	CapabilityPolicyDigest    string                   `json:"capability_policy_digest"`
+	Codename                  string                   `json:"codename"`
+	MinimumAvailableMemory    uint64                   `json:"minimum_available_memory"`
+	MinimumKernel             string                   `json:"minimum_kernel"`
+	PackageManager            LinuxPackageManager      `json:"package_manager"`
+	PackageManagerVersion     string                   `json:"package_manager_version"`
+	PackageSetDigest          string                   `json:"package_set_digest"`
+	Packages                  []canonicalLinuxPackage  `json:"packages"`
+	ProbeContractVersion      string                   `json:"probe_contract_version"`
+	ProbeImage                string                   `json:"probe_image"`
+	ProbeImageDigest          string                   `json:"probe_image_digest"`
+	Repository                canonicalLinuxRepository `json:"repository"`
+	RootlessToolDigest        string                   `json:"rootless_tool_digest"`
+	RootlessToolPath          string                   `json:"rootless_tool_path"`
+	SELinuxEnforcingSupported bool                     `json:"selinux_enforcing_supported"`
+	ServiceID                 string                   `json:"service_id"`
+	ServiceUnitDigest         string                   `json:"service_unit_digest"`
+	SubordinateIDCount        uint32                   `json:"subordinate_id_count"`
+}
+
+type canonicalLinuxRepository struct {
+	Component             string          `json:"component"`
+	ConfigurationDigest   string          `json:"configuration_digest"`
+	ID                    string          `json:"id"`
+	MetadataDigest        string          `json:"metadata_digest"`
+	SigningKeyDigest      string          `json:"signing_key_digest"`
+	SigningKeyFingerprint string          `json:"signing_key_fingerprint"`
+	Suite                 string          `json:"suite"`
+	URL                   canonicalSource `json:"url"`
+}
+
+type canonicalLinuxPackage struct {
+	DownloadBytes uint64              `json:"download_bytes"`
+	Name          string              `json:"name"`
+	Purpose       LinuxPackagePurpose `json:"purpose"`
+	ReceiptDigest string              `json:"receipt_digest"`
+	SHA256        string              `json:"sha256"`
+	Source        canonicalSource     `json:"source"`
+	Version       string              `json:"version"`
 }
 
 type canonicalSource struct {
@@ -124,6 +167,37 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			SubordinateIDCount: prerequisite.subordinateIDCount,
 		})
 	}
+	var linuxExecution *canonicalLinuxExecution
+	if manifest.linuxExecution != nil {
+		packages := make([]canonicalLinuxPackage, 0, len(manifest.linuxExecution.packages))
+		for _, pkg := range manifest.linuxExecution.packages {
+			packages = append(packages, canonicalLinuxPackage{
+				DownloadBytes: pkg.downloadBytes, Name: pkg.name, Purpose: pkg.purpose,
+				ReceiptDigest: pkg.nativeReceiptDigest.Hex(), SHA256: pkg.sha256.Hex(),
+				Source:  canonicalSource{Scheme: pkg.source.scheme, Host: pkg.source.host, PathPrefix: pkg.source.pathPrefix},
+				Version: pkg.version,
+			})
+		}
+		policy := manifest.linuxExecution
+		linuxExecution = &canonicalLinuxExecution{
+			CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(), Codename: policy.codename,
+			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumKernel: policy.minimumKernel,
+			PackageManager: policy.packageManager, PackageManagerVersion: policy.packageManagerVersion,
+			PackageSetDigest: policy.packageSetDigest.Hex(), Packages: packages,
+			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
+			ProbeImageDigest: policy.probeImageDigest.Hex(),
+			Repository: canonicalLinuxRepository{
+				Component: policy.repository.component, ConfigurationDigest: policy.repository.configurationDigest.Hex(),
+				ID: policy.repository.id, MetadataDigest: policy.repository.metadataDigest.Hex(),
+				SigningKeyDigest:      policy.repository.signingKeyDigest.Hex(),
+				SigningKeyFingerprint: policy.repository.signingKeyFingerprint, Suite: policy.repository.suite,
+				URL: canonicalSource{Scheme: policy.repository.url.scheme, Host: policy.repository.url.host, PathPrefix: policy.repository.url.pathPrefix},
+			},
+			RootlessToolDigest: policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
+			SELinuxEnforcingSupported: policy.selinuxEnforcingSupported, ServiceID: policy.serviceID,
+			ServiceUnitDigest: policy.serviceUnitDigest.Hex(), SubordinateIDCount: policy.subordinateIDCount,
+		}
+	}
 	return canonicalManifest{
 		Artifact: canonicalArtifact{
 			DownloadBytes: manifest.artifact.downloadBytes, ExpandedBytes: manifest.artifact.expandedBytes,
@@ -148,6 +222,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			ServiceIdentity:   manifest.install.serviceIdentity,
 			VendorUIMandatory: manifest.install.vendorUIMandatory,
 		},
+		LinuxExecution: linuxExecution,
 		Platform: canonicalPlatform{
 			Architecture: manifest.platform.architecture, Distribution: manifest.platform.distribution,
 			Edition: manifest.platform.edition, MaximumBuild: manifest.platform.maximumBuild,

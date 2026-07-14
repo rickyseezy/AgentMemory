@@ -18,6 +18,7 @@ type ManifestInput struct {
 	Runtime          RuntimePolicyInput
 	Artifact         ArtifactPolicyInput
 	Install          InstallerPolicyInput
+	LinuxExecution   LinuxExecutionPolicyInput
 	Prerequisites    []PrerequisiteInput
 	CapabilityProbes []CapabilityProbe
 	Terms            TermsPolicyInput
@@ -34,6 +35,7 @@ type Manifest struct {
 	runtime          RuntimePolicy
 	artifact         ArtifactPolicy
 	install          InstallerPolicy
+	linuxExecution   *LinuxExecutionPolicy
 	prerequisites    []Prerequisite
 	capabilityProbes []CapabilityProbe
 	terms            TermsPolicy
@@ -65,6 +67,16 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, ErrManifestIntegrity
 	}
+	var linuxExecution *LinuxExecutionPolicy
+	if platform.operatingSystem == OSKindLinux {
+		policy, policyError := newLinuxExecutionPolicy(input.LinuxExecution, artifact)
+		if policyError != nil || input.LinuxExecution.MinimumAvailableMemory > platform.minimumMemoryBytes {
+			return Manifest{}, ErrManifestIntegrity
+		}
+		linuxExecution = &policy
+	} else if !linuxExecutionInputZero(input.LinuxExecution) {
+		return Manifest{}, ErrManifestIntegrity
+	}
 	prerequisites, err := buildPrerequisites(input.Prerequisites)
 	if err != nil {
 		return Manifest{}, ErrManifestIntegrity
@@ -77,11 +89,17 @@ func NewManifest(input ManifestInput) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, ErrManifestIntegrity
 	}
+	if !linuxManifestBindingsValid(
+		linuxExecution, platform, artifact, install, prerequisites, capabilities, terms,
+	) {
+		return Manifest{}, ErrManifestIntegrity
+	}
 	manifest := Manifest{
 		schemaVersion: input.SchemaVersion, catalogID: input.CatalogID, sequence: input.CatalogSequence,
 		signingKeyID: input.SigningKeyID, supportExpiresAt: input.SupportExpiresAt.UTC(),
 		platform: platform, runtime: runtimePolicy, artifact: artifact, install: install,
-		prerequisites: prerequisites, capabilityProbes: capabilities, terms: terms,
+		linuxExecution: linuxExecution, prerequisites: prerequisites,
+		capabilityProbes: capabilities, terms: terms,
 	}
 	canonical, err := marshalCanonical(manifest)
 	if err != nil || len(canonical) == 0 || len(canonical) > maximumRawManifestBytes {
@@ -179,6 +197,15 @@ func (m Manifest) Artifact() ArtifactPolicy { return m.artifact }
 // Install returns the closed installer policy.
 func (m Manifest) Install() InstallerPolicy { return m.install }
 
+// LinuxExecution returns the complete signed Linux execution projection when
+// this is a Linux catalog cell. Other platforms return false.
+func (m Manifest) LinuxExecution() (LinuxExecutionPolicy, bool) {
+	if m.linuxExecution == nil {
+		return LinuxExecutionPolicy{}, false
+	}
+	return *m.linuxExecution, true
+}
+
 // Prerequisites returns a defensive copy of typed privilege operations.
 func (m Manifest) Prerequisites() []Prerequisite {
 	return append([]Prerequisite(nil), m.prerequisites...)
@@ -202,7 +229,10 @@ func (m Manifest) Digest() Digest { return m.digest }
 func (m Manifest) Valid() bool {
 	if m.schemaVersion != SupportedSchemaVersion || !m.platform.valid() ||
 		!m.runtime.valid(m.platform.operatingSystem) || !m.artifact.valid(m.platform.operatingSystem) ||
-		!m.terms.valid() || !m.install.valid(m.platform.operatingSystem) || !prerequisitesValid(m.prerequisites) ||
+		!m.terms.valid() || !m.install.valid(m.platform.operatingSystem) ||
+		!linuxManifestBindingsValid(
+			m.linuxExecution, m.platform, m.artifact, m.install, m.prerequisites, m.capabilityProbes, m.terms,
+		) || !prerequisitesValid(m.prerequisites) ||
 		!capabilitiesValid(m.capabilityProbes, m.platform.operatingSystem) ||
 		len(m.canonical) == 0 || m.digest.IsZero() {
 		return false

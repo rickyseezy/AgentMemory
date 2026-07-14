@@ -43,12 +43,14 @@ func NewPlanV1(host HostCapabilities, discovery RuntimeDiscovery, catalog Certif
 		return Plan{}, ErrPlanIntegrity
 	}
 	return Plan{
-		action:       parsePlanAction(document.Action),
-		decisionCode: parseDecisionCode(document.DecisionCode),
-		digest:       Sum(canonical),
-		canonical:    canonical,
-		catalogHash:  catalog.catalogDigest,
-		termsHash:    catalog.termsDigest,
+		action:             parsePlanAction(document.Action),
+		decisionCode:       parseDecisionCode(document.DecisionCode),
+		digest:             Sum(canonical),
+		canonical:          canonical,
+		catalogHash:        catalog.catalogDigest,
+		termsHash:          catalog.termsDigest,
+		hostOSVersion:      host.osVersion,
+		unrelatedWorkloads: discovery.unrelatedWorkloads,
 	}, nil
 }
 

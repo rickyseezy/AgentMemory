@@ -64,6 +64,10 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 	if err != nil {
 		return ManifestInput{}, err
 	}
+	linuxExecution, err := linuxExecutionInputFromCanonical(document.LinuxExecution)
+	if err != nil {
+		return ManifestInput{}, err
+	}
 	components := make([]RuntimeComponentInput, 0, len(document.Runtime.Components))
 	for _, component := range document.Runtime.Components {
 		components = append(components, RuntimeComponentInput(component))
@@ -130,6 +134,7 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 			OwnershipChanges:  append([]string(nil), document.Install.OwnershipChanges...),
 			VendorUIMandatory: document.Install.VendorUIMandatory,
 		},
+		LinuxExecution:   linuxExecution,
 		Prerequisites:    prerequisites,
 		CapabilityProbes: append([]CapabilityProbe(nil), document.CapabilityProbes...),
 		Terms: TermsPolicyInput{
@@ -140,6 +145,82 @@ func inputFromCanonical(document canonicalManifest) (ManifestInput, error) {
 			},
 			Digest: termsDigest, Presentation: document.Terms.Presentation,
 		},
+	}, nil
+}
+
+func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxExecutionPolicyInput, error) {
+	if document == nil {
+		return LinuxExecutionPolicyInput{}, nil
+	}
+	packageSetDigest, err := ParseDigest(document.PackageSetDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	serviceUnitDigest, err := ParseDigest(document.ServiceUnitDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	rootlessToolDigest, err := ParseDigest(document.RootlessToolDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	probeImageDigest, err := ParseDigest(document.ProbeImageDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	capabilityPolicyDigest, err := ParseDigest(document.CapabilityPolicyDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	signingKeyDigest, err := ParseDigest(document.Repository.SigningKeyDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	configurationDigest, err := ParseDigest(document.Repository.ConfigurationDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	metadataDigest, err := ParseDigest(document.Repository.MetadataDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	packages := make([]LinuxPackageInput, 0, len(document.Packages))
+	for _, pkg := range document.Packages {
+		sha256Digest, parseError := ParseDigest(pkg.SHA256)
+		if parseError != nil {
+			return LinuxExecutionPolicyInput{}, parseError
+		}
+		receiptDigest, parseError := ParseDigest(pkg.ReceiptDigest)
+		if parseError != nil {
+			return LinuxExecutionPolicyInput{}, parseError
+		}
+		packages = append(packages, LinuxPackageInput{
+			Name: pkg.Name, Version: pkg.Version, Purpose: pkg.Purpose,
+			DownloadBytes: pkg.DownloadBytes, SHA256: sha256Digest,
+			NativeReceiptDigest: receiptDigest,
+			Source:              OfficialSourceInput{Scheme: pkg.Source.Scheme, Host: pkg.Source.Host, PathPrefix: pkg.Source.PathPrefix},
+		})
+	}
+	return LinuxExecutionPolicyInput{
+		PackageManager: document.PackageManager, PackageManagerVersion: document.PackageManagerVersion,
+		Codename: document.Codename, MinimumKernel: document.MinimumKernel,
+		MinimumAvailableMemory: document.MinimumAvailableMemory,
+		Repository: LinuxRepositoryInput{
+			ID:    document.Repository.ID,
+			URL:   OfficialSourceInput{Scheme: document.Repository.URL.Scheme, Host: document.Repository.URL.Host, PathPrefix: document.Repository.URL.PathPrefix},
+			Suite: document.Repository.Suite, Component: document.Repository.Component,
+			SigningKeyFingerprint: document.Repository.SigningKeyFingerprint,
+			SigningKeyDigest:      signingKeyDigest, ConfigurationDigest: configurationDigest,
+			MetadataDigest: metadataDigest,
+		},
+		Packages: packages, PackageSetDigest: packageSetDigest,
+		SubordinateIDCount:        document.SubordinateIDCount,
+		SELinuxEnforcingSupported: document.SELinuxEnforcingSupported,
+		ServiceID:                 document.ServiceID, ServiceUnitDigest: serviceUnitDigest,
+		RootlessToolPath: document.RootlessToolPath, RootlessToolDigest: rootlessToolDigest,
+		ProbeImage: document.ProbeImage, ProbeImageDigest: probeImageDigest,
+		ProbeContractVersion:   document.ProbeContractVersion,
+		CapabilityPolicyDigest: capabilityPolicyDigest,
 	}, nil
 }
 

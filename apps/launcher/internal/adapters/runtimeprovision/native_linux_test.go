@@ -159,8 +159,10 @@ func TestLinuxNativeHostProbeCollectsTheInvokingPrincipal(t *testing.T) {
 	}
 	input := runtimeport.LinuxAuthorityInput{
 		PlanDigest: template.PlanDigest(), CatalogDigest: template.CatalogDigest(), TermsDigest: template.TermsDigest(),
-		ArtifactDigest: template.ArtifactDigest(),
-		SigningKeyID:   "agentmemory-runtime-root-2026", Architecture: architecture,
+		TermsID: template.TermsID(), TermsVersion: template.TermsVersion(), TermsURL: template.TermsURL(),
+		TermsPresentation: template.TermsPresentation(),
+		ArtifactDigest:    template.ArtifactDigest(),
+		SigningKeyID:      "agentmemory-runtime-root-2026", Architecture: architecture,
 		Distribution: distribution, VersionID: version, Codename: "noble", MinimumKernel: template.MinimumKernel(),
 		MinimumCPUs: template.MinimumCPUs(), MinimumTotalMemory: template.MinimumTotalMemory(),
 		MinimumAvailableMemory: template.MinimumAvailableMemory(), MinimumFreeDisk: template.MinimumFreeDisk(),

@@ -396,12 +396,14 @@ func (c DecisionCode) String() string {
 
 // Plan is a deterministic, exact-catalog-bound runtime decision.
 type Plan struct {
-	action       PlanAction
-	decisionCode DecisionCode
-	digest       Hash
-	canonical    []byte
-	catalogHash  Hash
-	termsHash    Hash
+	action             PlanAction
+	decisionCode       DecisionCode
+	digest             Hash
+	canonical          []byte
+	catalogHash        Hash
+	termsHash          Hash
+	hostOSVersion      string
+	unrelatedWorkloads uint32
 }
 
 // Action returns the closed mutation decision.
@@ -423,6 +425,14 @@ func (p Plan) CatalogDigest() Hash { return p.catalogHash }
 // TermsDigest returns the exact third-party terms document bound into the
 // verified runtime catalog and canonical plan.
 func (p Plan) TermsDigest() Hash { return p.termsHash }
+
+// HostOSVersion returns the exact independently probed release string bound
+// into the canonical plan.
+func (p Plan) HostOSVersion() string { return p.hostOSVersion }
+
+// UnrelatedWorkloads returns the exact pre-install workload count bound into
+// runtime discovery. Provisioning must preserve this inventory.
+func (p Plan) UnrelatedWorkloads() uint32 { return p.unrelatedWorkloads }
 
 // PlanPolicy chooses a closed action from verified facts.
 type PlanPolicy struct{}

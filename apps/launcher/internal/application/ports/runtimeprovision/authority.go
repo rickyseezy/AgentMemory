@@ -142,6 +142,10 @@ type LinuxAuthorityInput struct {
 	PlanDigest             runtimeinstall.Hash
 	CatalogDigest          runtimeinstall.Hash
 	TermsDigest            runtimeinstall.Hash
+	TermsID                string
+	TermsVersion           string
+	TermsURL               string
+	TermsPresentation      string
 	ArtifactDigest         runtimeinstall.Hash
 	SigningKeyID           string
 	Architecture           runtimeinstall.Architecture
@@ -212,6 +216,7 @@ func NewLinuxAuthority(input LinuxAuthorityInput) (LinuxAuthority, error) {
 
 func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 	if input.PlanDigest.IsZero() || input.CatalogDigest.IsZero() || input.TermsDigest.IsZero() ||
+		!validLinuxTerms(input) ||
 		input.ArtifactDigest.IsZero() ||
 		!validIdentity(input.SigningKeyID) || input.Architecture != runtimeinstall.ArchitectureAMD64 &&
 		input.Architecture != runtimeinstall.ArchitectureARM64 || !validDistribution(input.Distribution) ||
@@ -237,6 +242,15 @@ func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 	}
 	return !strings.HasPrefix(input.HomeDirectory, "/tmp/") && input.HomeDirectory != "/tmp" &&
 		input.HomeDirectory != input.RuntimeDirectory
+}
+
+func validLinuxTerms(input LinuxAuthorityInput) bool {
+	if !validIdentity(input.TermsID) || !validPackageVersion(input.TermsVersion) ||
+		input.TermsPresentation != "agentmemory" {
+		return false
+	}
+	wanted := "https://www.docker.com/legal/" + input.TermsID
+	return input.TermsURL == wanted || input.TermsURL == wanted+"/"
 }
 
 func newRepository(input RepositoryInput, distribution string, codename string) (Repository, error) {
@@ -445,6 +459,10 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		SigningKey   string             `json:"signing_key_id"`
 		SubIDs       uint32             `json:"subordinate_id_count"`
 		Terms        string             `json:"terms_digest"`
+		TermsID      string             `json:"terms_id"`
+		TermsMode    string             `json:"terms_presentation"`
+		TermsURL     string             `json:"terms_url"`
+		TermsVersion string             `json:"terms_version"`
 		UID          uint32             `json:"uid"`
 		Workloads    uint32             `json:"unrelated_workloads"`
 		Version      string             `json:"version_id"`
@@ -465,7 +483,9 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		RuntimeDir: a.input.RuntimeDirectory, SELinux: a.input.SELinuxEnforcing,
 		Service: a.input.ServiceID, ServiceSHA: a.input.ServiceUnitDigest.String(),
 		SigningKey: a.input.SigningKeyID, SubIDs: a.input.SubordinateIDCount,
-		Terms: a.input.TermsDigest.String(), UID: a.input.InvokingUID,
+		Terms: a.input.TermsDigest.String(), TermsID: a.input.TermsID,
+		TermsMode: a.input.TermsPresentation, TermsURL: a.input.TermsURL,
+		TermsVersion: a.input.TermsVersion, UID: a.input.InvokingUID,
 		Version: a.input.VersionID, Workloads: a.input.UnrelatedWorkloads,
 	}
 	return json.Marshal(document)
@@ -495,6 +515,18 @@ func (a LinuxAuthority) CatalogDigest() runtimeinstall.Hash { return a.input.Cat
 // TermsDigest returns the exact third-party terms binding that must be shown
 // and accepted before a certified Linux runtime mutation.
 func (a LinuxAuthority) TermsDigest() runtimeinstall.Hash { return a.input.TermsDigest }
+
+// TermsID returns the exact vendor agreement identity shown to the user.
+func (a LinuxAuthority) TermsID() string { return a.input.TermsID }
+
+// TermsVersion returns the exact vendor agreement version.
+func (a LinuxAuthority) TermsVersion() string { return a.input.TermsVersion }
+
+// TermsURL returns the exact official HTTPS agreement location.
+func (a LinuxAuthority) TermsURL() string { return a.input.TermsURL }
+
+// TermsPresentation returns the signed visible-prompt policy.
+func (a LinuxAuthority) TermsPresentation() string { return a.input.TermsPresentation }
 
 // ArtifactDigest returns the publisher-verified runtime artifact binding.
 func (a LinuxAuthority) ArtifactDigest() runtimeinstall.Hash { return a.input.ArtifactDigest }

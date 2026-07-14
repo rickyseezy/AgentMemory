@@ -233,26 +233,38 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 	linux.Runtime.Components = append(linux.Runtime.Components, RuntimeComponentInput{
 		Name: ComponentRootlessExtras, Version: "28.3.2",
 	})
-	linux.Artifact.Publisher.Verification = NativeVerificationPackageSignature
-	linux.Artifact.Publisher.Identity = "docker-apt-repository"
-	linux.Artifact.Publisher.SigningKeyIdentity = "docker-release-key-2026"
-	linux.Artifact.Publisher.PackageIdentity = "docker-ce"
+	linux.Artifact = linuxArtifactPolicyInput(t)
+	linux.LinuxExecution = linuxExecutionPolicyInput(t, linux.Artifact)
 	linux.Install.Executable = InstallerExecutableRootlessSetup
-	linux.Artifact.Sources[0] = OfficialSourceInput{
-		Scheme: "https", Host: "download.docker.com", PathPrefix: "/linux/ubuntu/",
+	linux.Install.ServiceIdentity = "docker.service"
+	linux.Install.OwnershipChanges = []string{"repository:docker-stable", "service:docker.service"}
+	linux.Prerequisites = []PrerequisiteInput{
+		{Operation: PrerequisiteConfigureOfficialRepository, RepositoryID: "docker-stable"},
+		{Operation: PrerequisiteConfigureSubordinateIDs, SubordinateIDCount: 65536},
+		{Operation: PrerequisiteEnableUserService, ServiceID: "docker.service"},
+		{Operation: PrerequisiteInstallVerifiedPackage, PackageIDs: []string{
+			"containerd.io", "docker-buildx-plugin", "docker-ce", "docker-ce-cli",
+			"docker-ce-rootless-extras", "docker-compose-plugin", "uidmap",
+		}},
 	}
-	linux.CapabilityProbes = append(linux.CapabilityProbes, CapabilityRootless)
-	for left := 0; left < len(linux.CapabilityProbes); left++ {
-		for right := left + 1; right < len(linux.CapabilityProbes); right++ {
-			if linux.CapabilityProbes[right] < linux.CapabilityProbes[left] {
-				linux.CapabilityProbes[left], linux.CapabilityProbes[right] = linux.CapabilityProbes[right], linux.CapabilityProbes[left]
-			}
-		}
-	}
+	linux.CapabilityProbes = linuxCapabilities()
+	linux.Terms.Presentation = TermsPresentationAgentMemory
 	linuxManifest := mustManifest(t, linux)
+	linuxExecution, present := linuxManifest.LinuxExecution()
 	if linuxManifest.Runtime().Product() != RuntimeProductDockerEngine ||
-		linuxManifest.Artifact().Publisher().Verification() != NativeVerificationPackageSignature {
+		linuxManifest.Artifact().Publisher().Verification() != NativeVerificationPackageSignature ||
+		!present || linuxExecution.PackageSetDigest().IsZero() {
 		t.Fatal("Linux runtime policy was not preserved")
+	}
+	raw, err := EncodeManifestV1(linuxManifest)
+	if err != nil {
+		t.Fatalf("EncodeManifestV1(Linux) error = %v", err)
+	}
+	decoded, err := DecodeManifestV1(raw)
+	decodedExecution, decodedPresent := decoded.LinuxExecution()
+	if err != nil || !decodedPresent || !decoded.Digest().Equal(linuxManifest.Digest()) ||
+		!decodedExecution.PackageSetDigest().Equal(linuxExecution.PackageSetDigest()) {
+		t.Fatalf("DecodeManifestV1(Linux) = present:%v error:%v", decodedPresent, err)
 	}
 }
 

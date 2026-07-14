@@ -37,12 +37,13 @@ func TestNativeCatalogObserverBindsVerifiedCatalogPublisherAndNativeEvidence(t *
 			Evidence: runtimeinstall.Sum([]byte("native observation")),
 		},
 	}
-	observer, err := newNativeCatalogObserver(publishers, backend)
+	hostAttestor := &catalogHostReattestorStub{}
+	observer, err := newNativeCatalogObserver(publishers, hostAttestor, backend)
 	if err != nil {
 		t.Fatal(err)
 	}
 	host, discovery, evidence, err := observer.ObserveRuntime(t.Context(), observationRequest(t), catalog, certified)
-	if err != nil || backend.calls != 1 || backend.input.NativePublisherTrust != trust ||
+	if err != nil || hostAttestor.calls != 1 || backend.calls != 1 || backend.input.NativePublisherTrust != trust ||
 		host.Platform() != runtimeinstall.PlatformDarwin ||
 		discovery != runtimeinstall.NewAbsentRuntimeDiscovery() || evidence.IsZero() {
 		t.Fatalf("observation=%+v/%+v/%s error=%v backend=%+v", host, discovery, evidence, err, backend)
@@ -63,17 +64,20 @@ func TestNativeCatalogObserverFailsClosedAtEveryBoundary(t *testing.T) {
 		Host: observationHost(t), Discovery: runtimeinstall.NewAbsentRuntimeDiscovery(),
 		Evidence: runtimeinstall.Sum([]byte("evidence")),
 	}}
+	validHost := &catalogHostReattestorStub{}
 	for name, test := range map[string]struct {
 		publishers CatalogPublisherTrustResolver
+		host       HostEvidenceReattestor
 		backend    catalogObservationBackend
 		mutate     func(*installplanapp.RuntimeEvidenceRequest)
 	}{
-		"publisher": {backend: validBackend},
-		"backend":   {publishers: publishers},
-		"host plan": {publishers: publishers, backend: validBackend, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
+		"publisher": {host: validHost, backend: validBackend},
+		"host":      {publishers: publishers, backend: validBackend},
+		"backend":   {publishers: publishers, host: validHost},
+		"host plan": {publishers: publishers, host: validHost, backend: validBackend, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
 			value.SignedHostPlan = hostverification.SignedPlan{}
 		}},
-		"storage": {publishers: publishers, backend: validBackend, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
+		"storage": {publishers: publishers, host: validHost, backend: validBackend, mutate: func(value *installplanapp.RuntimeEvidenceRequest) {
 			value.HostStorageTarget = ""
 		}},
 	} {
@@ -81,8 +85,8 @@ func TestNativeCatalogObserverFailsClosedAtEveryBoundary(t *testing.T) {
 		if test.mutate != nil {
 			test.mutate(&request)
 		}
-		observer, constructError := newNativeCatalogObserver(test.publishers, test.backend)
-		if name == "publisher" || name == "backend" {
+		observer, constructError := newNativeCatalogObserver(test.publishers, test.host, test.backend)
+		if name == "publisher" || name == "host" || name == "backend" {
 			if observer != nil || constructError == nil {
 				t.Fatalf("%s accepted: observer=%+v error=%v", name, observer, constructError)
 			}
@@ -95,6 +99,16 @@ func TestNativeCatalogObserverFailsClosedAtEveryBoundary(t *testing.T) {
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
+	for name, attestor := range map[string]*catalogHostReattestorStub{
+		"failure":   {err: errors.New("private")},
+		"cancelled": {err: context.Canceled},
+	} {
+		observer, _ := newNativeCatalogObserver(publishers, attestor, validBackend)
+		_, _, _, err := observer.ObserveRuntime(t.Context(), observationRequest(t), catalog, certified)
+		if name == "cancelled" && !errors.Is(err, context.Canceled) || name == "failure" && !errors.Is(err, ErrProbeFailed) {
+			t.Fatalf("host %s error=%v", name, err)
+		}
+	}
 	for name, backend := range map[string]*catalogObservationBackendStub{
 		"failure": {err: errors.New("private")},
 		"empty evidence": {result: CatalogObservationResult{
@@ -104,14 +118,14 @@ func TestNativeCatalogObserverFailsClosedAtEveryBoundary(t *testing.T) {
 			Discovery: runtimeinstall.NewAbsentRuntimeDiscovery(), Evidence: runtimeinstall.Sum([]byte("evidence")),
 		}},
 	} {
-		observer, _ := newNativeCatalogObserver(publishers, backend)
+		observer, _ := newNativeCatalogObserver(publishers, validHost, backend)
 		if _, _, _, err := observer.ObserveRuntime(t.Context(), observationRequest(t), catalog, certified); !errors.Is(err, ErrProbeFailed) {
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	observer, _ := newNativeCatalogObserver(publishers, validBackend)
+	observer, _ := newNativeCatalogObserver(publishers, validHost, validBackend)
 	if _, _, _, err := observer.ObserveRuntime(cancelled, observationRequest(t), catalog, certified); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled error=%v", err)
 	}
@@ -181,6 +195,16 @@ type catalogObservationBackendStub struct {
 	input  CatalogObservationInput
 	err    error
 	calls  int
+}
+
+type catalogHostReattestorStub struct {
+	err   error
+	calls int
+}
+
+func (s *catalogHostReattestorStub) ReattestHost(context.Context, installplanapp.RuntimeEvidenceRequest) error {
+	s.calls++
+	return s.err
 }
 
 func (s *catalogObservationBackendStub) ObserveCatalogRuntime(_ context.Context, input CatalogObservationInput) (CatalogObservationResult, error) {

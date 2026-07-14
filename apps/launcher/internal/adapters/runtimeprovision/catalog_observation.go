@@ -18,6 +18,13 @@ type CatalogPublisherTrustResolver interface {
 	NativeTrustDigest(runtimecatalog.PublisherPolicy) (runtimecatalog.Digest, error)
 }
 
+// HostEvidenceReattestor reruns the release-authenticated native host proof and
+// accepts only the exact operation-scoped evidence receipt already committed
+// by the completed host-verification phase.
+type HostEvidenceReattestor interface {
+	ReattestHost(context.Context, installplanapp.RuntimeEvidenceRequest) error
+}
+
 // CatalogObservationInput is immutable authority for a native read-only probe.
 type CatalogObservationInput struct {
 	Catalog              runtimecatalogapp.VerifiedCatalog
@@ -42,22 +49,27 @@ type catalogObservationBackend interface {
 // build-tag-selected native observation backend.
 type NativeCatalogObserver struct {
 	publishers CatalogPublisherTrustResolver
+	host       HostEvidenceReattestor
 	backend    catalogObservationBackend
 }
 
 // NewNativeCatalogObserver constructs the production platform observer.
-func NewNativeCatalogObserver(publishers CatalogPublisherTrustResolver) (*NativeCatalogObserver, error) {
-	return newNativeCatalogObserver(publishers, newNativeCatalogObservationBackend())
+func NewNativeCatalogObserver(
+	publishers CatalogPublisherTrustResolver,
+	host HostEvidenceReattestor,
+) (*NativeCatalogObserver, error) {
+	return newNativeCatalogObserver(publishers, host, newNativeCatalogObservationBackend())
 }
 
 func newNativeCatalogObserver(
 	publishers CatalogPublisherTrustResolver,
+	host HostEvidenceReattestor,
 	backend catalogObservationBackend,
 ) (*NativeCatalogObserver, error) {
-	if nilDependency(publishers) || nilDependency(backend) {
+	if nilDependency(publishers) || nilDependency(host) || nilDependency(backend) {
 		return nil, ErrProvisionIntegrity
 	}
-	return &NativeCatalogObserver{publishers: publishers, backend: backend}, nil
+	return &NativeCatalogObserver{publishers: publishers, host: host, backend: backend}, nil
 }
 
 // ObserveRuntime implements the infrastructure observation port without
@@ -68,7 +80,7 @@ func (o *NativeCatalogObserver) ObserveRuntime(
 	catalog runtimecatalogapp.VerifiedCatalog,
 	certified runtimeinstall.CertifiedRuntime,
 ) (runtimeinstall.HostCapabilities, runtimeinstall.RuntimeDiscovery, install.Digest, error) {
-	if o == nil || ctx == nil || nilDependency(o.publishers) || nilDependency(o.backend) ||
+	if o == nil || ctx == nil || nilDependency(o.publishers) || nilDependency(o.host) || nilDependency(o.backend) ||
 		!catalog.Manifest().Valid() || catalog.VerifiedAt().IsZero() || catalog.VerifiedAt().Location() != time.UTC ||
 		certified.CatalogDigest().IsZero() || runtimecatalog.Digest(certified.CatalogDigest()) != catalog.ManifestDigest() ||
 		request.OperationID.IsZero() || request.ParentPlanDigest.IsZero() || !request.SignedHostPlan.Valid() ||
@@ -78,6 +90,12 @@ func (o *NativeCatalogObserver) ObserveRuntime(
 	}
 	if err := ctx.Err(); err != nil {
 		return runtimeinstall.HostCapabilities{}, runtimeinstall.RuntimeDiscovery{}, install.Digest{}, err
+	}
+	if err := o.host.ReattestHost(ctx, request); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return runtimeinstall.HostCapabilities{}, runtimeinstall.RuntimeDiscovery{}, install.Digest{}, err
+		}
+		return runtimeinstall.HostCapabilities{}, runtimeinstall.RuntimeDiscovery{}, install.Digest{}, ErrProbeFailed
 	}
 	trust, err := o.publishers.NativeTrustDigest(catalog.Manifest().Artifact().Publisher())
 	if err != nil || trust.IsZero() {

@@ -83,7 +83,10 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		observer, err := runtimeprovision.NewNativeCatalogObserver(release.runtimeCatalogPublisherVerifier())
+		observer, err := runtimeprovision.NewNativeCatalogObserver(
+			release.runtimeCatalogPublisherVerifier(),
+			nativeRuntimeHostReattestor{verifier: release.hostVerification()},
+		)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}

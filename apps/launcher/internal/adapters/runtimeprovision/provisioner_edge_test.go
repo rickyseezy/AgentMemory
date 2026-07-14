@@ -389,6 +389,7 @@ func edgeProvisionerWithAuthenticator(
 ) *LinuxProvisioner {
 	t.Helper()
 	consent := newFakeLinuxConsent()
+	artifacts := &fakeLinuxArtifacts{}
 	seedLinuxConsent(
 		t, consent, "capture-request", authority, time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC),
 	)
@@ -397,6 +398,7 @@ func edgeProvisionerWithAuthenticator(
 		Host:      staticHostProbe{evidence: supportedHost(t, authority)},
 		Runtime:   runtimeInspector, Capabilities: capability, Privilege: broker,
 		Consent: consent, ConsentAuth: consent, ConsentStore: consent,
+		Artifacts: artifacts, ArtifactTrust: artifacts,
 		Authenticator: authenticator,
 		Replay:        &fakeReplayLedger{consumed: make(map[runtimeport.Nonce]runtimeinstall.Hash)},
 		Nonces:        &incrementingNonces{}, Clock: &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},

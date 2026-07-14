@@ -35,6 +35,8 @@ type Dependencies struct {
 	Consent       runtimeport.LinuxConsentBroker
 	ConsentAuth   runtimeport.LinuxConsentAuthenticator
 	ConsentStore  runtimeport.LinuxConsentRepository
+	Artifacts     runtimeport.LinuxArtifactAcquirer
+	ArtifactTrust runtimeport.LinuxArtifactVerifier
 	Privilege     runtimeport.PrivilegeBroker
 	Authenticator runtimeport.ReceiptAuthenticator
 	Replay        runtimeport.ReplayLedger
@@ -52,6 +54,8 @@ type LinuxProvisioner struct {
 	consent       runtimeport.LinuxConsentBroker
 	consentAuth   runtimeport.LinuxConsentAuthenticator
 	consentStore  runtimeport.LinuxConsentRepository
+	artifacts     runtimeport.LinuxArtifactAcquirer
+	artifactTrust runtimeport.LinuxArtifactVerifier
 	privilege     runtimeport.PrivilegeBroker
 	authenticator runtimeport.ReceiptAuthenticator
 	replay        runtimeport.ReplayLedger
@@ -65,6 +69,7 @@ func NewLinuxProvisioner(dependencies Dependencies) (*LinuxProvisioner, error) {
 	values := []any{
 		dependencies.Authority, dependencies.Host, dependencies.Runtime, dependencies.Capabilities,
 		dependencies.Consent, dependencies.ConsentAuth, dependencies.ConsentStore,
+		dependencies.Artifacts, dependencies.ArtifactTrust,
 		dependencies.Privilege, dependencies.Authenticator, dependencies.Replay,
 		dependencies.Nonces, dependencies.Clock, dependencies.RootlessTool,
 	}
@@ -83,9 +88,60 @@ func NewLinuxProvisioner(dependencies Dependencies) (*LinuxProvisioner, error) {
 		authority: dependencies.Authority, host: dependencies.Host, runtime: dependencies.Runtime,
 		capabilities: dependencies.Capabilities, privilege: dependencies.Privilege,
 		consent: dependencies.Consent, consentAuth: dependencies.ConsentAuth, consentStore: dependencies.ConsentStore,
+		artifacts: dependencies.Artifacts, artifactTrust: dependencies.ArtifactTrust,
 		authenticator: dependencies.Authenticator, replay: dependencies.Replay,
 		nonces: dependencies.Nonces, clock: dependencies.Clock, rootlessTool: dependencies.RootlessTool,
 	}, nil
+}
+
+// AcquireRuntime performs an unprivileged download-only acquisition of the
+// exact signed package set into retained owner-only staging.
+func (p *LinuxProvisioner) AcquireRuntime(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+) (runtimeinstallapp.Output, error) {
+	plan, authority, err := p.resolve(ctx, request)
+	if err != nil {
+		return mapExpectedOrError(err)
+	}
+	if plan.Action() == runtimeinstall.PlanActionBlock {
+		return blockOutput(plan.DecisionCode())
+	}
+	if passiveAction(plan.Action()) {
+		return p.completed(
+			request, authority, authority.ArtifactDigest(), runtimeinstall.OwnershipUnknown, false,
+		)
+	}
+	evidence, err := p.artifacts.AcquireLinuxArtifacts(ctx, authority)
+	if err != nil || !evidence.AcquiredFor(authority) {
+		return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProbeFailed)
+	}
+	return p.completed(request, authority, evidence.Digest(), runtimeinstall.OwnershipUnknown, false)
+}
+
+// VerifyRuntimeArtifact reopens the retained package set and proves exact
+// repository metadata, checksums, versions, and native package signatures.
+func (p *LinuxProvisioner) VerifyRuntimeArtifact(
+	ctx context.Context,
+	request runtimeinstallapp.Request,
+) (runtimeinstallapp.Output, error) {
+	plan, authority, err := p.resolve(ctx, request)
+	if err != nil {
+		return mapExpectedOrError(err)
+	}
+	if plan.Action() == runtimeinstall.PlanActionBlock {
+		return blockOutput(plan.DecisionCode())
+	}
+	if passiveAction(plan.Action()) {
+		return p.completed(
+			request, authority, authority.ArtifactDigest(), runtimeinstall.OwnershipUnknown, true,
+		)
+	}
+	evidence, err := p.artifactTrust.VerifyLinuxArtifacts(ctx, authority)
+	if err != nil || !evidence.VerifiedFor(authority) {
+		return runtimeinstallapp.Output{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+	}
+	return p.completed(request, authority, evidence.Digest(), runtimeinstall.OwnershipUnknown, true)
 }
 
 // PlanRuntime binds the decoded canonical decision to the exact signed Linux
@@ -250,6 +306,9 @@ func (p *LinuxProvisioner) InstallPrerequisites(
 	if _, err := p.requireLinuxConsent(ctx, request, authority); err != nil {
 		return p.linuxConsentError(ctx, err)
 	}
+	if _, err := p.reverifyLinuxArtifacts(ctx, authority); err != nil {
+		return runtimeinstallapp.Output{}, err
+	}
 	repositoryReceipt, output, err := p.executePrivilege(ctx, request, authority, runtimeport.PrivilegeConfigureRepository)
 	if err != nil || output != nil {
 		return outputOrZero(output), err
@@ -283,6 +342,10 @@ func (p *LinuxProvisioner) InstallRuntime(
 	if _, err := p.requireLinuxConsent(ctx, request, authority); err != nil {
 		return p.linuxConsentError(ctx, err)
 	}
+	artifactEvidence, err := p.reverifyLinuxArtifacts(ctx, authority)
+	if err != nil {
+		return runtimeinstallapp.Output{}, err
+	}
 	packageReceipt, output, err := p.executePrivilege(ctx, request, authority, runtimeport.PrivilegeInstallPackages)
 	if err != nil || output != nil {
 		return outputOrZero(output), err
@@ -305,7 +368,7 @@ func (p *LinuxProvisioner) InstallRuntime(
 		return runtimeinstallapp.Output{}, ErrProbeFailed
 	}
 	return p.completed(
-		request, authority, combineDigests(packageReceipt, authority.RootlessToolDigest()),
+		request, authority, combineDigests(packageReceipt, artifactEvidence.Digest(), authority.RootlessToolDigest()),
 		runtimeinstall.OwnershipUnknown, true,
 	)
 }
@@ -512,6 +575,17 @@ func (p *LinuxProvisioner) freshLinuxNonce(ctx context.Context) (time.Time, runt
 	return now, nonce, nil
 }
 
+func (p *LinuxProvisioner) reverifyLinuxArtifacts(
+	ctx context.Context,
+	authority runtimeport.LinuxAuthority,
+) (runtimeport.LinuxArtifactEvidence, error) {
+	evidence, err := p.artifactTrust.VerifyLinuxArtifacts(ctx, authority)
+	if err != nil || !evidence.VerifiedFor(authority) {
+		return runtimeport.LinuxArtifactEvidence{}, sanitizeBoundaryError(ctx, err, ErrProvisionIntegrity)
+	}
+	return evidence, nil
+}
+
 func (p *LinuxProvisioner) requireLinuxConsent(
 	ctx context.Context,
 	request runtimeinstallapp.Request,
@@ -693,6 +767,8 @@ var (
 	_ runtimeinstallapp.ContainerRuntimeDetector     = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.RuntimeReleaseCatalog        = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.RuntimeConsentPort           = (*LinuxProvisioner)(nil)
+	_ runtimeinstallapp.RuntimeArtifactFetcher       = (*LinuxProvisioner)(nil)
+	_ runtimeinstallapp.RuntimeArtifactVerifier      = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.RuntimePrerequisiteInstaller = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.ContainerRuntimeInstaller    = (*LinuxProvisioner)(nil)
 	_ runtimeinstallapp.ThirdPartyTermsPort          = (*LinuxProvisioner)(nil)

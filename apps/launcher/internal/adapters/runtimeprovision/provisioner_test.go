@@ -22,10 +22,12 @@ func TestLinuxProvisionerCompletesCertifiedRootlessInstallThroughExactTypedEffec
 	replay := &fakeReplayLedger{consumed: make(map[runtimeport.Nonce]runtimeinstall.Hash)}
 	rootless := &fakeRunner{authority: rootlessAuthority(t, authority)}
 	consent := newFakeLinuxConsent()
+	artifacts := &fakeLinuxArtifacts{}
 	provisioner, err := NewLinuxProvisioner(Dependencies{
 		Authority: staticAuthorityResolver{authority: authority}, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 		Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
 		Consent: consent, ConsentAuth: consent, ConsentStore: consent,
+		Artifacts: artifacts, ArtifactTrust: artifacts,
 		Privilege: broker, Authenticator: acceptingAuthenticator{}, Replay: replay,
 		Nonces: &incrementingNonces{}, Clock: clock, RootlessTool: rootless,
 	})
@@ -33,10 +35,9 @@ func TestLinuxProvisionerCompletesCertifiedRootlessInstallThroughExactTypedEffec
 		t.Fatal(err)
 	}
 	repository := &memoryRuntimeRepository{}
-	otherPhases := completeOtherPhases{artifact: authority.ArtifactDigest()}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: repository, Host: provisioner, Detector: provisioner,
-		Catalog: provisioner, Consent: provisioner, Fetcher: otherPhases, Verifier: otherPhases,
+		Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 		Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 		Controller: provisioner, Capabilities: provisioner,
 	})
@@ -94,11 +95,13 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 			broker := &fakePrivilegeBroker{err: test.brokerErr}
 			consent := newFakeLinuxConsent()
 			consent.awaitErr = test.consentErr
+			artifacts := &fakeLinuxArtifacts{}
 			rootless := &fakeRunner{authority: rootlessAuthority(t, authority)}
 			provisioner, err := NewLinuxProvisioner(Dependencies{
 				Authority: test.resolver, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 				Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
 				Consent: consent, ConsentAuth: consent, ConsentStore: consent,
+				Artifacts: artifacts, ArtifactTrust: artifacts,
 				Privilege: broker, Authenticator: acceptingAuthenticator{},
 				Replay: &fakeReplayLedger{consumed: make(map[runtimeport.Nonce]runtimeinstall.Hash)},
 				Nonces: &incrementingNonces{}, Clock: &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
@@ -107,10 +110,9 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 			if err != nil {
 				t.Fatal(err)
 			}
-			other := completeOtherPhases{artifact: authority.ArtifactDigest()}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, Host: provisioner, Detector: provisioner,
-				Catalog: provisioner, Consent: provisioner, Fetcher: other, Verifier: other,
+				Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,
 			})
@@ -145,6 +147,7 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 			t.Parallel()
 			authenticator := runtimeport.ReceiptAuthenticator(acceptingAuthenticator{})
 			consent := newFakeLinuxConsent()
+			artifacts := &fakeLinuxArtifacts{}
 			if test.name == "bad signature" {
 				authenticator = rejectingAuthenticator{}
 			}
@@ -152,6 +155,7 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 				Authority: staticAuthorityResolver{authority: authority}, Host: staticHostProbe{evidence: supportedHost(t, authority)},
 				Runtime: &installRuntimeInspector{authority: authority}, Capabilities: completeCapabilityProbe{},
 				Consent: consent, ConsentAuth: consent, ConsentStore: consent,
+				Artifacts: artifacts, ArtifactTrust: artifacts,
 				Privilege: test.broker, Authenticator: authenticator, Replay: test.replay,
 				Nonces: &incrementingNonces{}, Clock: &fakeClock{now: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)},
 				RootlessTool: &fakeRunner{authority: rootlessAuthority(t, authority)},
@@ -159,10 +163,9 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			other := completeOtherPhases{artifact: authority.ArtifactDigest()}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, Host: provisioner, Detector: provisioner,
-				Catalog: provisioner, Consent: provisioner, Fetcher: other, Verifier: other,
+				Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,
 			})
@@ -217,6 +220,64 @@ func TestLinuxProvisionerConsentAuthorityFailsClosedBeforeHostMutation(t *testin
 	}
 	if len(broker.operations) != 0 {
 		t.Fatal("privileged mutation ran without reauthenticated stored consent")
+	}
+}
+
+func TestLinuxProvisionerArtifactsFailClosedBeforePrivilegedMutation(t *testing.T) {
+	t.Parallel()
+	plan, authority := adapterPlanForAction(t, runtimeinstall.PlanActionInstallCertified)
+	request := captureRequest(t, plan)
+	newProvisioner := func() (*LinuxProvisioner, *fakeLinuxArtifacts, *fakePrivilegeBroker) {
+		broker := &fakePrivilegeBroker{}
+		provisioner := edgeProvisioner(
+			t, authority, &edgeRuntimeInspector{}, &edgeCapabilityProbe{}, broker,
+			&edgeRunner{authority: rootlessAuthority(t, authority)},
+		)
+		artifacts, ok := provisioner.artifacts.(*fakeLinuxArtifacts)
+		if !ok {
+			t.Fatal("test provisioner did not retain its artifact authority")
+		}
+		return provisioner, artifacts, broker
+	}
+
+	for _, candidate := range []struct {
+		configure func(*fakeLinuxArtifacts)
+		invoke    func(*LinuxProvisioner) error
+		want      error
+	}{
+		{
+			configure: func(artifacts *fakeLinuxArtifacts) { artifacts.acquireErr = errors.New("network detail") },
+			invoke: func(provisioner *LinuxProvisioner) error {
+				_, err := provisioner.AcquireRuntime(context.Background(), request)
+				return err
+			},
+			want: ErrProbeFailed,
+		},
+		{
+			configure: func(artifacts *fakeLinuxArtifacts) { artifacts.forged = true },
+			invoke: func(provisioner *LinuxProvisioner) error {
+				_, err := provisioner.VerifyRuntimeArtifact(context.Background(), request)
+				return err
+			},
+			want: ErrProvisionIntegrity,
+		},
+		{
+			configure: func(artifacts *fakeLinuxArtifacts) { artifacts.verifyErr = errors.New("signature detail") },
+			invoke: func(provisioner *LinuxProvisioner) error {
+				_, err := provisioner.InstallPrerequisites(context.Background(), request)
+				return err
+			},
+			want: ErrProvisionIntegrity,
+		},
+	} {
+		provisioner, artifacts, broker := newProvisioner()
+		candidate.configure(artifacts)
+		if err := candidate.invoke(provisioner); !errors.Is(err, candidate.want) {
+			t.Fatalf("artifact boundary error = %v, want %v", err, candidate.want)
+		}
+		if len(broker.operations) != 0 {
+			t.Fatal("privileged mutation ran after artifact trust failure")
+		}
 	}
 }
 
@@ -406,6 +467,51 @@ type fakeClock struct{ now time.Time }
 
 func (c *fakeClock) Now() time.Time { return c.now }
 
+type fakeLinuxArtifacts struct {
+	acquireErr error
+	verifyErr  error
+	forged     bool
+}
+
+func (f *fakeLinuxArtifacts) AcquireLinuxArtifacts(
+	_ context.Context,
+	authority runtimeport.LinuxAuthority,
+) (runtimeport.LinuxArtifactEvidence, error) {
+	if f.acquireErr != nil {
+		return runtimeport.LinuxArtifactEvidence{}, f.acquireErr
+	}
+	return fakeLinuxArtifactEvidence(authority, false, f.forged)
+}
+
+func (f *fakeLinuxArtifacts) VerifyLinuxArtifacts(
+	_ context.Context,
+	authority runtimeport.LinuxAuthority,
+) (runtimeport.LinuxArtifactEvidence, error) {
+	if f.verifyErr != nil {
+		return runtimeport.LinuxArtifactEvidence{}, f.verifyErr
+	}
+	return fakeLinuxArtifactEvidence(authority, true, f.forged)
+}
+
+func fakeLinuxArtifactEvidence(
+	authority runtimeport.LinuxAuthority,
+	verified bool,
+	forged bool,
+) (runtimeport.LinuxArtifactEvidence, error) {
+	repository, _ := runtimeport.ExpectedRepositoryStateDigest(authority)
+	packages, _ := runtimeport.ExpectedPackageStateDigest(authority)
+	artifact := authority.ArtifactDigest()
+	if forged {
+		artifact = runtimeinstall.Sum([]byte("forged-artifact"))
+	}
+	return runtimeport.NewLinuxArtifactEvidence(runtimeport.LinuxArtifactEvidenceInput{
+		AuthorityDigest: authority.Digest(), ArtifactDigest: artifact,
+		RepositoryStateDigest: repository, PackageStateDigest: packages,
+		RetainedSetDigest: runtimeinstall.Sum([]byte("retained-packages")), EveryPackageAcquired: true,
+		RepositoryAuthenticated: verified, PackagesAuthenticated: verified,
+	})
+}
+
 type fakeLinuxConsent struct {
 	mu       sync.Mutex
 	grants   map[string]runtimeport.LinuxConsentGrant
@@ -565,38 +671,4 @@ func (r *memoryRuntimeRepository) Save(_ context.Context, snapshot runtimeinstal
 	copyOfSnapshot := snapshot
 	r.snapshot = &copyOfSnapshot
 	return nil
-}
-
-type completeOtherPhases struct{ artifact runtimeinstall.Hash }
-
-func (p completeOtherPhases) complete(request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	artifact := runtimeinstall.Hash{}
-	if request.Phase() >= runtimeinstall.PhaseVerifyRuntimeArtifact {
-		artifact = p.artifact
-	}
-	return runtimeinstallapp.NewCompletedOutput(runtimeinstallapp.Completion{
-		InputDigest:    runtimeinstall.Sum([]byte("input-" + request.Phase().String())),
-		OutputDigest:   runtimeinstall.Sum([]byte("output-" + request.Phase().String())),
-		ArtifactDigest: artifact,
-	})
-}
-
-func (p completeOtherPhases) PlanRuntime(_ context.Context, request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	return p.complete(request)
-}
-
-func (p completeOtherPhases) AwaitRuntimeConsent(_ context.Context, request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	return p.complete(request)
-}
-
-func (p completeOtherPhases) AcquireRuntime(_ context.Context, request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	return p.complete(request)
-}
-
-func (p completeOtherPhases) VerifyRuntimeArtifact(_ context.Context, request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	return p.complete(request)
-}
-
-func (p completeOtherPhases) AwaitThirdPartyTerms(_ context.Context, request runtimeinstallapp.Request) (runtimeinstallapp.Output, error) {
-	return p.complete(request)
 }

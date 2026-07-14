@@ -128,7 +128,10 @@ func TestApplicationDerivesRuntimeAndActivationFromAuthenticatedEvidence(t *test
 	if err != nil || !runtimePlan.ParentPlanDigest().Equal(plan.Digest()) ||
 		runtimePlan.PlanDigest() != runtimeinstall.Sum(runtimePlan.CanonicalPlan()) ||
 		!runtimePlan.SignedCatalogEvidenceDigest().Equal(fixture.runtimeEvidence.evidence.SignedCatalogEvidenceDigest()) ||
-		runtimePlan.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) || fixture.runtimeEvidence.calls != 1 {
+		runtimePlan.SignedCatalogEvidenceDigest().Equal(plan.RuntimeCatalogDigest()) || fixture.runtimeEvidence.calls != 1 ||
+		!fixture.runtimeEvidence.request.SignedHostPlan.Valid() ||
+		!fixture.runtimeEvidence.request.SignedHostPlan.Plan().Digest().Equal(plan.SignedHostPlan().Plan().Digest()) ||
+		!fixture.runtimeEvidence.request.HostEvidenceDigest.Equal(fixture.runtimeEvidence.evidence.HostEvidenceDigest()) {
 		t.Fatalf("runtime projection = %+v/%v", runtimePlan, err)
 	}
 	if _, err := runtimeinstall.DecodePlanV1(runtimePlan.CanonicalPlan()); err != nil {
@@ -552,13 +555,15 @@ type runtimeEvidenceResolverStub struct {
 	evidence RuntimeEvidence
 	err      error
 	calls    int
+	request  RuntimeEvidenceRequest
 }
 
 func (r *runtimeEvidenceResolverStub) ResolveRuntimeEvidence(
-	context.Context,
-	RuntimeEvidenceRequest,
+	_ context.Context,
+	request RuntimeEvidenceRequest,
 ) (RuntimeEvidence, error) {
 	r.calls++
+	r.request = request
 	return r.evidence, r.err
 }
 

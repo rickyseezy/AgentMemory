@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/hostverification"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
@@ -22,6 +23,8 @@ type RuntimeEvidenceRequest struct {
 	ParentPlanDigest       install.PlanDigest
 	RuntimeCatalogID       string
 	RuntimeCatalogDigest   install.Digest
+	SignedHostPlan         hostverification.SignedPlan
+	HostEvidenceDigest     install.Digest
 	SignedRelease          releaseinventory.SignedManifest
 	RuntimeCatalogResource releaseinventory.Resource
 }

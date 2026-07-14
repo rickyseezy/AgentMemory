@@ -503,6 +503,7 @@ func (a *Application) ResolveRuntimePlan(
 	evidence, err := a.runtimeEvidence.ResolveRuntimeEvidence(ctx, RuntimeEvidenceRequest{
 		OperationID: operationID, ParentPlanDigest: digest,
 		RuntimeCatalogID: plan.RuntimeCatalogResourceID(), RuntimeCatalogDigest: plan.RuntimeCatalogDigest(),
+		SignedHostPlan: plan.SignedHostPlan(), HostEvidenceDigest: hostEvidence.OutputDigest(),
 		SignedRelease: plan.SignedRelease(), RuntimeCatalogResource: runtimeResource,
 	})
 	if err != nil || !evidence.HostEvidenceDigest().Equal(hostEvidence.OutputDigest()) ||

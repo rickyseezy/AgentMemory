@@ -10,6 +10,7 @@ import (
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/activereleasejournal"
 	agentconfigadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/agentconfig"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactjournal"
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/corehttp"
@@ -43,6 +44,7 @@ type NativeRoots struct {
 	RuntimeState       string
 	ReleaseAnchorState string
 	ArtifactState      string
+	ArtifactCAS        string
 	ResourceState      string
 	ActiveReleaseState string
 	InstallationLock   string
@@ -111,6 +113,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		RuntimeState:       filepath.Join(base, "runtime-state"),
 		ReleaseAnchorState: filepath.Join(base, "release-anchor-state"),
 		ArtifactState:      filepath.Join(base, "artifact-state"),
+		ArtifactCAS:        filepath.Join(base, "artifact-cas"),
 		ResourceState:      filepath.Join(base, "resource-state"),
 		ActiveReleaseState: filepath.Join(base, "active-release-state"),
 		InstallationLock:   filepath.Join(base, "installation.lock"),
@@ -122,7 +125,7 @@ func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.CanonicalPlans,
-		r.ArtifactState, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
+		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -145,6 +148,8 @@ type nativeComposition struct {
 	runtimeState  *filesystem.RuntimeOperationRepository
 	releaseAnchor *releaseanchor.Repository
 	artifacts     *artifactjournal.Repository
+	capacityState *artifactjournal.CapacityRepository
+	artifactStore *artifactfs.Store
 	resourceState *resourcejournal.Repository
 	activations   *activereleasejournal.ActivationRepository
 	hostPointers  *activereleasejournal.HostPointerRepository
@@ -245,6 +250,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	capacityRepository, err := artifactjournal.NewCapacityRepository(artifactJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	resourceRepository, err := resourcejournal.New(resourceJournals, clock)
 	if err != nil {
 		return nativeComposition{}, err
@@ -295,7 +304,16 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
-	resources := &nativeResources{plans: plans}
+	if err := os.Mkdir(roots.ArtifactCAS, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		_ = plans.Close()
+		return nativeComposition{}, err
+	}
+	artifactStore, err := artifactfs.NewStore(roots.ArtifactCAS)
+	if err != nil {
+		_ = plans.Close()
+		return nativeComposition{}, err
+	}
+	resources := &nativeResources{plans: plans, artifacts: artifactStore}
 	resolver, err := NewProtectedResolver(pointerJournals, plans, operations, clock)
 	if err != nil {
 		_ = resources.Close(context.WithoutCancel(ctx))
@@ -314,8 +332,9 @@ func composeNative(
 	return nativeComposition{
 		factory: factory, resources: resources, preparations: preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
-		artifacts: artifactRepository, resourceState: resourceRepository,
-		activations: activationRepository, hostPointers: hostPointerRepository, installLock: installationLock,
+		artifacts: artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
+		resourceState: resourceRepository,
+		activations:   activationRepository, hostPointers: hostPointerRepository, installLock: installationLock,
 	}, nil
 }
 
@@ -534,9 +553,10 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 }
 
 type nativeResources struct {
-	plans  interface{ Close() error }
-	mu     sync.Mutex
-	closed bool
+	plans     interface{ Close() error }
+	artifacts interface{ Close() error }
+	mu        sync.Mutex
+	closed    bool
 }
 
 func (r *nativeResources) Close(context.Context) error {
@@ -549,10 +569,14 @@ func (r *nativeResources) Close(context.Context) error {
 		return nil
 	}
 	r.closed = true
+	var result error
 	if r.plans != nil && r.plans.Close() != nil {
-		return errors.New("native plan repository close failed")
+		result = errors.Join(result, errors.New("native plan repository close failed"))
 	}
-	return nil
+	if r.artifacts != nil && r.artifacts.Close() != nil {
+		result = errors.Join(result, errors.New("native artifact store close failed"))
+	}
+	return result
 }
 
 type nativeRuntimeLifecycle struct {

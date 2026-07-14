@@ -76,7 +76,8 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
 		composition.releaseAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
-		composition.activations == nil || composition.hostPointers == nil || composition.installLock == nil {
+		composition.capacityState == nil || composition.artifactStore == nil || composition.activations == nil ||
+		composition.hostPointers == nil || composition.installLock == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
 	if len(observed) != 9 || observed[0] != roots.OperationState ||
@@ -561,14 +562,18 @@ func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.
 		t.Fatalf("nil resources close error=%v", err)
 	}
 	closer := &nativePlanCloser{}
-	resources := &nativeResources{plans: closer}
-	if err := resources.Close(context.Background()); err != nil || closer.calls.Load() != 1 {
-		t.Fatalf("resources close error=%v calls=%d", err, closer.calls.Load())
+	artifactCloser := &nativePlanCloser{}
+	resources := &nativeResources{plans: closer, artifacts: artifactCloser}
+	if err := resources.Close(context.Background()); err != nil || closer.calls.Load() != 1 || artifactCloser.calls.Load() != 1 {
+		t.Fatalf("resources close error=%v plan_calls=%d artifact_calls=%d", err, closer.calls.Load(), artifactCloser.calls.Load())
 	}
-	if err := resources.Close(context.Background()); err != nil || closer.calls.Load() != 1 {
-		t.Fatalf("resources replay error=%v calls=%d", err, closer.calls.Load())
+	if err := resources.Close(context.Background()); err != nil || closer.calls.Load() != 1 || artifactCloser.calls.Load() != 1 {
+		t.Fatalf("resources replay error=%v plan_calls=%d artifact_calls=%d", err, closer.calls.Load(), artifactCloser.calls.Load())
 	}
-	failingResources := &nativeResources{plans: &nativePlanCloser{err: errors.New("private")}}
+	failingResources := &nativeResources{
+		plans:     &nativePlanCloser{err: errors.New("private")},
+		artifacts: &nativePlanCloser{err: errors.New("private artifact")},
+	}
 	if err := failingResources.Close(context.Background()); err == nil {
 		t.Fatal("failing plan closer was hidden")
 	}
@@ -634,6 +639,7 @@ func nativeTestRoots(root string) NativeRoots {
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
 		RuntimeState: filepath.Join(root, "runtime"), ReleaseAnchorState: filepath.Join(root, "release-anchor"),
 		ArtifactState: filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
+		ArtifactCAS:        filepath.Join(root, "artifact-cas"),
 		ActiveReleaseState: filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
 		CanonicalPlans: filepath.Join(root, "plans"),
 	}

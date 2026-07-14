@@ -27,7 +27,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		t.Fatalf("defaultNativeRoots()=%+v,%v", roots, err)
 	}
 	if roots.OperationState == roots.BootstrapPointer || roots.OperationState == roots.SetupDecisions ||
-		roots.BootstrapPointer == roots.SetupDecisions {
+		roots.BootstrapPointer == roots.SetupDecisions || roots.PreparationState == roots.OperationState ||
+		roots.PreparationState == roots.BootstrapPointer || roots.PreparationState == roots.SetupDecisions {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
 	}
 	root := t.TempDir()
@@ -36,11 +37,17 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		t.Fatalf("valid roots rejected: %+v", valid)
 	}
 	for name, candidate := range map[string]NativeRoots{
-		"empty":        {},
-		"relative":     {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions, CanonicalPlans: valid.CanonicalPlans},
-		"unclean":      {OperationState: root + "/state/../other", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions, CanonicalPlans: valid.CanonicalPlans},
-		"duplicate":    {OperationState: valid.OperationState, BootstrapPointer: valid.OperationState, SetupDecisions: valid.SetupDecisions, CanonicalPlans: valid.CanonicalPlans},
-		"missing plan": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions},
+		"empty": {},
+		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
+			PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
+		"unclean": {OperationState: root + "/state/../other", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
+			PreparationState: valid.PreparationState, CanonicalPlans: valid.CanonicalPlans},
+		"duplicate": {OperationState: valid.OperationState, BootstrapPointer: valid.OperationState, SetupDecisions: valid.SetupDecisions,
+			PreparationState: valid.OperationState, CanonicalPlans: valid.CanonicalPlans},
+		"missing preparation": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
+			SetupDecisions: valid.SetupDecisions, CanonicalPlans: valid.CanonicalPlans},
+		"missing plan": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
+			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState},
 	} {
 		if candidate.valid() {
 			t.Fatalf("%s roots accepted: %+v", name, candidate)
@@ -60,11 +67,12 @@ func TestPF001NativeCompositionUsesThreeDistinctJournalAuthoritiesAndResolvesMis
 		return nativeMissingJournalProvider{}, nil
 	}
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
-	if err != nil || composition.factory == nil || composition.resources == nil {
+	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 3 || observed[0] != roots.OperationState ||
-		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions {
+	if len(observed) != 4 || observed[0] != roots.OperationState ||
+		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
+		observed[3] != roots.PreparationState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -111,7 +119,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 3; failAt++ {
+	for failAt := 1; failAt <= 4; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -510,6 +518,17 @@ func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.
 	if _, err := decodeRuntimePlan([]byte("not a canonical plan")); err == nil {
 		t.Fatal("invalid canonical runtime plan decoded")
 	}
+	readyProjection := runtimePlanProjection{
+		installationID: "019f5f20-1234-7abc-8123-0123456789ab",
+		coreEndpoint:   "http://127.0.0.1:38765", credentialPath: filepath.Join(t.TempDir(), "credential"),
+	}
+	if ready, err := newNativeReadySurface(readyProjection); err != nil || ready == nil {
+		t.Fatalf("newNativeReadySurface()=%T,%v", ready, err)
+	}
+	readyProjection.coreEndpoint = "https://remote.example"
+	if ready, err := newNativeReadySurface(readyProjection); err == nil || ready != nil {
+		t.Fatalf("remote newNativeReadySurface()=%T,%v", ready, err)
+	}
 	if surface, err := (pendingReadySurface{}).ReadySurface(context.Background()); err == nil ||
 		len(surface.Tools) != 0 || len(surface.Resources) != 0 {
 		t.Fatalf("pending Ready surface=%+v,%v", surface, err)
@@ -589,7 +608,8 @@ func nativeTestRoots(root string) NativeRoots {
 	}
 	return NativeRoots{
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
-		SetupDecisions: filepath.Join(root, "decisions"), CanonicalPlans: filepath.Join(root, "plans"),
+		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
+		CanonicalPlans: filepath.Join(root, "plans"),
 	}
 }
 

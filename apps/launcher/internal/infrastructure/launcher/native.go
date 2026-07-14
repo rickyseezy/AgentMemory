@@ -11,6 +11,7 @@ import (
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/corehttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
+	firststartadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/firststart"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installplanfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installprogress"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
@@ -32,6 +33,7 @@ type NativeRoots struct {
 	OperationState   string
 	BootstrapPointer string
 	SetupDecisions   string
+	PreparationState string
 	CanonicalPlans   string
 }
 
@@ -93,12 +95,16 @@ func defaultNativeRoots() (NativeRoots, error) {
 		OperationState:   filepath.Join(base, "operation-state"),
 		BootstrapPointer: filepath.Join(base, "bootstrap-pointer"),
 		SetupDecisions:   filepath.Join(base, "setup-decisions"),
+		PreparationState: filepath.Join(base, "preparation-state"),
 		CanonicalPlans:   filepath.Join(base, "canonical-plans"),
 	}, nil
 }
 
 func (r NativeRoots) valid() bool {
-	values := []string{r.OperationState, r.BootstrapPointer, r.SetupDecisions, r.CanonicalPlans}
+	values := []string{
+		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
+		r.PreparationState, r.CanonicalPlans,
+	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
@@ -113,8 +119,9 @@ func (r NativeRoots) valid() bool {
 }
 
 type nativeComposition struct {
-	factory   *Factory
-	resources *nativeResources
+	factory      *Factory
+	resources    *nativeResources
+	preparations firststartapp.PreparationRepository
 }
 
 func composeNative(
@@ -138,6 +145,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	preparationLocator, err := bootstrapadapter.NewOperationLocator(roots.PreparationState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operationJournals, err := journalFactory(operationLocator)
 	if err != nil || nilCapability(operationJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -150,11 +161,19 @@ func composeNative(
 	if err != nil || nilCapability(decisionJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	preparationJournals, err := journalFactory(preparationLocator)
+	if err != nil || nilCapability(preparationJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	fence, err := filesystem.NewNativeOperationStateFence(operationLocator)
 	if err != nil {
 		return nativeComposition{}, err
 	}
 	clock := setuphost.Clock{}
+	preparations, err := firststartadapter.NewPreparationRepository(preparationJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	operations, err := filesystem.NewInstallOperationRepository(operationJournals, clock, fence)
 	if err != nil {
 		return nativeComposition{}, err
@@ -179,7 +198,9 @@ func composeNative(
 		_ = resources.Close(context.WithoutCancel(ctx))
 		return nativeComposition{}, err
 	}
-	return nativeComposition{factory: factory, resources: resources}, nil
+	return nativeComposition{
+		factory: factory, resources: resources, preparations: preparations,
+	}, nil
 }
 
 type cancellationRepository interface {

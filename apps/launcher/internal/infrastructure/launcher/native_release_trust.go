@@ -10,6 +10,7 @@ import (
 	"time"
 
 	releaseverifyadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 )
 
@@ -24,13 +25,14 @@ const (
 var embeddedNativeReleaseTrustBase64 string
 
 type nativeReleaseTrustDocument struct {
-	SchemaVersion  uint16                      `json:"schemaVersion"`
-	ManifestKeys   map[string]string           `json:"manifestKeys"`
-	HostPolicyKeys map[string]string           `json:"hostPolicyKeys"`
-	Offline        nativeOfflineTrustDocument  `json:"offline"`
-	Provenance     nativeProvenanceDocument    `json:"provenance"`
-	Qualification  nativeQualificationDocument `json:"qualification"`
-	Publishers     map[string][]string         `json:"nativePublishers"`
+	SchemaVersion      uint16                      `json:"schemaVersion"`
+	ManifestKeys       map[string]string           `json:"manifestKeys"`
+	HostPolicyKeys     map[string]string           `json:"hostPolicyKeys"`
+	RuntimeCatalogKeys map[string]string           `json:"runtimeCatalogKeys"`
+	Offline            nativeOfflineTrustDocument  `json:"offline"`
+	Provenance         nativeProvenanceDocument    `json:"provenance"`
+	Qualification      nativeQualificationDocument `json:"qualification"`
+	Publishers         map[string][]string         `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -82,6 +84,10 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	runtimeCatalogKeys, err := decodeNativeReleaseKeys(document.RuntimeCatalogKeys)
+	if err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	revocationKeys, err := decodeNativeReleaseKeys(document.Offline.RevocationAuthorities)
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
@@ -110,6 +116,7 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	}
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
+		RuntimeCatalogKeys: runtimeCatalogKeys,
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 			TrustDomain:           document.Offline.TrustDomain,
 			RevocationAuthorities: revocationKeys, TimeAuthorities: timeKeys,
@@ -129,6 +136,9 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	// document cannot become release authority unless all semantic allowlists
 	// are complete, closed, and mutually bound.
 	if _, err := releaseverifyadapter.NewEd25519KeyIDVerifier(trust.ManifestKeys); err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
+	if _, err := runtimeprovision.NewCatalogSignatureVerifier(trust.RuntimeCatalogKeys); err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := releaseverifyadapter.NewOfflineTrustPolicy(trust.Offline); err != nil {

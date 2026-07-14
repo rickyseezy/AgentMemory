@@ -102,8 +102,9 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 	return nativeReleaseStackDependencies{
 		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()}, AntiRollback: ports,
 		Trust: nativeReleaseTrustMaterial{
-			ManifestKeys:   map[string]ed25519.PublicKey{"release-root": manifestPublic},
-			HostPolicyKeys: map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
+			ManifestKeys:       map[string]ed25519.PublicKey{"release-root": manifestPublic},
+			HostPolicyKeys:     map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
+			RuntimeCatalogKeys: map[string]ed25519.PublicKey{"runtime-catalog-root": manifestPublic},
 			Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 				TrustDomain: "agentmemory.release", RevocationAuthorities: map[string]ed25519.PublicKey{"revocations": evidencePublic},
 				TimeAuthorities: map[string]ed25519.PublicKey{"trusted-time": evidencePublic}, MaximumFutureSkew: time.Minute,

@@ -25,7 +25,7 @@ func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing
 	builder, err := newNativeInstallApplicationsBuilderWithDecoder(
 		&composition, nativeInstallCapabilitiesFixture(dependencies),
 		func([]byte) (runtimePlanProjection, error) {
-			return runtimePlanProjection{
+			return runtimePlanProjection{ //nolint:gosec // G101: protected path reference, never credential bytes.
 				operationID: nativeGraphOperationID(t), digest: nativeGraphPlanDigest(t),
 				coreEndpoint: "http://127.0.0.1:9411", credentialPath: "/owner/credential",
 			}, nil

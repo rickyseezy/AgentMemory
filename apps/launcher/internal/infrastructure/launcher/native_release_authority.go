@@ -7,6 +7,7 @@ import (
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/hostverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/hostverifyapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
@@ -28,14 +29,15 @@ type nativeReleaseAuthorityDependencies struct {
 // No environment variable, working directory, network locator, or MCP input
 // participates in its construction.
 type nativeReleaseAuthority struct {
-	source          *artifactfs.BundleFetcher
-	stack           nativeReleaseStack
-	hostProbe       *hostverify.NativeProbe
-	hostVerifier    *hostverifyapp.Application
-	releaseVerifier *installphase.ReleaseApplicationAdapter
-	runtimeCatalog  *nativeRuntimeCatalogLoader
-	closeOnce       sync.Once
-	closeError      error
+	source                  *artifactfs.BundleFetcher
+	stack                   nativeReleaseStack
+	hostProbe               *hostverify.NativeProbe
+	hostVerifier            *hostverifyapp.Application
+	releaseVerifier         *installphase.ReleaseApplicationAdapter
+	runtimeCatalog          *nativeRuntimeCatalogLoader
+	runtimeCatalogSignature *runtimeprovision.CatalogSignatureVerifier
+	closeOnce               sync.Once
+	closeError              error
 }
 
 func newNativeReleaseAuthority(
@@ -78,6 +80,10 @@ func newNativeReleaseAuthority(
 	if err != nil {
 		return nil, firststartapp.ErrIntegrity
 	}
+	runtimeCatalogSignature, err := runtimeprovision.NewCatalogSignatureVerifier(trust.RuntimeCatalogKeys)
+	if err != nil {
+		return nil, firststartapp.ErrIntegrity
+	}
 	hostProbe := hostverify.NewNativeProbe()
 	hostApplication, err := hostverifyapp.NewApplication(hostverifyapp.Dependencies{
 		Signature: hostSignature, Probe: hostProbe,
@@ -94,6 +100,7 @@ func newNativeReleaseAuthority(
 	authority := &nativeReleaseAuthority{
 		source: source, stack: stack, hostProbe: hostProbe,
 		hostVerifier: hostApplication, releaseVerifier: releaseApplication,
+		runtimeCatalogSignature: runtimeCatalogSignature,
 	}
 	runtimeCatalog, err := newNativeRuntimeCatalogLoader(authority)
 	if err != nil {
@@ -140,14 +147,21 @@ func (a *nativeReleaseAuthority) runtimeCatalogLoader() *nativeRuntimeCatalogLoa
 	return a.runtimeCatalog
 }
 
+func (a *nativeReleaseAuthority) runtimeCatalogSignatureVerifier() *runtimeprovision.CatalogSignatureVerifier {
+	if a == nil {
+		return nil
+	}
+	return a.runtimeCatalogSignature
+}
+
 func (a *nativeReleaseAuthority) Close(ctx context.Context) error {
 	if a == nil {
 		return nil
 	}
-	cleanup := context.Background()
-	if ctx != nil {
-		cleanup = context.WithoutCancel(ctx)
+	if ctx == nil {
+		return errors.New("native release close context is required")
 	}
+	cleanup := context.WithoutCancel(ctx)
 	a.closeOnce.Do(func() {
 		var closeErrors []error
 		if a.hostProbe != nil {

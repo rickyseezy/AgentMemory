@@ -84,7 +84,8 @@ func (l *nativeRuntimeCatalogLoader) Load(
 		return nativeRuntimeCatalogEnvelope{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
 	defer func() { _ = reader.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(reader, int64(resource.Size())+1))
+	// G115: the resource size was bounded to 8 MiB above before conversion.
+	raw, err := io.ReadAll(io.LimitReader(reader, int64(resource.Size())+1)) //nolint:gosec
 	if err != nil || uint64(len(raw)) != resource.Size() {
 		return nativeRuntimeCatalogEnvelope{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}

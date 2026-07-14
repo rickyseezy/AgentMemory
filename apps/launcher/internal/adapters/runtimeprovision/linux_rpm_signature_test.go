@@ -42,16 +42,21 @@ func TestRPMKeysPackageVerifierRejectsKeyPackageAndProcessFailures(t *testing.T)
 		fingerprint string
 		content     []byte
 		runError    error
+		exitCode    int
+		truncated   bool
 	}{
 		{name: "wrong fingerprint", fingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", content: packageBytes},
 		{name: "short package", fingerprint: trust.Repository.SigningKeyFingerprint, content: packageBytes[:24]},
 		{name: "rpmkeys failure", fingerprint: trust.Repository.SigningKeyFingerprint, content: packageBytes, runError: errors.New("failed")},
+		{name: "rpmkeys exit", fingerprint: trust.Repository.SigningKeyFingerprint, content: packageBytes, exitCode: 1},
+		{name: "rpmkeys truncated", fingerprint: trust.Repository.SigningKeyFingerprint, content: packageBytes, truncated: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			runner := &rpmKeysRunnerStub{
 				authority: rpmKeysAuthority(t), expectedKey: trust.SigningKey,
 				expectedPackage: packageBytes, runError: test.runError,
+				exitCode: test.exitCode, truncated: test.truncated,
 			}
 			verifier, err := NewRPMKeysPackageVerifier(runner)
 			if err != nil {
@@ -64,6 +69,24 @@ func TestRPMKeysPackageVerifierRejectsKeyPackageAndProcessFailures(t *testing.T)
 			}
 		})
 	}
+	if _, err := NewRPMKeysPackageVerifier(nil); err == nil {
+		t.Fatal("nil rpmkeys runner was accepted")
+	}
+	verifier, err := NewRPMKeysPackageVerifier(&rpmKeysRunnerStub{authority: rpmKeysAuthority(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = verifier.VerifyRPMPackage(hostileNilContext(), trust.SigningKey, trust.Repository.SigningKeyFingerprint, artifact, bytes.NewReader(packageBytes)); err == nil {
+		t.Fatal("nil context was accepted")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = verifier.VerifyRPMPackage(cancelled, trust.SigningKey, trust.Repository.SigningKeyFingerprint, artifact, bytes.NewReader(packageBytes)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled verification error = %v", err)
+	}
+	if err = writePrivateRPMVerificationFile("unused", bytes.NewReader(nil), 0); err == nil {
+		t.Fatal("zero-sized verification file was accepted")
+	}
 }
 
 type rpmKeysRunnerStub struct {
@@ -71,6 +94,8 @@ type rpmKeysRunnerStub struct {
 	expectedKey     []byte
 	expectedPackage []byte
 	runError        error
+	exitCode        int
+	truncated       bool
 	calls           int
 	importChecked   bool
 	packageChecked  bool
@@ -83,6 +108,9 @@ func (r *rpmKeysRunnerStub) Run(_ context.Context, invocation argvprocess.Invoca
 	r.calls++
 	if r.runError != nil {
 		return argvprocess.Result{}, r.runError
+	}
+	if r.exitCode != 0 || r.truncated {
+		return argvprocess.Result{ExitCode: r.exitCode, OutputTruncated: r.truncated}, nil
 	}
 	arguments := invocation.Arguments()
 	if len(arguments) == 4 && arguments[0] == "--dbpath" && arguments[2] == "--import" {

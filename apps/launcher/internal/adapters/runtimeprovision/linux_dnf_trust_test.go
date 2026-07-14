@@ -98,6 +98,45 @@ func TestDNFPrimaryRejectsDuplicateMissingAndSubstitutedRecords(t *testing.T) {
 	}
 }
 
+func TestNativeRepositoryTrustParsersRejectNonCanonicalInputs(t *testing.T) {
+	if _, err := parseAPTTime("not-a-time"); err == nil {
+		t.Fatal("invalid APT time was accepted")
+	}
+	for _, value := range []string{"", strings.Repeat("a", 65), "UPPER", "bad_name"} {
+		if validAPTFieldName(value) {
+			t.Fatalf("invalid APT field %q was accepted", value)
+		}
+	}
+	if lowerHex("ABC") || !lowerHex("0123abcdef") {
+		t.Fatal("hex canonicalization was not enforced")
+	}
+	for _, value := range []string{"", "0", "01", "not-a-number"} {
+		if _, err := parseCanonicalPositiveUint(value); err == nil {
+			t.Fatalf("invalid canonical integer %q was accepted", value)
+		}
+	}
+	for _, value := range []string{"", "/absolute", "trailing/", "two//segments", "../escape", "bad?query"} {
+		if safeRepositoryPath(value) {
+			t.Fatalf("unsafe repository path %q was accepted", value)
+		}
+	}
+	for _, version := range []dnfXMLVersion{
+		{Version: "", Release: "1"}, {Version: "1", Release: ""},
+		{Epoch: "01", Version: "1", Release: "1"}, {Epoch: "invalid", Version: "1", Release: "1"},
+	} {
+		if _, valid := canonicalRPMVersion(version); valid {
+			t.Fatalf("invalid RPM version %+v was accepted", version)
+		}
+	}
+	var document dnfRepoMD
+	if err := decodeStrictXML([]byte(`<repomd></repomd><extra/>`), &document); err == nil {
+		t.Fatal("multiple XML documents were accepted")
+	}
+	if err := decodeStrictXML(nil, &document); err == nil {
+		t.Fatal("empty XML document was accepted")
+	}
+}
+
 func signedDNFTrustInput(t testing.TB, metadataAuthentication string) dnfRepositoryTrustInput {
 	t.Helper()
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)

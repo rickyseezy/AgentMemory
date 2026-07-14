@@ -121,11 +121,40 @@ func TestPF001NativeCommandInstallerFailsClosedOnCompositionFailure(t *testing.T
 	}
 }
 
+func TestPF001NativeCommandInstallerClosesOperationScopedApplication(t *testing.T) {
+	t.Parallel()
+	command := nativeInstallerCommandFixture(t)
+	application := &nativeInstallApplicationStub{}
+	installer, err := newNativeCommandInstallerWithAuthenticator(
+		func(context.Context, nativeInstallAuthority) (nativeInstallApplication, error) {
+			return application, nil
+		}, nativeInstallerAuthenticatorFixture(t),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installer.Install(t.Context(), command); err != nil || application.closed != 1 {
+		t.Fatalf("install error=%v closes=%d", err, application.closed)
+	}
+	application.closeError = errors.New("private close error")
+	if _, err := installer.Install(t.Context(), command); !errors.Is(err, errNativeInstallerUnavailable) ||
+		application.closed != 2 {
+		t.Fatalf("close failure error=%v closes=%d", err, application.closed)
+	}
+}
+
 type nativeInstallApplicationStub struct {
-	result  installapp.InstallResult
-	err     error
-	command installapp.InstallCommand
-	calls   int
+	result     installapp.InstallResult
+	err        error
+	command    installapp.InstallCommand
+	calls      int
+	closed     int
+	closeError error
+}
+
+func (s *nativeInstallApplicationStub) Close(context.Context) error {
+	s.closed++
+	return s.closeError
 }
 
 func (s *nativeInstallApplicationStub) Install(

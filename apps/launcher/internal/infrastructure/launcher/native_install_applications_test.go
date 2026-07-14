@@ -22,7 +22,15 @@ func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing
 	}
 	t.Cleanup(func() { _ = composition.resources.Close(context.Background()) })
 	dependencies := nativeInstallGraphFixture()
-	builder, err := newNativeInstallApplicationsBuilder(&composition, nativeInstallCapabilitiesFixture(dependencies))
+	builder, err := newNativeInstallApplicationsBuilderWithDecoder(
+		&composition, nativeInstallCapabilitiesFixture(dependencies),
+		func([]byte) (runtimePlanProjection, error) {
+			return runtimePlanProjection{
+				operationID: nativeGraphOperationID(t), digest: nativeGraphPlanDigest(t),
+				coreEndpoint: "http://127.0.0.1:9411", credentialPath: "/owner/credential",
+			}, nil
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +54,16 @@ func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing
 	})
 	if err != nil || application == nil {
 		t.Fatalf("application=(%v,%v)", application, err)
+	}
+	closer, managed := application.(nativeInstallApplicationCloser)
+	if !managed {
+		t.Fatalf("operation-scoped application is not managed: %T", application)
+	}
+	if err := closer.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closer.Close(t.Context()); err != nil {
+		t.Fatalf("idempotent close error=%v", err)
 	}
 }
 
@@ -80,11 +98,9 @@ func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *
 
 func nativeInstallCapabilitiesFixture(dependencies nativeInstallGraphDependencies) nativeInstallPhaseCapabilities {
 	return nativeInstallPhaseCapabilities{
-		RuntimeEvidence: dependencies.RuntimeEvidence, ReadinessReceipts: dependencies.ReadinessReceipts,
-		RuntimeEnsurer: dependencies.RuntimeEnsurer, Capacity: dependencies.Capacity,
-		Directories: dependencies.Directories, Secrets: dependencies.Secrets,
+		RuntimeEvidence: dependencies.RuntimeEvidence,
+		RuntimeEnsurer:  dependencies.RuntimeEnsurer, Capacity: dependencies.Capacity,
 		ManagedResources: dependencies.ManagedResources, ProductStack: dependencies.ProductStack,
-		BrainBootstrap: dependencies.BrainBootstrap, AgentConfiguration: dependencies.AgentConfiguration,
-		Readiness: dependencies.Readiness, ActiveRelease: dependencies.ActiveRelease,
+		AgentConfiguration: dependencies.AgentConfiguration,
 	}
 }

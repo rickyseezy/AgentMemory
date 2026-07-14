@@ -28,6 +28,10 @@ type nativeInstallApplication interface {
 	Install(context.Context, installapp.InstallCommand) (installapp.InstallResult, error)
 }
 
+type nativeInstallApplicationCloser interface {
+	Close(context.Context) error
+}
+
 type nativeInstallApplicationFactory func(
 	context.Context,
 	nativeInstallAuthority,
@@ -106,7 +110,15 @@ func (i *nativeCommandInstaller) Install(
 		receipt := *command.ResumeReceipt
 		owned.ResumeReceipt = &receipt
 	}
-	return application.Install(ctx, owned)
+	result, installError := application.Install(ctx, owned)
+	closer, managed := application.(nativeInstallApplicationCloser)
+	if !managed {
+		return result, installError
+	}
+	if closeError := closer.Close(context.WithoutCancel(ctx)); closeError != nil {
+		return result, errors.Join(installError, errNativeInstallerUnavailable)
+	}
+	return result, installError
 }
 
 var _ interface {

@@ -47,6 +47,7 @@ type NativeRoots struct {
 	ArtifactCAS        string
 	ResourceState      string
 	ActiveReleaseState string
+	ReadinessState     string
 	InstallationLock   string
 	CanonicalPlans     string
 }
@@ -116,6 +117,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		ArtifactCAS:        filepath.Join(base, "artifact-cas"),
 		ResourceState:      filepath.Join(base, "resource-state"),
 		ActiveReleaseState: filepath.Join(base, "active-release-state"),
+		ReadinessState:     filepath.Join(base, "readiness-state"),
 		InstallationLock:   filepath.Join(base, "installation.lock"),
 		CanonicalPlans:     filepath.Join(base, "canonical-plans"),
 	}, nil
@@ -126,6 +128,7 @@ func (r NativeRoots) valid() bool {
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.CanonicalPlans,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
+		r.ReadinessState,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -145,6 +148,7 @@ type nativeComposition struct {
 	resources     *nativeResources
 	plans         *installplanfs.Repository
 	operations    *filesystem.InstallOperationRepository
+	readinessRoot string
 	preparations  firststartapp.PreparationRepository
 	binder        firststartapp.PreparationBinder
 	runtimeState  *filesystem.RuntimeOperationRepository
@@ -333,7 +337,8 @@ func composeNative(
 	}
 	return nativeComposition{
 		factory: factory, resources: resources, plans: plans, operations: operations,
-		preparations: preparations, binder: binder,
+		readinessRoot: roots.ReadinessState,
+		preparations:  preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
 		artifacts: artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,

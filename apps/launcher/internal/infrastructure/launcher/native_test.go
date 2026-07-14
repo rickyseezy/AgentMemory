@@ -642,6 +642,7 @@ func nativeTestRoots(root string) NativeRoots {
 		ArtifactState: filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
 		ArtifactCAS:        filepath.Join(root, "artifact-cas"),
 		ActiveReleaseState: filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
+		ReadinessState: filepath.Join(root, "readiness"),
 		CanonicalPlans: filepath.Join(root, "plans"),
 	}
 }

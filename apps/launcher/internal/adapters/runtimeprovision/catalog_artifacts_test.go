@@ -3,6 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
@@ -10,6 +11,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimecatalogapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/artifactacquisition"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
 func TestCatalogLinuxArtifactAcquirerReservesAndRetainsExactSignedSet(t *testing.T) {
@@ -120,9 +122,146 @@ func TestCatalogLinuxArtifactAcquirerRejectsInvalidCallsAndDependencies(t *testi
 	}
 }
 
+func TestCatalogDesktopArtifactAcquirerMaterializesExactSignedInstaller(t *testing.T) {
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	plan := adapterDesktopArtifactPlan(t, authority)
+	cas := successfulLinuxArtifactCAS(plan)
+	materializer := &desktopArtifactMaterializerFake{}
+	acquirer, err := newCatalogDesktopArtifactAcquirer(
+		&desktopArtifactPlanProjectorFake{plan: plan}, cas, materializer,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := acquirer.AcquireDesktopArtifact(context.Background(), authority)
+	if err != nil || !evidence.AcquiredFor(authority) || evidence.VerifiedFor(authority) {
+		t.Fatalf("AcquireDesktopArtifact() acquired=%t verified=%t error=%v", evidence.AcquiredFor(authority), evidence.VerifiedFor(authority), err)
+	}
+	wantBoundary := filepath.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
+	if cas.reserveCalls != 1 || cas.acquireCalls != 1 || materializer.calls != 1 ||
+		materializer.boundary != wantBoundary || materializer.target != authority.ArtifactPath() ||
+		!materializer.artifact.Digest().Equal(releaseinventory.Digest(authority.ArtifactSHA256())) {
+		t.Fatal("desktop installer did not traverse the exact CAS and private materialization boundaries")
+	}
+}
+
+func TestCatalogDesktopArtifactAcquirerRejectsSubstitutionAndMissingDependencies(t *testing.T) {
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	plan := adapterDesktopArtifactPlan(t, authority)
+	validCAS := successfulLinuxArtifactCAS(plan)
+	validProjector := &desktopArtifactPlanProjectorFake{plan: plan}
+	validMaterializer := &desktopArtifactMaterializerFake{}
+	var nilProjector *desktopArtifactPlanProjectorFake
+	var nilCAS *linuxArtifactCASFake
+	var nilMaterializer *desktopArtifactMaterializerFake
+	for _, dependencies := range []struct {
+		projector   desktopArtifactPlanProjector
+		cas         DesktopArtifactCAS
+		materialize artifactapp.VerifiedFinalMaterializer
+	}{
+		{nil, validCAS, validMaterializer}, {nilProjector, validCAS, validMaterializer},
+		{validProjector, nil, validMaterializer}, {validProjector, nilCAS, validMaterializer},
+		{validProjector, validCAS, nil}, {validProjector, validCAS, nilMaterializer},
+	} {
+		if _, err := newCatalogDesktopArtifactAcquirer(
+			dependencies.projector, dependencies.cas, dependencies.materialize,
+		); err == nil {
+			t.Fatal("newCatalogDesktopArtifactAcquirer() accepted an absent dependency")
+		}
+	}
+	if _, err := NewCatalogDesktopArtifactAcquirer(runtimecatalogapp.VerifiedCatalog{}, validCAS, validMaterializer); err == nil {
+		t.Fatal("NewCatalogDesktopArtifactAcquirer() accepted an unverified catalog")
+	}
+	tests := []struct {
+		name         string
+		projector    *desktopArtifactPlanProjectorFake
+		cas          *linuxArtifactCASFake
+		materializer *desktopArtifactMaterializerFake
+	}{
+		{name: "projector", projector: &desktopArtifactPlanProjectorFake{err: errors.New("failed")}, cas: validCAS, materializer: validMaterializer},
+		{name: "plan digest", projector: &desktopArtifactPlanProjectorFake{plan: adapterLinuxArtifactPlanWithDigest(t, releaseinventory.DigestBytes([]byte("other")))}, cas: validCAS, materializer: validMaterializer},
+		{name: "reservation", projector: validProjector, cas: mutatedLinuxArtifactCAS(plan, func(c *linuxArtifactCASFake) { c.reserveResult.ReservedBytes++ }), materializer: validMaterializer},
+		{name: "verified artifact", projector: validProjector, cas: mutatedLinuxArtifactCAS(plan, func(c *linuxArtifactCASFake) { c.acquireResult.VerifiedArtifacts[0].ContentKey = "other" }), materializer: validMaterializer},
+		{name: "materialization", projector: validProjector, cas: validCAS, materializer: &desktopArtifactMaterializerFake{err: errors.New("failed")}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			acquirer, err := newCatalogDesktopArtifactAcquirer(test.projector, test.cas, test.materializer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := acquirer.AcquireDesktopArtifact(context.Background(), authority); !errors.Is(err, runtimeport.ErrDesktopEvidenceIntegrity) {
+				t.Fatalf("AcquireDesktopArtifact() error=%v", err)
+			}
+		})
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	acquirer, _ := newCatalogDesktopArtifactAcquirer(validProjector, validCAS, validMaterializer)
+	if _, err := acquirer.AcquireDesktopArtifact(cancelled, authority); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled error=%v", err)
+	}
+}
+
 // hostileNilContext models an invalid third-party boundary call without
 // teaching static analysis that application code should pass nil contexts.
 func hostileNilContext() context.Context { return nil }
+
+func adapterDesktopArtifactPlan(
+	t *testing.T,
+	authority runtimeport.DesktopAuthority,
+) artifactacquisition.Plan {
+	t.Helper()
+	digest := releaseinventory.Digest(authority.ArtifactSHA256())
+	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
+		PlanDigest: releaseinventory.Digest(authority.CatalogDigest()),
+		Artifacts: []artifactacquisition.ArtifactInput{{
+			ID: "docker-desktop-installer", Digest: digest, Size: authority.ArtifactBytes(),
+			Sources: []string{authority.ArtifactSourceURL()},
+			Chunks:  []artifactacquisition.ChunkInput{{Offset: 0, Size: authority.ArtifactBytes(), Digest: digest}},
+		}},
+		Totals: artifactacquisition.TotalsInput{
+			DownloadBytes: authority.ArtifactBytes(), RollbackHeadroomBytes: 11,
+			SafetyHeadroomBytes: 13, RequiredBytes: authority.ArtifactBytes() + 24,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+type desktopArtifactPlanProjectorFake struct {
+	plan artifactacquisition.Plan
+	err  error
+}
+
+func (f *desktopArtifactPlanProjectorFake) ProjectDesktopArtifactPlan(
+	runtimeport.DesktopAuthority,
+) (artifactacquisition.Plan, error) {
+	return f.plan, f.err
+}
+
+type desktopArtifactMaterializerFake struct {
+	artifact artifactacquisition.Artifact
+	boundary string
+	target   string
+	err      error
+	calls    int
+}
+
+func (f *desktopArtifactMaterializerFake) MaterializeFinal(
+	_ context.Context,
+	artifact artifactacquisition.Artifact,
+	boundary string,
+	target string,
+) error {
+	f.calls++
+	f.artifact = artifact
+	f.boundary = boundary
+	f.target = target
+	return f.err
+}
 
 func adapterLinuxArtifactPlan(t *testing.T, authority runtimeport.LinuxAuthority) artifactacquisition.Plan {
 	t.Helper()

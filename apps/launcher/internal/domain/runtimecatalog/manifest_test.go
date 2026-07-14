@@ -372,6 +372,9 @@ func TestNewManifestRejectsEveryMaterialInvalidPolicy(t *testing.T) {
 		{name: "non-stable runtime version", edit: func(v *ManifestInput) { v.Runtime.Version = "28.3" }},
 		{name: "duplicate component", edit: func(v *ManifestInput) { v.Runtime.Components = append(v.Runtime.Components, v.Runtime.Components[0]) }},
 		{name: "artifact size", edit: func(v *ManifestInput) { v.Artifact.DownloadBytes = 0 }},
+		{name: "desktop acquisition safety", edit: func(v *ManifestInput) { v.DesktopExecution.AcquisitionSafetyBytes = 0 }},
+		{name: "desktop rollback headroom", edit: func(v *ManifestInput) { v.DesktopExecution.RollbackHeadroomBytes = 0 }},
+		{name: "desktop capacity sum", edit: func(v *ManifestInput) { v.DesktopExecution.RollbackHeadroomBytes++ }},
 		{name: "publisher", edit: func(v *ManifestInput) { v.Artifact.Publisher.Identity = "" }},
 		{name: "source", edit: func(v *ManifestInput) { v.Artifact.Sources[0].Scheme = "http" }},
 		{name: "source prefix boundary", edit: func(v *ManifestInput) { v.Artifact.Sources[0].PathPrefix = "/mac/main/arm64" }},
@@ -468,10 +471,12 @@ func validManifestInput(t testReporter) ManifestInput {
 			VendorUIMandatory: true,
 		},
 		DesktopExecution: DesktopExecutionPolicyInput{
+			AcquisitionSafetyBytes: 100_000_000,
 			MinimumAvailableMemory: 4_000_000_000, ArtifactFileName: "Docker.dmg",
 			ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.Hex(),
 			ProbeImageDigest: probeDigest, ProbeContractVersion: "1",
 			CapabilityPolicyDigest: RuntimeCapabilityPolicyDigest(capabilities),
+			RollbackHeadroomBytes:  200_000_000,
 		},
 		Prerequisites: []PrerequisiteInput{
 			{Operation: PrerequisiteInstallVerifiedPackage, PackageIDs: []string{"com.docker.docker"}},

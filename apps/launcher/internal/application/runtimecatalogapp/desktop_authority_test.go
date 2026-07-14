@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
@@ -49,6 +50,18 @@ func TestVerifiedCatalogProjectsCompleteDesktopAuthority(t *testing.T) {
 		authority.ArtifactSourceURL() != "https://desktop.docker.com/mac/main/arm64/Docker.dmg" ||
 		authority.ProbeContractVersion() != "1" {
 		t.Fatalf("authority=%+v error=%v", authority, err)
+	}
+	acquisition, err := verified.DesktopArtifactPlan(authority)
+	artifacts := acquisition.Artifacts()
+	if err != nil || len(artifacts) != 1 || artifacts[0].ID() != desktopInstallerArtifactID ||
+		!artifacts[0].Digest().Equal(releaseinventory.Digest(authority.ArtifactSHA256())) ||
+		artifacts[0].Sources()[0] != authority.ArtifactSourceURL() ||
+		acquisition.Totals().DownloadBytes() != authority.ArtifactBytes() ||
+		acquisition.Totals().ExpandedBytes() != 0 ||
+		acquisition.Totals().RollbackHeadroomBytes() != 200_000_000 ||
+		acquisition.Totals().SafetyHeadroomBytes() != 100_000_000 ||
+		acquisition.Totals().RequiredBytes() != 1_000_000_000 {
+		t.Fatalf("desktop acquisition=%+v artifacts=%+v error=%v", acquisition, artifacts, err)
 	}
 }
 

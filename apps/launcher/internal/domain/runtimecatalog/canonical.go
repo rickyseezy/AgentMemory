@@ -18,6 +18,7 @@ type canonicalManifest struct {
 }
 
 type canonicalDesktopExecution struct {
+	AcquisitionSafetyBytes uint64   `json:"acquisition_safety_bytes"`
 	ArtifactFileName       string   `json:"artifact_file_name"`
 	CapabilityPolicyDigest string   `json:"capability_policy_digest"`
 	MinimumAvailableMemory uint64   `json:"minimum_available_memory"`
@@ -25,6 +26,7 @@ type canonicalDesktopExecution struct {
 	ProbeContractVersion   string   `json:"probe_contract_version"`
 	ProbeImage             string   `json:"probe_image"`
 	ProbeImageDigest       string   `json:"probe_image_digest"`
+	RollbackHeadroomBytes  uint64   `json:"rollback_headroom_bytes"`
 	WindowsFeatures        []string `json:"windows_features,omitempty"`
 }
 
@@ -245,11 +247,13 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 	if manifest.desktopExecution != nil {
 		policy := manifest.desktopExecution
 		desktopExecution = &canonicalDesktopExecution{
-			ArtifactFileName: policy.artifactFileName, CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(),
+			AcquisitionSafetyBytes: policy.acquisitionSafetyBytes,
+			ArtifactFileName:       policy.artifactFileName, CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(),
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumWSLVersion: policy.minimumWSLVersion,
 			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
-			ProbeImageDigest: policy.probeImageDigest.Hex(),
-			WindowsFeatures:  append([]string(nil), policy.windowsFeatures...),
+			ProbeImageDigest:      policy.probeImageDigest.Hex(),
+			RollbackHeadroomBytes: policy.rollbackHeadroomBytes,
+			WindowsFeatures:       append([]string(nil), policy.windowsFeatures...),
 		}
 	}
 	return canonicalManifest{

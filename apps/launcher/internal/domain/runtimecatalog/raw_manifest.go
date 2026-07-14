@@ -168,11 +168,13 @@ func desktopExecutionInputFromCanonical(
 		return DesktopExecutionPolicyInput{}, err
 	}
 	return DesktopExecutionPolicyInput{
+		AcquisitionSafetyBytes: document.AcquisitionSafetyBytes,
 		MinimumAvailableMemory: document.MinimumAvailableMemory,
 		ArtifactFileName:       document.ArtifactFileName, ProbeImage: document.ProbeImage,
 		ProbeImageDigest: probeDigest, ProbeContractVersion: document.ProbeContractVersion,
-		CapabilityPolicyDigest: capabilityDigest, MinimumWSLVersion: document.MinimumWSLVersion,
-		WindowsFeatures: append([]string(nil), document.WindowsFeatures...),
+		CapabilityPolicyDigest: capabilityDigest, RollbackHeadroomBytes: document.RollbackHeadroomBytes,
+		MinimumWSLVersion: document.MinimumWSLVersion,
+		WindowsFeatures:   append([]string(nil), document.WindowsFeatures...),
 	}, nil
 }
 

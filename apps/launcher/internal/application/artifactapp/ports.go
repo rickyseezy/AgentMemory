@@ -98,3 +98,16 @@ type Store interface {
 type VerifiedFinalReader interface {
 	OpenFinal(context.Context, artifactacquisition.Artifact) (io.ReadCloser, error)
 }
+
+// VerifiedFinalMaterializer publishes one already-verified CAS object at an
+// exact private local path. The private boundary and every descendant must be
+// owner-only, local, non-link directories; an existing target is reusable only
+// when its complete bytes still match the artifact authority.
+type VerifiedFinalMaterializer interface {
+	MaterializeFinal(
+		context.Context,
+		artifactacquisition.Artifact,
+		string,
+		string,
+	) error
+}

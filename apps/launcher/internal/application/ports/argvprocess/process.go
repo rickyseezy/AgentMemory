@@ -1,0 +1,160 @@
+// Package argvprocess defines the constrained unprivileged process boundary.
+package argvprocess
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+)
+
+const maximumStandardInputBytes = 1024 * 1024
+
+// ErrInvalidInvocation rejects an unsafe executable or argument contract.
+var ErrInvalidInvocation = errors.New("invalid argv process invocation")
+
+// ErrOutputLimit means output exceeded the bounded diagnostic capture.
+var ErrOutputLimit = errors.New("argv process output exceeded limit")
+
+// Invocation contains an exact executable, argv, and optional bounded standard
+// input. It intentionally contains no shell string, environment map, inherited
+// working directory, or ambient stdin.
+type Invocation struct {
+	executable  string
+	arguments   []string
+	standardIn  []byte
+	environment []string
+	profile     EnvironmentProfile
+}
+
+// EnvironmentProfile is a closed sanitized execution environment.
+type EnvironmentProfile uint8
+
+const (
+	// EnvironmentProfileDefault supplies only C locale.
+	EnvironmentProfileDefault EnvironmentProfile = iota
+	// EnvironmentProfileRootlessSetup supplies only the fixed variables needed
+	// by Docker's packaged per-user setup tool.
+	EnvironmentProfileRootlessSetup
+)
+
+// NewInvocation validates bounded, NUL-free argv values. The outbound adapter
+// additionally enforces an absolute, regular, non-symlink executable path.
+func NewInvocation(executable string, arguments []string) (Invocation, error) {
+	return newInvocation(executable, arguments, nil)
+}
+
+// NewInvocationWithStandardInput constructs an exact invocation whose copied,
+// bounded bytes are the child's complete stdin. It is intended for verified
+// machine-readable input and must not carry secrets.
+func NewInvocationWithStandardInput(
+	executable string,
+	arguments []string,
+	standardInput []byte,
+) (Invocation, error) {
+	if len(standardInput) == 0 || len(standardInput) > maximumStandardInputBytes {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	return newInvocation(executable, arguments, standardInput)
+}
+
+// NewRootlessSetupInvocation creates the only non-default process environment.
+// Variable names, PATH, Docker endpoint, D-Bus endpoint, and isolated Docker
+// CLI state directory are fixed; callers cannot add a value, change the user's
+// global Docker context, or inherit ambient credentials/proxy configuration.
+func NewRootlessSetupInvocation(
+	executable string,
+	arguments []string,
+	homeDirectory string,
+	runtimeDirectory string,
+	uid uint32,
+) (Invocation, error) {
+	wantedRuntime := "/run/user/" + strconv.FormatUint(uint64(uid), 10)
+	if uid == 0 || runtimeDirectory != wantedRuntime || !safeLinuxDirectory(homeDirectory) ||
+		homeDirectory == "/tmp" || strings.HasPrefix(homeDirectory, "/tmp/") {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileRootlessSetup
+	invocation.environment = []string{
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDirectory + "/bus",
+		"DOCKER_CONFIG=" + runtimeDirectory + "/agentmemory-docker-cli",
+		"DOCKER_HOST=unix://" + runtimeDirectory + "/docker.sock",
+		"HOME=" + homeDirectory,
+		"LANG=C",
+		"LC_ALL=C",
+		"PATH=/usr/bin:/bin",
+		"XDG_RUNTIME_DIR=" + runtimeDirectory,
+	}
+	return invocation, nil
+}
+
+func safeLinuxDirectory(value string) bool {
+	if !strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") ||
+		strings.ContainsAny(value, "\x00\r\n") || len(value) > 4096 {
+		return false
+	}
+	for _, component := range strings.Split(value, "/") {
+		if component == "." || component == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func newInvocation(executable string, arguments []string, standardInput []byte) (Invocation, error) {
+	if strings.TrimSpace(executable) == "" || len(executable) > 4096 || strings.IndexByte(executable, 0) >= 0 {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	if len(arguments) > 256 {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	copied := make([]string, len(arguments))
+	for index, argument := range arguments {
+		if len(argument) > 32*1024 || strings.IndexByte(argument, 0) >= 0 {
+			return Invocation{}, ErrInvalidInvocation
+		}
+		copied[index] = argument
+	}
+	return Invocation{
+		executable: executable,
+		arguments:  copied,
+		standardIn: append([]byte(nil), standardInput...),
+	}, nil
+}
+
+// Executable returns the exact configured binary path.
+func (i Invocation) Executable() string { return i.executable }
+
+// Arguments returns an immutable-by-copy argv excluding argv[0].
+func (i Invocation) Arguments() []string { return append([]string(nil), i.arguments...) }
+
+// StandardInput returns a caller-owned copy of the explicit child stdin.
+func (i Invocation) StandardInput() []byte { return append([]byte(nil), i.standardIn...) }
+
+// EnvironmentProfile returns the closed environment class.
+func (i Invocation) EnvironmentProfile() EnvironmentProfile { return i.profile }
+
+// Environment returns a caller-owned copy of the fixed sanitized environment.
+func (i Invocation) Environment() []string { return append([]string(nil), i.environment...) }
+
+// Result contains bounded, non-authoritative diagnostic bytes. Callers must
+// parse only a documented machine-readable stdout contract and must never
+// expose stderr directly to users.
+type Result struct {
+	ExitCode        int
+	StandardOutput  []byte
+	StandardError   []byte
+	OutputTruncated bool
+}
+
+// Runner executes one constrained unprivileged local process.
+type Runner interface {
+	// ExecutableAuthority returns the immutable signed authority this runner is
+	// incapable of exceeding. Callers use it to bind cooperating executables.
+	ExecutableAuthority() ExecutableAuthority
+	Run(context.Context, Invocation) (Result, error)
+}

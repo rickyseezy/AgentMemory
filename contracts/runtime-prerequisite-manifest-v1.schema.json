@@ -1,0 +1,431 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.dev/schemas/runtime-prerequisite-manifest-v1.schema.json",
+  "title": "AgentMemory RuntimePrerequisiteManifest v1",
+  "description": "Canonical signed PF-006 runtime prerequisite policy for exactly one certified OS and architecture cell.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact",
+    "capability_probes",
+    "catalog_id",
+    "catalog_sequence",
+    "install",
+    "platform",
+    "prerequisites",
+    "runtime",
+    "schema_version",
+    "signing_key_id",
+    "support_expires_at",
+    "terms"
+  ],
+  "properties": {
+    "artifact": { "$ref": "#/$defs/artifact" },
+    "capability_probes": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "bind_read_only",
+          "cloud_offload_disabled",
+          "compose_version",
+          "engine_api",
+          "linux_containers",
+          "local_endpoint",
+          "network_isolation",
+          "no_tcp_listener",
+          "rootless",
+          "security_mode",
+          "volume_persistence"
+        ]
+      },
+      "allOf": [
+        { "contains": { "const": "bind_read_only" } },
+        { "contains": { "const": "compose_version" } },
+        { "contains": { "const": "engine_api" } },
+        { "contains": { "const": "linux_containers" } },
+        { "contains": { "const": "local_endpoint" } },
+        { "contains": { "const": "network_isolation" } },
+        { "contains": { "const": "no_tcp_listener" } },
+        { "contains": { "const": "security_mode" } },
+        { "contains": { "const": "volume_persistence" } }
+      ]
+    },
+    "catalog_id": { "$ref": "#/$defs/identifier" },
+    "catalog_sequence": { "$ref": "#/$defs/positiveSafeInteger" },
+    "install": { "$ref": "#/$defs/install" },
+    "platform": { "$ref": "#/$defs/platform" },
+    "prerequisites": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/prerequisite" }
+    },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "schema_version": { "const": 1 },
+    "signing_key_id": { "$ref": "#/$defs/identifier" },
+    "support_expires_at": { "$ref": "#/$defs/positiveSafeInteger" },
+    "terms": { "$ref": "#/$defs/terms" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "platform": { "properties": { "operating_system": { "const": "macos" } } } }
+      },
+      "then": {
+        "properties": {
+          "artifact": { "properties": { "publisher": { "properties": { "verification": { "const": "apple_developer_id_notarized" } } } } },
+          "install": { "properties": { "executable": { "const": "macos_installer" } } },
+          "runtime": { "properties": { "product": { "const": "docker_desktop" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "platform": { "properties": { "operating_system": { "const": "windows" } } } }
+      },
+      "then": {
+        "properties": {
+          "artifact": { "properties": { "publisher": { "properties": { "verification": { "const": "authenticode" } } } } },
+          "install": { "properties": { "executable": { "const": "windows_verified_helper" } } },
+          "runtime": { "properties": { "product": { "const": "docker_desktop" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "platform": { "properties": { "operating_system": { "const": "linux" } } } }
+      },
+      "then": {
+        "properties": {
+          "artifact": { "properties": { "publisher": { "properties": { "verification": { "const": "package_signature" } } } } },
+          "capability_probes": { "contains": { "const": "rootless" } },
+          "install": { "properties": { "executable": { "enum": ["apt", "dnf", "rootless_setup"] } } },
+          "runtime": { "properties": { "product": { "const": "docker_engine" } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "exactVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_~-]{0,127}$",
+      "not": { "const": "latest" }
+    },
+    "stableVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": { "const": "0000000000000000000000000000000000000000000000000000000000000000" }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "path_prefix", "scheme"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+        },
+        "path_prefix": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^/[^%?#\\\\<>\u0027\u0022]*$"
+        },
+        "scheme": { "const": "https" }
+      }
+    },
+    "publisher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "package_identity", "signing_key_identity", "verification"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identifier" },
+        "package_identity": { "$ref": "#/$defs/identifier" },
+        "signing_key_identity": { "$ref": "#/$defs/identifier" },
+        "verification": {
+          "enum": ["apple_developer_id_notarized", "authenticode", "package_signature"]
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "download_bytes",
+        "expanded_bytes",
+        "offline_policy",
+        "proxy_mode",
+        "publisher",
+        "redistribution_permitted",
+        "reserve_bytes",
+        "sha256",
+        "sources"
+      ],
+      "properties": {
+        "download_bytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "expanded_bytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "offline_policy": { "enum": ["bundled", "user_selected_official"] },
+        "proxy_mode": { "enum": ["system_proxy", "direct_and_system_proxy"] },
+        "publisher": { "$ref": "#/$defs/publisher" },
+        "redistribution_permitted": { "type": "boolean" },
+        "reserve_bytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/source" },
+              { "properties": { "path_prefix": { "pattern": "/$" } } }
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "offline_policy": { "const": "bundled" } } },
+          "then": { "properties": { "redistribution_permitted": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "offline_policy": { "const": "user_selected_official" } } },
+          "then": { "properties": { "redistribution_permitted": { "const": false } } }
+        }
+      ]
+    },
+    "argument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "enum": ["literal", "artifact_path", "plan_digest", "install_root", "operation_receipt_path"]
+        },
+        "value": { "type": "string", "maxLength": 512 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "literal" } } },
+          "then": { "properties": { "value": { "minLength": 1 } } },
+          "else": { "properties": { "value": { "const": "" } } }
+        }
+      ]
+    },
+    "install": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arguments",
+        "executable",
+        "ownership_changes",
+        "reboot_exit_codes",
+        "rollback_strategy",
+        "service_identity",
+        "vendor_ui_mandatory"
+      ],
+      "properties": {
+        "arguments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/argument" },
+          "allOf": [
+            { "contains": { "properties": { "kind": { "const": "artifact_path" } }, "required": ["kind"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "kind": { "const": "plan_digest" } }, "required": ["kind"] }, "minContains": 1, "maxContains": 1 }
+          ]
+        },
+        "executable": {
+          "enum": ["macos_installer", "windows_verified_helper", "apt", "dnf", "rootless_setup"]
+        },
+        "ownership_changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9._-]+:[a-z0-9._-]+$", "maxLength": 256 }
+        },
+        "reboot_exit_codes": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 4294967295 }
+        },
+        "rollback_strategy": { "enum": ["preserve_runtime", "managed_remove", "package_manager_rollback"] },
+        "service_identity": { "$ref": "#/$defs/identifier" },
+        "vendor_ui_mandatory": { "type": "boolean" }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture",
+        "distribution",
+        "edition",
+        "maximum_build",
+        "maximum_os_version",
+        "minimum_build",
+        "minimum_cpu_cores",
+        "minimum_free_disk_bytes",
+        "minimum_memory_bytes",
+        "minimum_os_version",
+        "operating_system",
+        "virtualization_required"
+      ],
+      "properties": {
+        "architecture": { "enum": ["arm64", "x86_64"] },
+        "distribution": { "$ref": "#/$defs/identifier" },
+        "edition": { "$ref": "#/$defs/identifier" },
+        "maximum_build": { "$ref": "#/$defs/positiveSafeInteger" },
+        "maximum_os_version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "minimum_build": { "$ref": "#/$defs/positiveSafeInteger" },
+        "minimum_cpu_cores": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "minimum_free_disk_bytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "minimum_memory_bytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "minimum_os_version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "operating_system": { "enum": ["linux", "macos", "windows"] },
+        "virtualization_required": { "type": "boolean" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "enum": ["engine", "cli", "containerd", "buildx", "compose", "rootless_extras"] },
+        "version": { "$ref": "#/$defs/stableVersion" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "components", "compose_version", "product", "version"],
+      "properties": {
+        "channel": { "const": "stable" },
+        "components": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/component" }
+        },
+        "compose_version": { "$ref": "#/$defs/stableVersion" },
+        "product": { "enum": ["docker_desktop", "docker_engine"] },
+        "version": { "$ref": "#/$defs/stableVersion" }
+      }
+    },
+    "prerequisite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature_id", "operation", "package_ids", "repository_id", "service_id", "subordinate_id_count"],
+      "properties": {
+        "feature_id": { "type": "string", "maxLength": 128 },
+        "operation": {
+          "enum": [
+            "configure_official_repository",
+            "configure_subordinate_ids",
+            "enable_user_service",
+            "enable_wsl_feature",
+            "install_verified_package",
+            "install_wsl_kernel_update"
+          ]
+        },
+        "package_ids": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "repository_id": { "type": "string", "maxLength": 128 },
+        "service_id": { "type": "string", "maxLength": 128 },
+        "subordinate_id_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "operation": { "const": "configure_official_repository" } } },
+          "then": {
+            "properties": {
+              "feature_id": { "const": "" }, "package_ids": { "maxItems": 0 },
+              "repository_id": { "$ref": "#/$defs/identifier" }, "service_id": { "const": "" },
+              "subordinate_id_count": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operation": { "const": "enable_wsl_feature" } } },
+          "then": {
+            "properties": {
+              "feature_id": { "$ref": "#/$defs/identifier" }, "package_ids": { "maxItems": 0 },
+              "repository_id": { "const": "" }, "service_id": { "const": "" },
+              "subordinate_id_count": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operation": { "enum": ["install_verified_package", "install_wsl_kernel_update"] } } },
+          "then": {
+            "properties": {
+              "feature_id": { "const": "" }, "package_ids": { "minItems": 1 },
+              "repository_id": { "const": "" }, "service_id": { "const": "" },
+              "subordinate_id_count": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operation": { "const": "configure_subordinate_ids" } } },
+          "then": {
+            "properties": {
+              "feature_id": { "const": "" }, "package_ids": { "maxItems": 0 },
+              "repository_id": { "const": "" }, "service_id": { "const": "" },
+              "subordinate_id_count": { "minimum": 65536 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operation": { "const": "enable_user_service" } } },
+          "then": {
+            "properties": {
+              "feature_id": { "const": "" }, "package_ids": { "maxItems": 0 },
+              "repository_id": { "const": "" }, "service_id": { "$ref": "#/$defs/identifier" },
+              "subordinate_id_count": { "const": 0 }
+            }
+          }
+        }
+      ]
+    },
+    "terms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "id", "presentation", "url", "version"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/sha256" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "presentation": { "enum": ["agentmemory", "agentmemory_then_native", "native_vendor_ui"] },
+        "url": { "$ref": "#/$defs/source" },
+        "version": { "$ref": "#/$defs/exactVersion" }
+      }
+    }
+  }
+}

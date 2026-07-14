@@ -1,12 +1,26 @@
 # Test and quality output
 /build/
 /coverage/
+**/coverage/
 *.coverprofile
+.coverage
+.coverage.*
 
 # Compiled launcher artifacts
 /dist/
+**/dist/
 /agentmemory
 *.exe
+
+# Reproducible dependency and language caches
+node_modules/
+**/node_modules/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Local development state and secrets
 .env

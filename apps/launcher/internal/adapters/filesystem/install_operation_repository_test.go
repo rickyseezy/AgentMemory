@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -605,22 +606,26 @@ func TestPF001InstallOperationRepositoryRejectsInvalidDependenciesAndClock(t *te
 	t.Parallel()
 	var typedNilProvider *repositoryJournalProviderStub
 	var typedNilClock *repositoryClockStub
-	if _, err := NewInstallOperationRepository(nil, repositoryClockStub{now: repositoryFixedTime}); err == nil {
+	fence := &repositoryFenceStub{}
+	if _, err := NewInstallOperationRepository(nil, repositoryClockStub{now: repositoryFixedTime}, fence); err == nil {
 		t.Fatal("nil journal provider was accepted")
 	}
-	if _, err := NewInstallOperationRepository(typedNilProvider, repositoryClockStub{now: repositoryFixedTime}); err == nil {
+	if _, err := NewInstallOperationRepository(typedNilProvider, repositoryClockStub{now: repositoryFixedTime}, fence); err == nil {
 		t.Fatal("typed nil journal provider was accepted")
 	}
 	provider := &repositoryJournalProviderStub{journal: &repositoryJournalStub{}}
-	if _, err := NewInstallOperationRepository(provider, nil); err == nil {
+	if _, err := NewInstallOperationRepository(provider, nil, fence); err == nil {
 		t.Fatal("nil clock was accepted")
 	}
-	if _, err := NewInstallOperationRepository(provider, typedNilClock); err == nil {
+	if _, err := NewInstallOperationRepository(provider, typedNilClock, fence); err == nil {
 		t.Fatal("typed nil clock was accepted")
 	}
 
 	operation, _ := repositoryTestOperation(t, "zero-clock")
-	repository, err := NewInstallOperationRepository(provider, repositoryClockStub{})
+	if _, err := NewInstallOperationRepository(provider, repositoryClockStub{now: repositoryFixedTime}, nil); err == nil {
+		t.Fatal("nil state fence was accepted")
+	}
+	repository, err := NewInstallOperationRepository(provider, repositoryClockStub{}, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,11 +835,25 @@ func mustOperationRepositoryWithProvider(
 	provider OperationJournalProvider,
 ) *InstallOperationRepository {
 	t.Helper()
-	repository, err := NewInstallOperationRepository(provider, repositoryClockStub{now: repositoryFixedTime})
+	repository, err := NewInstallOperationRepository(
+		provider, repositoryClockStub{now: repositoryFixedTime}, &repositoryFenceStub{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return repository
+}
+
+type repositoryFenceStub struct{ mu sync.Mutex }
+
+func (f *repositoryFenceStub) WithExclusive(
+	_ context.Context,
+	_ install.OperationID,
+	action func() error,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return action()
 }
 
 func repositoryTestOperation(t testing.TB, value string) (*install.Operation, install.PlanDigest) {

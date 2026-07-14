@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin || windows
 
 // Package filesystem contains owner-only, crash-safe host filesystem adapters.
 package filesystem
@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -128,14 +127,14 @@ func (j *InstallJournal) Append(
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if err := j.ensurePrivateParent(); err != nil {
+	if err := j.ensurePrivateParent(ctx); err != nil {
 		return err
 	}
-	if err := j.removeAbandonedTemporaryFiles(); err != nil {
+	if err := j.removeAbandonedTemporaryFiles(ctx); err != nil {
 		return err
 	}
 
-	document, err := j.loadDocument()
+	document, err := j.loadDocument(ctx)
 	switch {
 	case err == nil:
 		latest := document.Entries[len(document.Entries)-1]
@@ -220,7 +219,7 @@ func (j *InstallJournal) LoadLatest(ctx context.Context) (journalport.Snapshot, 
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	document, err := j.loadDocument()
+	document, err := j.loadDocument(ctx)
 	if err != nil {
 		return journalport.Snapshot{}, err
 	}
@@ -253,7 +252,7 @@ func (j *InstallJournal) ConfirmDurable(ctx context.Context, operationID string,
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	document, err := j.loadDocument()
+	document, err := j.loadDocument(ctx)
 	if err != nil {
 		return err
 	}
@@ -268,16 +267,16 @@ func (j *InstallJournal) ConfirmDurable(ctx context.Context, operationID string,
 	if err := ctx.Err(); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "confirm", err)
 	}
-	if err := j.syncCurrentFile(); err != nil {
+	if err := j.syncCurrentFile(ctx); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "confirm", err)
 	}
-	return syncDirectory(filepath.Dir(j.path))
+	return syncDirectory(ctx, filepath.Dir(j.path))
 }
 
-func (j *InstallJournal) syncCurrentFile() error {
+func (j *InstallJournal) syncCurrentFile(ctx context.Context) error {
 	fileInfo, err := os.Lstat(j.path)
 	if err != nil {
 		return journalport.NewError(journalport.ErrorIO, "confirm_inspect", err)
@@ -292,7 +291,7 @@ func (j *InstallJournal) syncCurrentFile() error {
 	if err := verifyCurrentOwner(fileInfo, "confirm_inspect"); err != nil {
 		return err
 	}
-	if fileInfo.Mode().Perm()&0o077 != 0 {
+	if platformUnsafePermissions(fileInfo) {
 		return journalport.NewError(
 			journalport.ErrorUnsafePermission,
 			"confirm_inspect",
@@ -300,24 +299,11 @@ func (j *InstallJournal) syncCurrentFile() error {
 		)
 	}
 
-	file, err := os.Open(j.path)
+	file, err := openVerifiedProtectedObject(ctx, j.path, fileInfo, "confirm_open")
 	if err != nil {
-		return journalport.NewError(journalport.ErrorIO, "confirm_open", err)
+		return err
 	}
-	openedInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return journalport.NewError(journalport.ErrorIO, "confirm_inspect_open_file", err)
-	}
-	if !os.SameFile(fileInfo, openedInfo) {
-		_ = file.Close()
-		return journalport.NewError(
-			journalport.ErrorUnsafePermission,
-			"confirm_open",
-			errors.New("journal changed while durability was being confirmed"),
-		)
-	}
-	if err := file.Sync(); err != nil {
+	if err := platformDurableSync(file); err != nil {
 		_ = file.Close()
 		return journalport.NewError(journalport.ErrorIO, "confirm_sync", err)
 	}
@@ -381,15 +367,15 @@ func compactJSON(value json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), output.Bytes()...)
 }
 
-func (j *InstallJournal) loadDocument() (persistedJournal, error) {
-	if err := verifyPrivateDirectory(filepath.Dir(j.path)); err != nil {
+func (j *InstallJournal) loadDocument(ctx context.Context) (persistedJournal, error) {
+	if err := verifyPrivateDirectory(ctx, filepath.Dir(j.path)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return persistedJournal{}, journalport.NewError(journalport.ErrorNotFound, "load", err)
 		}
 		return persistedJournal{}, err
 	}
 
-	//nolint:gosec // G703: path is normalized at construction and its owner-only parent is verified; owner=security expiry=2027-07-13.
+	//nolint:gosec,nolintlint // G703: path is normalized at construction and its owner-only parent is verified; owner=security expiry=2027-07-13.
 	fileInfo, err := os.Lstat(j.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -422,23 +408,9 @@ func (j *InstallJournal) loadDocument() (persistedJournal, error) {
 		)
 	}
 
-	//nolint:gosec // G703: path is normalized at construction and matched against the verified lstat result; owner=security expiry=2027-07-13.
-	file, err := os.Open(j.path)
+	file, err := openVerifiedProtectedObject(ctx, j.path, fileInfo, "open")
 	if err != nil {
-		return persistedJournal{}, journalport.NewError(journalport.ErrorIO, "open", err)
-	}
-	openedInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return persistedJournal{}, journalport.NewError(journalport.ErrorIO, "inspect_open_file", err)
-	}
-	if !os.SameFile(fileInfo, openedInfo) {
-		_ = file.Close()
-		return persistedJournal{}, journalport.NewError(
-			journalport.ErrorUnsafePermission,
-			"open",
-			errors.New("journal changed while it was being opened"),
-		)
+		return persistedJournal{}, err
 	}
 
 	contents, err := io.ReadAll(io.LimitReader(file, maximumJournalBytes+1))
@@ -572,16 +544,15 @@ func corruptf(format string, values ...any) error {
 	)
 }
 
-func (j *InstallJournal) ensurePrivateParent() error {
+func (j *InstallJournal) ensurePrivateParent(ctx context.Context) error {
 	directory := filepath.Dir(j.path)
-	//nolint:gosec // G703: creating the normalized configured journal parent is the adapter's boundary operation; owner=security expiry=2027-07-13.
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := platformEnsurePrivateDirectory(ctx, directory); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "create_directory", err)
 	}
-	return verifyPrivateDirectory(directory)
+	return verifyPrivateDirectory(ctx, directory)
 }
 
-func (j *InstallJournal) removeAbandonedTemporaryFiles() error {
+func (j *InstallJournal) removeAbandonedTemporaryFiles(ctx context.Context) error {
 	directory := filepath.Dir(j.path)
 	prefix := "." + filepath.Base(j.path) + "."
 	entries, err := os.ReadDir(directory)
@@ -597,7 +568,7 @@ func (j *InstallJournal) removeAbandonedTemporaryFiles() error {
 		if err != nil {
 			return journalport.NewError(journalport.ErrorIO, "inspect_temporary", err)
 		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		if !info.Mode().IsRegular() || platformUnsafePermissions(info) {
 			return journalport.NewError(
 				journalport.ErrorUnsafePermission,
 				"inspect_temporary",
@@ -607,8 +578,16 @@ func (j *InstallJournal) removeAbandonedTemporaryFiles() error {
 		if err := verifyCurrentOwner(info, "inspect_temporary"); err != nil {
 			return err
 		}
-		//nolint:gosec // G703: name comes from ReadDir and is restricted to the journal temp prefix in the verified parent; owner=security expiry=2027-07-13.
-		if err := os.Remove(filepath.Join(directory, entry.Name())); err != nil {
+		path := filepath.Join(directory, entry.Name())
+		opened, err := openVerifiedProtectedObject(ctx, path, info, "inspect_temporary")
+		if err != nil {
+			return err
+		}
+		if err := opened.Close(); err != nil {
+			return journalport.NewError(journalport.ErrorIO, "close_temporary", err)
+		}
+		//nolint:gosec,nolintlint // G703: name comes from ReadDir and is restricted to the journal temp prefix in the verified parent; owner=security expiry=2027-07-13.
+		if err := os.Remove(path); err != nil {
 			return journalport.NewError(journalport.ErrorIO, "remove_temporary", err)
 		}
 		removed = true
@@ -616,11 +595,11 @@ func (j *InstallJournal) removeAbandonedTemporaryFiles() error {
 	if !removed {
 		return nil
 	}
-	return syncDirectory(directory)
+	return syncDirectory(ctx, directory)
 }
 
-func verifyPrivateDirectory(directory string) error {
-	//nolint:gosec // G703: this inspects only the normalized configured journal parent before any journal access; owner=security expiry=2027-07-13.
+func verifyPrivateDirectory(ctx context.Context, directory string) error {
+	//nolint:gosec,nolintlint // G703: this inspects only the normalized configured journal parent before any journal access; owner=security expiry=2027-07-13.
 	info, err := os.Lstat(directory)
 	if err != nil {
 		return err
@@ -635,30 +614,83 @@ func verifyPrivateDirectory(directory string) error {
 	if err := verifyCurrentOwner(info, "inspect_directory"); err != nil {
 		return err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if platformUnsafePermissions(info) {
 		return journalport.NewError(
 			journalport.ErrorUnsafePermission,
 			"inspect_directory",
 			fmt.Errorf("journal parent mode %04o grants group or other access", info.Mode().Perm()),
 		)
 	}
+	opened, err := openVerifiedProtectedObject(ctx, directory, info, "inspect_directory")
+	if err != nil {
+		return err
+	}
+	if err := opened.Close(); err != nil {
+		return journalport.NewError(journalport.ErrorIO, "close_directory", err)
+	}
+	return nil
+}
+
+func openVerifiedProtectedObject(
+	ctx context.Context,
+	path string,
+	expected os.FileInfo,
+	operation string,
+) (*os.File, error) {
+	file, err := platformOpenProtectedObject(ctx, path, expected)
+	if err != nil {
+		return nil, journalport.NewError(
+			journalport.ErrorUnsafePermission,
+			operation,
+			errors.New("protected filesystem object cannot be opened without following links"),
+		)
+	}
+	if err := verifyOpenedProtectedObject(ctx, file, expected, operation); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func verifyOpenedProtectedObject(
+	ctx context.Context,
+	file *os.File,
+	expected os.FileInfo,
+	operation string,
+) error {
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return journalport.NewError(journalport.ErrorIO, operation, err)
+	}
+	if expected != nil && !os.SameFile(expected, openedInfo) {
+		return journalport.NewError(
+			journalport.ErrorUnsafePermission,
+			operation,
+			errors.New("protected filesystem object changed while it was opened"),
+		)
+	}
+	if (!openedInfo.Mode().IsRegular() && !openedInfo.IsDir()) || platformUnsafePermissions(openedInfo) {
+		return journalport.NewError(
+			journalport.ErrorUnsafePermission,
+			operation,
+			errors.New("protected filesystem object is not owner-only and regular or directory"),
+		)
+	}
+	if err := verifyCurrentOwner(openedInfo, operation); err != nil {
+		return err
+	}
+	if err := verifyPlatformDescriptor(ctx, file); err != nil {
+		return journalport.NewError(journalport.ErrorUnsafePermission, operation, err)
+	}
 	return nil
 }
 
 func verifyCurrentOwner(info os.FileInfo, operation string) error {
-	status, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
+	if err := platformVerifyCurrentOwner(info); err != nil {
 		return journalport.NewError(
 			journalport.ErrorUnsafePermission,
 			operation,
-			errors.New("filesystem ownership metadata is unavailable"),
-		)
-	}
-	if int64(status.Uid) != int64(os.Geteuid()) {
-		return journalport.NewError(
-			journalport.ErrorUnsafePermission,
-			operation,
-			errors.New("filesystem object is not owned by the invoking user"),
+			err,
 		)
 	}
 	return nil
@@ -666,22 +698,49 @@ func verifyCurrentOwner(info os.FileInfo, operation string) error {
 
 func (j *InstallJournal) writeAtomically(ctx context.Context, contents []byte) error {
 	directory := filepath.Dir(j.path)
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(j.path)+".*.tmp")
+	//nolint:gosec,nolintlint // G703: normalized journal parent is descriptor-anchored and owner/ACL verified before replacement; owner=security expiry=2027-07-14.
+	directoryInfo, err := os.Lstat(directory)
+	if err != nil {
+		return journalport.NewError(journalport.ErrorIO, "inspect_directory", err)
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return journalport.NewError(journalport.ErrorIO, "open_directory_root", err)
+	}
+	defer func() { _ = root.Close() }()
+	rootInfo, err := root.Stat(".")
+	if err != nil || !os.SameFile(directoryInfo, rootInfo) {
+		return journalport.NewError(
+			journalport.ErrorUnsafePermission,
+			"open_directory_root",
+			errors.New("journal directory changed while its anchored root was opened"),
+		)
+	}
+	rootDescriptor, err := root.Open(".")
+	if err != nil {
+		return journalport.NewError(journalport.ErrorIO, "open_directory_descriptor", err)
+	}
+	defer func() { _ = rootDescriptor.Close() }()
+	if err := verifyOpenedProtectedObject(ctx, rootDescriptor, directoryInfo, "open_directory_descriptor"); err != nil {
+		return err
+	}
+	temporary, temporaryName, err := createProtectedRootTemporary(ctx, root, "."+filepath.Base(j.path)+".")
 	if err != nil {
 		return journalport.NewError(journalport.ErrorIO, "create_temporary", err)
 	}
-	temporaryPath := temporary.Name()
 	temporaryOpen := true
 	defer func() {
 		if temporaryOpen {
 			_ = temporary.Close()
 		}
-		//nolint:gosec // G703: temporaryPath is returned by os.CreateTemp in the verified owner-only parent; owner=security expiry=2027-07-13.
-		_ = os.Remove(temporaryPath)
+		_ = root.Remove(temporaryName)
 	}()
 
 	if err := temporary.Chmod(0o600); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "protect_temporary", err)
+	}
+	if err := verifyOpenedProtectedObject(ctx, temporary, nil, "protect_temporary"); err != nil {
+		return err
 	}
 	if err := j.runCheckpoint(checkpointTempCreated); err != nil {
 		return err
@@ -695,7 +754,7 @@ func (j *InstallJournal) writeAtomically(ctx context.Context, contents []byte) e
 	if err := j.runCheckpoint(checkpointTempWritten); err != nil {
 		return err
 	}
-	if err := temporary.Sync(); err != nil {
+	if err := platformDurableSync(temporary); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "sync_temporary", err)
 	}
 	if err := j.runCheckpoint(checkpointTempSynced); err != nil {
@@ -711,16 +770,24 @@ func (j *InstallJournal) writeAtomically(ctx context.Context, contents []byte) e
 	if err := ctx.Err(); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "commit", err)
 	}
-	//nolint:gosec // G703: source is CreateTemp output and destination is the normalized journal in the same verified parent; owner=security expiry=2027-07-13.
-	if err := os.Rename(temporaryPath, j.path); err != nil {
+	if err := platformAtomicRename(ctx, root, temporaryName, filepath.Base(j.path)); err != nil {
 		return journalport.NewError(journalport.ErrorIO, "rename", err)
 	}
 	if err := j.runCheckpoint(checkpointRenamed); err != nil {
 		return err
 	}
 
-	if err := syncDirectory(directory); err != nil {
-		return err
+	if err := platformDurableSync(rootDescriptor); err != nil {
+		return journalport.NewError(journalport.ErrorIO, "sync_parent", err)
+	}
+	//nolint:gosec,nolintlint // G703: re-reading the normalized path proves it still names the descriptor-anchored directory; owner=security expiry=2027-07-14.
+	currentDirectoryInfo, err := os.Lstat(directory)
+	if err != nil || !os.SameFile(directoryInfo, currentDirectoryInfo) {
+		return journalport.NewError(
+			journalport.ErrorUnsafePermission,
+			"verify_directory_path",
+			errors.New("journal directory path was substituted during atomic replacement"),
+		)
 	}
 	if err := j.runCheckpoint(checkpointDirectorySynced); err != nil {
 		return err
@@ -728,15 +795,17 @@ func (j *InstallJournal) writeAtomically(ctx context.Context, contents []byte) e
 	return nil
 }
 
-func syncDirectory(directory string) error {
-	// The path is the already-validated owner-only parent of the configured
-	// journal, not input supplied to this operation.
-	//nolint:gosec // G304,G703: directory fsync necessarily opens the validated owner-only journal parent; owner=security expiry=2027-07-13.
-	parent, err := os.Open(directory)
+func syncDirectory(ctx context.Context, directory string) error {
+	//nolint:gosec,nolintlint // G703: caller supplies a normalized protected parent which is no-follow opened and owner/ACL verified below; owner=security expiry=2027-07-14.
+	info, err := os.Lstat(directory)
 	if err != nil {
-		return journalport.NewError(journalport.ErrorIO, "open_parent", err)
+		return journalport.NewError(journalport.ErrorIO, "inspect_parent", err)
 	}
-	if err := parent.Sync(); err != nil {
+	parent, err := openVerifiedProtectedObject(ctx, directory, info, "open_parent")
+	if err != nil {
+		return err
+	}
+	if err := platformDurableSync(parent); err != nil {
 		_ = parent.Close()
 		return journalport.NewError(journalport.ErrorIO, "sync_parent", err)
 	}

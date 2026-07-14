@@ -92,26 +92,28 @@ func (c RebootCheckpoint) equal(other RebootCheckpoint) bool {
 // rehydrate an operation. RestoreOperation rejects any non-contiguous or
 // contradictory evidence rather than guessing what completed.
 type RestoreInput struct {
-	OperationID      OperationID
-	PlanDigest       PlanDigest
-	AggregateVersion uint64
-	State            State
-	CurrentPhase     Phase
-	Attempt          uint32
-	Completed        []StepEvidence
-	RebootCheckpoint *RebootCheckpoint
+	OperationID        OperationID
+	PlanDigest         PlanDigest
+	AggregateVersion   uint64
+	State              State
+	CurrentPhase       Phase
+	Attempt            uint32
+	Completed          []StepEvidence
+	RebootCheckpoint   *RebootCheckpoint
+	CancellationIntent *CancellationRestoreInput
 }
 
 // OperationSnapshot is an immutable-by-copy view of an Operation.
 type OperationSnapshot struct {
-	operationID      OperationID
-	planDigest       PlanDigest
-	aggregateVersion uint64
-	state            State
-	currentPhase     Phase
-	attempt          uint32
-	completed        []StepEvidence
-	rebootCheckpoint *RebootCheckpoint
+	operationID        OperationID
+	planDigest         PlanDigest
+	aggregateVersion   uint64
+	state              State
+	currentPhase       Phase
+	attempt            uint32
+	completed          []StepEvidence
+	rebootCheckpoint   *RebootCheckpoint
+	cancellationIntent *CancellationSnapshot
 }
 
 // OperationID returns the operation identity.
@@ -147,16 +149,25 @@ func (s OperationSnapshot) RebootCheckpoint() (RebootCheckpoint, bool) {
 	return *s.rebootCheckpoint, true
 }
 
+// CancellationIntent returns immutable cancellation lifecycle evidence.
+func (s OperationSnapshot) CancellationIntent() (CancellationSnapshot, bool) {
+	if s.cancellationIntent == nil {
+		return CancellationSnapshot{}, false
+	}
+	return *s.cancellationIntent, true
+}
+
 // Operation is the PF-001 installation aggregate.
 type Operation struct {
-	id               OperationID
-	planDigest       PlanDigest
-	aggregateVersion uint64
-	state            State
-	currentPhase     Phase
-	attempt          uint32
-	completed        []StepEvidence
-	rebootCheckpoint *RebootCheckpoint
+	id                 OperationID
+	planDigest         PlanDigest
+	aggregateVersion   uint64
+	state              State
+	currentPhase       Phase
+	attempt            uint32
+	completed          []StepEvidence
+	rebootCheckpoint   *RebootCheckpoint
+	cancellationIntent *CancellationSnapshot
 }
 
 // NewOperation creates a running operation at VerifyHost attempt one.
@@ -183,6 +194,10 @@ func (o *Operation) ID() OperationID { return o.id }
 // PlanDigest returns the operation's immutable plan binding.
 func (o *Operation) PlanDigest() PlanDigest { return o.planDigest }
 
+// VerifyPlanBinding validates an idempotent command without changing state.
+// Terminal reconciliation uses it before retrying cleanup side effects.
+func (o *Operation) VerifyPlanBinding(plan PlanDigest) error { return o.requirePlan(plan) }
+
 // AggregateVersion returns the monotonic concurrency token for optimistic
 // aggregate persistence.
 func (o *Operation) AggregateVersion() uint64 { return o.aggregateVersion }
@@ -201,6 +216,14 @@ func (o *Operation) CompletedEvidence() []StepEvidence {
 	return cloneEvidence(o.completed)
 }
 
+// CancellationIntent returns immutable cancellation lifecycle evidence.
+func (o *Operation) CancellationIntent() (CancellationSnapshot, bool) {
+	if o.cancellationIntent == nil {
+		return CancellationSnapshot{}, false
+	}
+	return *o.cancellationIntent, true
+}
+
 // FirstUnverified returns the earliest phase without verified evidence.
 func (o *Operation) FirstUnverified() (Phase, bool) {
 	if len(o.completed) == len(orderedPhases) {
@@ -216,15 +239,21 @@ func (o *Operation) Snapshot() OperationSnapshot {
 		copyOfCheckpoint := *o.rebootCheckpoint
 		checkpoint = &copyOfCheckpoint
 	}
+	var cancellation *CancellationSnapshot
+	if o.cancellationIntent != nil {
+		copyOfCancellation := *o.cancellationIntent
+		cancellation = &copyOfCancellation
+	}
 	return OperationSnapshot{
-		operationID:      o.id,
-		planDigest:       o.planDigest,
-		aggregateVersion: o.aggregateVersion,
-		state:            o.state,
-		currentPhase:     o.currentPhase,
-		attempt:          o.attempt,
-		completed:        cloneEvidence(o.completed),
-		rebootCheckpoint: checkpoint,
+		operationID:        o.id,
+		planDigest:         o.planDigest,
+		aggregateVersion:   o.aggregateVersion,
+		state:              o.state,
+		currentPhase:       o.currentPhase,
+		attempt:            o.attempt,
+		completed:          cloneEvidence(o.completed),
+		rebootCheckpoint:   checkpoint,
+		cancellationIntent: cancellation,
 	}
 }
 
@@ -308,16 +337,63 @@ func RestoreOperation(input RestoreInput) (*Operation, error) {
 		copyOfCheckpoint := *input.RebootCheckpoint
 		checkpoint = &copyOfCheckpoint
 	}
+	cancellation, err := restoreCancellation(input.CancellationIntent, input.AggregateVersion, input.State)
+	if err != nil {
+		return nil, err
+	}
 	return &Operation{
-		id:               input.OperationID,
-		planDigest:       input.PlanDigest,
-		aggregateVersion: input.AggregateVersion,
-		state:            input.State,
-		currentPhase:     input.CurrentPhase,
-		attempt:          input.Attempt,
-		completed:        completed,
-		rebootCheckpoint: checkpoint,
+		id:                 input.OperationID,
+		planDigest:         input.PlanDigest,
+		aggregateVersion:   input.AggregateVersion,
+		state:              input.State,
+		currentPhase:       input.CurrentPhase,
+		attempt:            input.Attempt,
+		completed:          completed,
+		rebootCheckpoint:   checkpoint,
+		cancellationIntent: cancellation,
 	}, nil
+}
+
+// RequestCancellation appends intent to the same aggregate CAS authority used
+// by phase transitions. A racing Ready transition therefore cannot coexist
+// with a pending request.
+func (o *Operation) RequestCancellation(plan PlanDigest) error {
+	if err := o.requirePlan(plan); err != nil {
+		return err
+	}
+	if o.cancellationIntent != nil {
+		return nil
+	}
+	if o.state.Terminal() {
+		return newTransitionError(o.state, o.currentPhase, "RequestCancellation")
+	}
+	if err := o.advanceVersion(); err != nil {
+		return err
+	}
+	o.cancellationIntent = &CancellationSnapshot{requestedAtVersion: o.aggregateVersion}
+	return nil
+}
+
+// AcknowledgeCancellation is legal only after StateCancelled is durable and
+// cleanup has succeeded. The application persists this mutation last.
+func (o *Operation) AcknowledgeCancellation(plan PlanDigest) error {
+	if err := o.requirePlan(plan); err != nil {
+		return err
+	}
+	if o.cancellationIntent == nil {
+		return newIntegrityError("cancellation acknowledgement has no request")
+	}
+	if o.cancellationIntent.acknowledgedAtVersion != 0 {
+		return nil
+	}
+	if o.state != StateCancelled {
+		return newTransitionError(o.state, o.currentPhase, "AcknowledgeCancellation")
+	}
+	if err := o.advanceVersion(); err != nil {
+		return err
+	}
+	o.cancellationIntent.acknowledgedAtVersion = o.aggregateVersion
+	return nil
 }
 
 // CompleteStep appends verified evidence for the current phase. Replaying the
@@ -329,6 +405,9 @@ func (o *Operation) CompleteStep(evidence StepEvidence) error {
 	}
 	if !evidence.valid() {
 		return newValidationError("step_evidence", "is incomplete or has an invalid fingerprint")
+	}
+	if o.cancellationIntent != nil && o.cancellationIntent.Status() == CancellationRequested {
+		return newTransitionError(o.state, o.currentPhase, "CompleteStepWhileCancellationRequested")
 	}
 	for _, completed := range o.completed {
 		if completed.phase != evidence.phase {

@@ -169,8 +169,9 @@ func TestPF001StepEvidenceEnforcesPhaseSpecificProofPolicy(t *testing.T) {
 	}{
 		{name: "host starts undetermined", phase: PhaseVerifyHost, ownership: RuntimeOwnershipUndetermined},
 		{name: "host cannot claim resolved ownership", phase: PhaseVerifyHost, ownership: RuntimeOwnershipReusedExternal, wantError: true},
-		{name: "runtime resolves external ownership", phase: PhaseEnsureContainerRuntime, ownership: RuntimeOwnershipReusedExternal},
-		{name: "runtime resolves managed ownership", phase: PhaseEnsureContainerRuntime, ownership: RuntimeOwnershipProvisionedByAgentMemory},
+		{name: "runtime requires artifact", phase: PhaseEnsureContainerRuntime, ownership: RuntimeOwnershipReusedExternal, wantError: true},
+		{name: "runtime resolves external ownership", phase: PhaseEnsureContainerRuntime, artifact: true, ownership: RuntimeOwnershipReusedExternal},
+		{name: "runtime resolves managed ownership", phase: PhaseEnsureContainerRuntime, artifact: true, ownership: RuntimeOwnershipProvisionedByAgentMemory},
 		{name: "runtime cannot remain undetermined", phase: PhaseEnsureContainerRuntime, ownership: RuntimeOwnershipUndetermined, wantError: true},
 		{name: "runtime cannot be not applicable", phase: PhaseEnsureContainerRuntime, ownership: RuntimeOwnershipNotApplicable, wantError: true},
 		{name: "release requires artifact", phase: PhaseVerifyRelease, ownership: RuntimeOwnershipReusedExternal, wantError: true},

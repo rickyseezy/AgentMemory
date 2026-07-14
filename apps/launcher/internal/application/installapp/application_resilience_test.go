@@ -232,6 +232,11 @@ func TestPF001InstallSnapshotsCallerOwnedPlanAndResumeReceiptAtEntry(t *testing.
 	if !runtimeCapture.request.PlanDigest().Equal(wantDigest) {
 		t.Fatalf("phase plan digest = %s, want %s", runtimeCapture.request.PlanDigest().String(), wantDigest.String())
 	}
+	actualResumeReceipt, ok := runtimeCapture.request.ResumeReceipt()
+	wantResumeReceipt := install.DigestBytes([]byte("correct-resume-receipt"))
+	if !ok || !actualResumeReceipt.Equal(wantResumeReceipt) {
+		t.Fatal("runtime phase did not receive the snapshotted, parent-verified reboot receipt")
+	}
 }
 
 func TestPF001RepositorySaveSentinelsMapAtEveryPersistenceBoundary(t *testing.T) {

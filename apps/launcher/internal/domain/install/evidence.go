@@ -245,9 +245,10 @@ func isOpaqueFactCharacter(character rune) bool {
 }
 
 // PhaseRequiresVerifiedArtifact reports whether completion proof must bind an
-// independently verified release artifact digest.
+// independently verified executable or release artifact digest.
 func PhaseRequiresVerifiedArtifact(phase Phase) bool {
-	return phase == PhaseVerifyRelease || phase == PhaseEnsureComposeBundle
+	return phase == PhaseEnsureContainerRuntime || phase == PhaseVerifyRelease ||
+		phase == PhaseEnsureComposeBundle
 }
 
 // StepEvidenceInput is consumed by NewStepEvidence. Slice data is copied and

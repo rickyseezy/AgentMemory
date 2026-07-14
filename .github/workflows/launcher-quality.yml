@@ -11,6 +11,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "apps/launcher/**"
+      - "contracts/**"
       - "tools/**"
   push:
     branches:
@@ -22,6 +23,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "apps/launcher/**"
+      - "contracts/**"
       - "tools/**"
 
 permissions:
@@ -80,24 +82,6 @@ jobs:
           go test -race -shuffle=on -count=1 -covermode=atomic \
             -coverprofile=build/go-cover.out ./apps/launcher/... ./tools/...
 
-      - name: Fuzz installer state transitions
-        env:
-          FUZZ_TIME: ${{ github.event_name == 'schedule' && '2m' || '10s' }}
-        run: |
-          go test ./apps/launcher/internal/domain/install \
-            -run=^$ \
-            -fuzz=FuzzPF001ReadyRequiresEveryOrderedPhase \
-            -fuzztime="$FUZZ_TIME"
-
-      - name: Fuzz durable journal authentication
-        env:
-          FUZZ_TIME: ${{ github.event_name == 'schedule' && '2m' || '10s' }}
-        run: |
-          go test ./apps/launcher/internal/adapters/filesystem \
-            -run=^$ \
-            -fuzz=FuzzPF001InstallJournalRejectsUnauthenticatedBytes \
-            -fuzztime="$FUZZ_TIME"
-
       - name: Enforce launcher coverage policy
         run: |
           go run ./tools/check_go_coverage \
@@ -107,16 +91,104 @@ jobs:
             -package 80 \
             -changed 90
 
-  cross-platform:
-    name: Unit tests (${{ matrix.os }})
+  fuzz:
+    name: Fuzz (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest
-          - ubuntu-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+        include:
+          - name: installer-state
+            package: ./apps/launcher/internal/domain/install
+            target: FuzzPF001ReadyRequiresEveryOrderedPhase
+          - name: journal-authentication
+            package: ./apps/launcher/internal/adapters/filesystem
+            target: FuzzPF001InstallJournalRejectsUnauthenticatedBytes
+          - name: agent-config-json
+            package: ./apps/launcher/internal/domain/agentconfig
+            target: FuzzPF001HostNeutralJSONPlanNeverPanics
+          - name: artifact-source-range
+            package: ./apps/launcher/internal/domain/artifactacquisition
+            target: FuzzPF001ArtifactSourceAndRangeValidation
+          - name: release-digest
+            package: ./apps/launcher/internal/domain/releaseinventory
+            target: FuzzParseDigestRoundTrip
+          - name: release-oci-reference
+            package: ./apps/launcher/internal/domain/releaseinventory
+            target: FuzzOCIResourceNeverAcceptsMutableOrMismatchedReference
+          - name: release-manifest
+            package: ./apps/launcher/internal/domain/releaseinventory
+            target: FuzzDecodeManifestV1NeverNormalizesUntrustedInput
+          - name: release-anchor
+            package: ./apps/launcher/internal/adapters/releaseanchor
+            target: FuzzPF001ReleaseAnchorSnapshotStrictDecoder
+          - name: release-evidence
+            package: ./apps/launcher/internal/adapters/releaseverify
+            target: FuzzReleaseEvidenceCanonicalParsers
+          - name: release-sigstore-bundle
+            package: ./apps/launcher/internal/adapters/releaseverify
+            target: FuzzDecodeSigstoreBundle
+          - name: resource-observation
+            package: ./apps/launcher/internal/domain/resourceinventory
+            target: FuzzPF001DockerObservationValidation
+          - name: runtime-catalog
+            package: ./apps/launcher/internal/domain/runtimecatalog
+            target: FuzzDecodeManifestV1
+          - name: docker-observation-json
+            package: ./apps/launcher/internal/adapters/dockercli
+            target: FuzzPF001ManagedResourceJSONDuplicateScanner
+          - name: docker-compose-render-json
+            package: ./apps/launcher/internal/adapters/dockercli
+            target: FuzzPF001RenderedComposeStrictDecoder
+          - name: docker-capacity-lease-json
+            package: ./apps/launcher/internal/adapters/dockercli
+            target: FuzzPF001DockerCapacityLeaseOutputStrictDecoder
+          - name: capacity-helper-protocol
+            package: ./apps/launcher/internal/capacityhelper
+            target: FuzzPF001CapacityHelperStrictParsers
+          - name: install-plan
+            package: ./apps/launcher/internal/domain/installplan
+            target: FuzzDecodeCanonicalPlanV1
+          - name: runtime-install-plan
+            package: ./apps/launcher/internal/domain/runtimeinstall
+            target: FuzzDecodePlanV1
+          - name: setup-http-request
+            package: ./apps/launcher/internal/adapters/setuphttp
+            target: FuzzPF001SetupHTTPStrictRequestParsers
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Run bounded fuzz target
+        env:
+          FUZZ_TIME: ${{ github.event_name == 'schedule' && '2m' || '10s' }}
+        run: |
+          go test "${{ matrix.package }}" \
+            -run=^$ \
+            -fuzz="${{ matrix.target }}" \
+            -fuzztime="$FUZZ_TIME"
+
+  cross-platform:
+    name: Unit tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-15-intel
+          - macos-15
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - windows-2025
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - name: Check out source
@@ -132,3 +204,86 @@ jobs:
 
       - name: Run launcher tests
         run: go test -race -shuffle=on -count=1 ./apps/launcher/...
+
+  mutation-changed:
+    name: Changed launcher mutation gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source and mutation base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Enforce changed critical-code mutation score
+        shell: bash
+        run: |
+          base="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          fi
+          if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
+            base="origin/main"
+          fi
+          # mutago v2.7.7, pinned to the peeled tag commit.
+          go run github.com/quality-gates/mutago/v2/cmd/mutago@5e268a05d68c37d3b89a56447b4e80f791f824c2 \
+            --noop \
+            --coverage \
+            --per-test \
+            --git-diff-lines \
+            --git-diff-base "$base" \
+            --ignore-msi-with-no-mutations \
+            --min-msi 80 \
+            --min-covered-msi 80 \
+            --timeout-coefficient 5 \
+            --workers 2 \
+            --logger-github \
+            --logger-summary-json \
+            --quiet \
+            --no-diffs \
+            ./apps/launcher/...
+
+  mutation-nightly:
+    name: Full critical launcher mutation gate
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Enforce full critical-package mutation score
+        run: |
+          # mutago v2.7.7, pinned to the peeled tag commit.
+          go run github.com/quality-gates/mutago/v2/cmd/mutago@5e268a05d68c37d3b89a56447b4e80f791f824c2 \
+            --noop \
+            --coverage \
+            --per-test \
+            --min-msi 80 \
+            --min-covered-msi 80 \
+            --timeout-coefficient 5 \
+            --workers 2 \
+            --logger-github \
+            --logger-summary-json \
+            --quiet \
+            --no-diffs \
+            ./apps/launcher/internal/domain/... \
+            ./apps/launcher/internal/application/... \
+            ./apps/launcher/internal/adapters/...

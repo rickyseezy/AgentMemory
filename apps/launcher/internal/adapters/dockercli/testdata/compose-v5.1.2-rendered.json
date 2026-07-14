@@ -1,0 +1,484 @@
+{
+  "name": "agentmemory_019f5f2012347abc81230123456789ab",
+  "networks": {
+    "am_internal": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_internal",
+      "ipam": {},
+      "internal": true,
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "internal",
+        "io.agentmemory.release": "0.1.0"
+      }
+    }
+  },
+  "secrets": {
+    "installation-key": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_installation-key",
+      "file": "{{SECRET_FILE}}"
+    }
+  },
+  "services": {
+    "core": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": null,
+      "depends_on": {
+        "local-embedding": {
+          "condition": "service_healthy",
+          "required": true
+        },
+        "local-extractor": {
+          "condition": "service_healthy",
+          "required": true
+        },
+        "local-reranker": {
+          "condition": "service_healthy",
+          "required": true
+        },
+        "neo4j": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/app/healthcheck"
+        ],
+        "timeout": "3s",
+        "interval": "10s",
+        "retries": 5,
+        "start_period": "30s",
+        "start_interval": "2s"
+      },
+      "image": "ghcr.io/agentmemory/core@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "core",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "host_ip": "127.0.0.1",
+          "target": 9411,
+          "published": "9411",
+          "protocol": "tcp"
+        }
+      ],
+      "read_only": true,
+      "restart": "unless-stopped",
+      "secrets": [
+        {
+          "source": "installation-key",
+          "target": "/run/secrets/installation-key",
+          "mode": "0444"
+        }
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "state",
+          "target": "/var/lib/agentmemory/state"
+        },
+        {
+          "type": "volume",
+          "source": "artifacts",
+          "target": "/var/lib/agentmemory/artifacts"
+        },
+        {
+          "type": "volume",
+          "source": "journal",
+          "target": "/var/lib/agentmemory/journal"
+        },
+        {
+          "type": "volume",
+          "source": "telemetry",
+          "target": "/var/lib/agentmemory/telemetry"
+        }
+      ]
+    },
+    "local-embedding": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": null,
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/app/healthcheck"
+        ],
+        "timeout": "3s",
+        "interval": "10s",
+        "retries": 5,
+        "start_period": "30s",
+        "start_interval": "2s"
+      },
+      "image": "ghcr.io/agentmemory/local-embedding@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "local-embedding",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "models",
+          "target": "/models",
+          "read_only": true
+        }
+      ]
+    },
+    "local-extractor": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": null,
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/app/healthcheck"
+        ],
+        "timeout": "3s",
+        "interval": "10s",
+        "retries": 5,
+        "start_period": "30s",
+        "start_interval": "2s"
+      },
+      "image": "ghcr.io/agentmemory/local-extractor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "local-extractor",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "models",
+          "target": "/models",
+          "read_only": true
+        }
+      ]
+    },
+    "local-reranker": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": null,
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/app/healthcheck"
+        ],
+        "timeout": "3s",
+        "interval": "10s",
+        "retries": 5,
+        "start_period": "30s",
+        "start_interval": "2s"
+      },
+      "image": "ghcr.io/agentmemory/local-reranker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "local-reranker",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "models",
+          "target": "/models",
+          "read_only": true
+        }
+      ]
+    },
+    "migrate": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": [
+        "/app/agentmemory",
+        "migrate"
+      ],
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "image": "ghcr.io/agentmemory/migrate@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "migrate",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "read_only": true,
+      "restart": "no",
+      "secrets": [
+        {
+          "source": "installation-key",
+          "target": "/run/secrets/installation-key",
+          "mode": "0444"
+        }
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "state",
+          "target": "/var/lib/agentmemory/state"
+        },
+        {
+          "type": "volume",
+          "source": "artifacts",
+          "target": "/var/lib/agentmemory/artifacts"
+        },
+        {
+          "type": "volume",
+          "source": "journal",
+          "target": "/var/lib/agentmemory/journal"
+        }
+      ]
+    },
+    "neo4j": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": null,
+      "deploy": {
+        "resources": {
+          "limits": {
+            "cpus": 1,
+            "memory": "1073741824",
+            "pids": 128
+          }
+        },
+        "placement": {}
+      },
+      "entrypoint": null,
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/app/healthcheck"
+        ],
+        "timeout": "3s",
+        "interval": "10s",
+        "retries": 5,
+        "start_period": "30s",
+        "start_interval": "2s"
+      },
+      "image": "ghcr.io/agentmemory/neo4j@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "neo4j",
+        "io.agentmemory.release": "0.1.0"
+      },
+      "networks": {
+        "am_internal": null
+      },
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:size=67108864,mode=0700"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "neo4j",
+          "target": "/data"
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "artifacts": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_artifacts_019f5f2156787def9123abcdef012345",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "artifacts",
+        "io.agentmemory.release": "0.1.0"
+      }
+    },
+    "journal": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_journal",
+      "labels": {
+        "io.agentmemory.generation": "stable",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "journal",
+        "io.agentmemory.release": "0.1.0"
+      }
+    },
+    "models": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_models",
+      "labels": {
+        "io.agentmemory.generation": "stable",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "models",
+        "io.agentmemory.release": "0.1.0"
+      }
+    },
+    "neo4j": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_neo4j_019f5f2156787def9123abcdef012345",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "neo4j",
+        "io.agentmemory.release": "0.1.0"
+      }
+    },
+    "state": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_state_019f5f2156787def9123abcdef012345",
+      "labels": {
+        "io.agentmemory.generation": "019f5f21-5678-7def-9123-abcdef012345",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "state",
+        "io.agentmemory.release": "0.1.0"
+      }
+    },
+    "telemetry": {
+      "name": "agentmemory_019f5f2012347abc81230123456789ab_telemetry",
+      "labels": {
+        "io.agentmemory.generation": "stable",
+        "io.agentmemory.installation": "019f5f20-1234-7abc-8123-0123456789ab",
+        "io.agentmemory.managed": "true",
+        "io.agentmemory.purpose": "telemetry",
+        "io.agentmemory.release": "0.1.0"
+      }
+    }
+  }
+}

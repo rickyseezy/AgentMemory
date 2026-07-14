@@ -132,6 +132,31 @@ func TestPF001RestoreRejectsAggregateVersionOlderThanEvidence(t *testing.T) {
 	assertErrorCode(t, err, ErrorCodeIntegrityViolation)
 }
 
+func TestPF001RestoreRejectsRuntimeCompletionWithoutVerifiedInstallerArtifact(t *testing.T) {
+	operation, plan := newTestOperation(t)
+	if err := operation.CompleteStep(testEvidence(t, PhaseVerifyHost, 1, plan, false)); err != nil {
+		t.Fatal(err)
+	}
+	if err := operation.CompleteStep(testEvidence(t, PhaseEnsureContainerRuntime, 1, plan, true)); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := operation.Snapshot()
+	completed := snapshot.CompletedEvidence()
+	completed[1].verifiedArtifactDigest = Digest{}
+	completed[1].fingerprint = completed[1].calculateFingerprint()
+
+	_, err := RestoreOperation(RestoreInput{
+		OperationID:      snapshot.OperationID(),
+		PlanDigest:       snapshot.PlanDigest(),
+		AggregateVersion: snapshot.AggregateVersion(),
+		State:            snapshot.State(),
+		CurrentPhase:     snapshot.CurrentPhase(),
+		Attempt:          snapshot.Attempt(),
+		Completed:        completed,
+	})
+	assertErrorCode(t, err, ErrorCodeIntegrityViolation)
+}
+
 func TestPF001RestoreAllowsVersionZeroOnlyForPristineOperation(t *testing.T) {
 	operation, plan := newTestOperation(t)
 	tests := []RestoreInput{
@@ -483,12 +508,14 @@ func TestPF001OperationRejectsRuntimeOwnershipDrift(t *testing.T) {
 		plan,
 		RuntimeOwnershipUndetermined,
 	))
-	runtime := mustProofPolicyEvidence(t, proofPolicyEvidenceInput(
+	runtimeInput := proofPolicyEvidenceInput(
 		t,
 		PhaseEnsureContainerRuntime,
 		plan,
 		RuntimeOwnershipReusedExternal,
-	))
+	)
+	runtimeInput.VerifiedArtifactDigest = DigestBytes([]byte("runtime installer artifact"))
+	runtime := mustProofPolicyEvidence(t, runtimeInput)
 	releaseInput := proofPolicyEvidenceInput(
 		t,
 		PhaseVerifyRelease,
@@ -522,12 +549,14 @@ func TestPF001RestoreRejectsRuntimeOwnershipDrift(t *testing.T) {
 		plan,
 		RuntimeOwnershipUndetermined,
 	))
-	runtime := mustProofPolicyEvidence(t, proofPolicyEvidenceInput(
+	runtimeInput := proofPolicyEvidenceInput(
 		t,
 		PhaseEnsureContainerRuntime,
 		plan,
 		RuntimeOwnershipReusedExternal,
-	))
+	)
+	runtimeInput.VerifiedArtifactDigest = DigestBytes([]byte("runtime installer artifact"))
+	runtime := mustProofPolicyEvidence(t, runtimeInput)
 	releaseInput := proofPolicyEvidenceInput(
 		t,
 		PhaseVerifyRelease,

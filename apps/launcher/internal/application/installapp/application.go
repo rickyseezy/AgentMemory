@@ -16,6 +16,7 @@ const finalizationTimeout = 5 * time.Second
 // dependency is mandatory; the constructor rejects nil and typed-nil ports.
 type Dependencies struct {
 	Operations          OperationRepository
+	CancellationIntents CancellationIntentPort
 	InstallationLock    InstallationLockPort
 	HostVerification    HostVerificationPort
 	ContainerRuntime    ContainerRuntimePort
@@ -38,6 +39,7 @@ type Dependencies struct {
 // service locator.
 type InstallApplication struct {
 	operations          OperationRepository
+	cancellationIntents CancellationIntentPort
 	installationLock    InstallationLockPort
 	hostVerification    HostVerificationPort
 	containerRuntime    ContainerRuntimePort
@@ -63,6 +65,7 @@ func NewInstallApplication(dependencies Dependencies) (*InstallApplication, erro
 		value any
 	}{
 		{name: "operations", value: dependencies.Operations},
+		{name: "cancellation intents", value: dependencies.CancellationIntents},
 		{name: "installation lock", value: dependencies.InstallationLock},
 		{name: "host verification", value: dependencies.HostVerification},
 		{name: "container runtime", value: dependencies.ContainerRuntime},
@@ -84,9 +87,13 @@ func NewInstallApplication(dependencies Dependencies) (*InstallApplication, erro
 			return nil, fmt.Errorf("install application dependency %q is required", dependency.name)
 		}
 	}
+	if !sameDependencyIdentity(dependencies.Operations, dependencies.CancellationIntents) {
+		return nil, errors.New("operation repository and cancellation intents must share one atomic authority")
+	}
 
 	return &InstallApplication{
 		operations:          dependencies.Operations,
+		cancellationIntents: dependencies.CancellationIntents,
 		installationLock:    dependencies.InstallationLock,
 		hostVerification:    dependencies.HostVerification,
 		containerRuntime:    dependencies.ContainerRuntime,
@@ -103,6 +110,13 @@ func NewInstallApplication(dependencies Dependencies) (*InstallApplication, erro
 		readiness:           dependencies.Readiness,
 		activeRelease:       dependencies.ActiveRelease,
 	}, nil
+}
+
+func sameDependencyIdentity(left, right any) bool {
+	leftValue := reflect.ValueOf(left)
+	rightValue := reflect.ValueOf(right)
+	return leftValue.IsValid() && rightValue.IsValid() && leftValue.Type() == rightValue.Type() &&
+		leftValue.Kind() == reflect.Pointer && leftValue.Pointer() == rightValue.Pointer()
 }
 
 func isNil(value any) bool {
@@ -193,6 +207,11 @@ func (a *InstallApplication) Install(
 			return InstallResult{OperationID: operationID.String()}, mapDomainError(err)
 		}
 		if saveError := a.save(ctx, operation); saveError != nil {
+			if reconciled, handled, reconciliationError := a.reconcileConcurrentCancellation(
+				ctx, operation, canonicalPlan, saveError,
+			); handled {
+				return reconciled, reconciliationError
+			}
 			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), saveError
 		}
 	default:
@@ -200,10 +219,54 @@ func (a *InstallApplication) Install(
 			err, "installation state could not be loaded",
 		)
 	}
+	var runtimeResumeReceipt *install.Digest
 	if loadedExisting {
+		if bindingError := operation.VerifyPlanBinding(planDigest); bindingError != nil {
+			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(bindingError)
+		}
+		if terminalResult, releaseReason, terminal := replayableTerminalResult(operation); terminal {
+			intent, hasIntent, intentError := a.observeCancellation(ctx, operation)
+			if intentError != nil {
+				terminalResult.ErrorCode = intentError.Code()
+				return terminalResult, intentError
+			}
+			if hasIntent && operation.State() != install.StateCancelled {
+				terminalResult.ErrorCode = ErrorCodeIntegrityViolation
+				return terminalResult, cancellationIntegrityError()
+			}
+			if releaseReason != ReservationReleaseUnknown && reservationMayExist(operation) {
+				if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, releaseReason); releaseError != nil {
+					terminalResult.ErrorCode = releaseError.Code()
+					return terminalResult, releaseError
+				}
+			}
+			if hasIntent {
+				acknowledged, acknowledgeError := a.acknowledgeCancellation(ctx, operation, intent)
+				if acknowledgeError != nil {
+					terminalResult.ErrorCode = acknowledgeError.Code()
+					return terminalResult, acknowledgeError
+				}
+				terminalResult.CancellationRequested = true
+				terminalResult.CancellationSettled = acknowledged.Status == CancellationIntentAcknowledged
+			}
+			return terminalResult, nil
+		}
+		// Cancellation outranks resume gating. In particular, a reboot-pending
+		// operation must be able to settle without requiring the continuation
+		// receipt whose only purpose is to resume runtime provisioning.
+		if cancellationResult, handled, cancellationError := a.cancelIfRequested(
+			ctx, operation, canonicalPlan,
+		); handled || cancellationError != nil {
+			return cancellationResult, cancellationError
+		}
+		resumingRuntimeReboot := operation.State() == install.StateRebootPending && command.ResumeReceipt != nil
 		resumeAction, resumeError := a.prepareExisting(ctx, operation, planDigest, command.ResumeReceipt)
 		if resumeError != nil {
 			return resultFrom(operation, PhaseOutcomeUnknown, resumeAction), resumeError
+		}
+		if resumingRuntimeReboot {
+			receipt := *command.ResumeReceipt
+			runtimeResumeReceipt = &receipt
 		}
 		switch resumeAction {
 		case install.ResumeActionAlreadyReady:
@@ -219,16 +282,44 @@ func (a *InstallApplication) Install(
 	}
 
 	for operation.State() == install.StateRunning {
+		if cancellationResult, handled, cancellationError := a.cancelIfRequested(
+			ctx, operation, canonicalPlan,
+		); handled || cancellationError != nil {
+			return cancellationResult, cancellationError
+		}
 		// The unchanged cursor is durably recorded immediately before every
 		// side-effect boundary. An interrupted adapter can therefore only be
 		// retried at the same first-unverified phase.
 		if saveError := a.save(ctx, operation); saveError != nil {
+			if reconciled, handled, reconciliationError := a.reconcileConcurrentCancellation(
+				ctx, operation, canonicalPlan, saveError,
+			); handled {
+				return reconciled, reconciliationError
+			}
 			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), saveError
+		}
+		if cancellationResult, handled, cancellationError := a.cancelIfRequested(
+			ctx, operation, canonicalPlan,
+		); handled || cancellationError != nil {
+			return cancellationResult, cancellationError
 		}
 
 		phase := operation.CurrentPhase()
-		output, phaseError := a.dispatch(ctx, phase, newPhaseRequest(operation, canonicalPlan))
+		request := newPhaseRequest(operation, canonicalPlan)
+		if phase == install.PhaseEnsureContainerRuntime && runtimeResumeReceipt != nil {
+			request = newRuntimeResumePhaseRequest(operation, canonicalPlan, *runtimeResumeReceipt)
+		}
+		output, watchedIntent, phaseError := a.dispatchWatchingCancellation(ctx, phase, request)
+		if watchedIntent != nil {
+			return a.settleCancellation(ctx, operation, canonicalPlan, *watchedIntent)
+		}
 		if phaseError != nil {
+			var applicationBoundaryError *ApplicationError
+			if errors.As(phaseError, &applicationBoundaryError) {
+				result := resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown)
+				result.ErrorCode = applicationBoundaryError.Code()
+				return result, applicationBoundaryError
+			}
 			if isDeadlineBoundary(phaseError) {
 				return a.failDeadline(ctx, operation, planDigest)
 			}
@@ -236,6 +327,11 @@ func (a *InstallApplication) Install(
 		}
 		if !output.validFor(phase) {
 			return a.failInternal(ctx, operation, planDigest)
+		}
+		if cancellationResult, handled, cancellationError := a.cancelIfRequested(
+			ctx, operation, canonicalPlan,
+		); handled || cancellationError != nil {
+			return cancellationResult, cancellationError
 		}
 
 		outcomeResult, continueInstall, outcomeError := a.applyOutput(operation, output)
@@ -246,14 +342,184 @@ func (a *InstallApplication) Install(
 			return a.failInternal(ctx, operation, planDigest)
 		}
 		if saveError := a.saveAfterTransition(ctx, operation); saveError != nil {
+			if reconciled, handled, reconciliationError := a.reconcileConcurrentCancellation(
+				ctx, operation, canonicalPlan, saveError,
+			); handled {
+				return reconciled, reconciliationError
+			}
 			return resultFrom(operation, output.outcome, install.ResumeActionUnknown), saveError
 		}
 		if !continueInstall {
+			if releaseReason, required := terminalReservationRelease(operation, output.outcome); required {
+				if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, releaseReason); releaseError != nil {
+					outcomeResult.ErrorCode = releaseError.Code()
+					return outcomeResult, releaseError
+				}
+			}
+			if operation.State() == install.StateCancelled {
+				intent, hasIntent, intentError := a.observeCancellation(ctx, operation)
+				if intentError != nil {
+					outcomeResult.ErrorCode = intentError.Code()
+					return outcomeResult, intentError
+				}
+				if hasIntent {
+					acknowledged, acknowledgeError := a.acknowledgeCancellation(ctx, operation, intent)
+					if acknowledgeError != nil {
+						outcomeResult.ErrorCode = acknowledgeError.Code()
+						return outcomeResult, acknowledgeError
+					}
+					outcomeResult.CancellationRequested = true
+					outcomeResult.CancellationSettled = acknowledged.Status == CancellationIntentAcknowledged
+				}
+			}
 			return outcomeResult, nil
 		}
 	}
 
 	return resultFrom(operation, PhaseOutcomeCompleted, install.ResumeActionUnknown), nil
+}
+
+// Cancel records a durable plan-bound cancellation request without acquiring
+// the machine mutation lock. The active Install invocation owns terminal
+// transition, compensation, and acknowledgement; this method never reports
+// settlement merely because a request was accepted.
+func (a *InstallApplication) Cancel(
+	ctx context.Context,
+	command CancelCommand,
+) (InstallResult, error) {
+	if ctx == nil {
+		return InstallResult{}, applicationError(ErrorCodeValidation, false, "installation cancellation request is invalid")
+	}
+	canonicalPlan := append([]byte(nil), command.CanonicalPlan...)
+	operationID, planDigest, validationError := validateCommand(InstallCommand{
+		OperationID: command.OperationID, CanonicalPlan: canonicalPlan,
+	})
+	if validationError != nil {
+		return InstallResult{}, validationError
+	}
+
+	operation, err := a.operations.Load(ctx, operationID)
+	if err != nil {
+		return InstallResult{OperationID: operationID.String()}, mapRepositoryError(
+			err, "installation state could not be loaded",
+		)
+	}
+	if operation == nil {
+		return InstallResult{OperationID: operationID.String()}, internalError()
+	}
+	if err := operation.VerifyPlanBinding(planDigest); err != nil {
+		return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(err)
+	}
+	if operation.State().Terminal() && operation.State() != install.StateCancelled {
+		if err := operation.Cancel(planDigest); err != nil {
+			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(err)
+		}
+	}
+
+	if operation.State() == install.StateCancelled {
+		intent, observeError := a.cancellationIntents.Observe(ctx, operationID, planDigest)
+		switch {
+		case observeError == nil:
+			if !intent.ValidFor(operationID, planDigest) {
+				return resultFrom(operation, PhaseOutcomeCancelled, install.ResumeActionUnknown), cancellationIntegrityError()
+			}
+			result := cancellationResult(operation, intent)
+			return result, nil
+		case errors.Is(observeError, ErrCancellationIntentNotFound):
+			// A phase capability can independently return cancelled. That durable
+			// state is truthful, but no request lifecycle is fabricated.
+			return resultFrom(operation, PhaseOutcomeCancelled, install.ResumeActionUnknown), nil
+		default:
+			return resultFrom(operation, PhaseOutcomeCancelled, install.ResumeActionUnknown), mapCancellationIntentError(observeError)
+		}
+	}
+
+	intent, requestError := a.cancellationIntents.Request(ctx, CancellationRequest{
+		OperationID:              operationID,
+		PlanDigest:               planDigest,
+		ObservedAggregateVersion: operation.AggregateVersion(),
+	})
+	if requestError != nil {
+		return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapCancellationIntentError(requestError)
+	}
+	if !intent.ValidFor(operationID, planDigest) {
+		return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), cancellationIntegrityError()
+	}
+	return cancellationResult(operation, intent), nil
+}
+
+func terminalReservationRelease(
+	operation *install.Operation,
+	outcome PhaseOutcome,
+) (ReservationReleaseReason, bool) {
+	if !reservationMayExist(operation) {
+		return ReservationReleaseUnknown, false
+	}
+	switch outcome {
+	case PhaseOutcomeCompleted:
+		if operation.State() == install.StateReady {
+			return ReservationReleaseCompleted, true
+		}
+		return ReservationReleaseUnknown, false
+	case PhaseOutcomeCancelled:
+		return ReservationReleaseCancelled, true
+	case PhaseOutcomeUnsupportedHost, PhaseOutcomeRuntimeConflict:
+		return ReservationReleaseRollback, true
+	case PhaseOutcomeUnknown, PhaseOutcomeFailedRecoverable,
+		PhaseOutcomeAdministratorRequired, PhaseOutcomeRebootRequired:
+		return ReservationReleaseUnknown, false
+	}
+	return ReservationReleaseUnknown, false
+}
+
+func replayableTerminalResult(
+	operation *install.Operation,
+) (InstallResult, ReservationReleaseReason, bool) {
+	if operation == nil {
+		return InstallResult{}, ReservationReleaseUnknown, false
+	}
+	switch operation.State() {
+	case install.StateReady:
+		return resultFrom(
+			operation, PhaseOutcomeCompleted, install.ResumeActionAlreadyReady,
+		), ReservationReleaseCompleted, true
+	case install.StateCancelled:
+		return resultFrom(
+			operation, PhaseOutcomeCancelled, install.ResumeActionUnknown,
+		), ReservationReleaseCancelled, true
+	case install.StateUnsupportedHost:
+		return pausedResult(
+			operation, PhaseOutcomeUnsupportedHost, ErrorCodeUnsupportedHost,
+		), ReservationReleaseRollback, true
+	case install.StateRuntimeConflict:
+		return pausedResult(
+			operation, PhaseOutcomeRuntimeConflict, ErrorCodeRuntimeConflict,
+		), ReservationReleaseRollback, true
+	case install.StateUnknown, install.StateRunning, install.StateFailedRecoverable,
+		install.StatePausedForAdministrator, install.StateRebootPending, install.StateResumeVerified:
+		return InstallResult{}, ReservationReleaseUnknown, false
+	}
+	return InstallResult{}, ReservationReleaseUnknown, false
+}
+
+func reservationMayExist(operation *install.Operation) bool {
+	return operation != nil && operation.CurrentPhase() >= install.PhaseReserveSpace
+}
+
+func (a *InstallApplication) releaseSpace(
+	ctx context.Context,
+	operation *install.Operation,
+	canonicalPlan []byte,
+	reason ReservationReleaseReason,
+) *ApplicationError {
+	cleanupContext, cancelCleanup := freshFinalizationContext(ctx)
+	defer cancelCleanup()
+	if err := a.spaceReservation.ReleaseSpace(
+		cleanupContext, newPhaseRequest(operation, canonicalPlan), reason,
+	); err != nil {
+		return mapExternalBoundaryError(err, "installation reservation could not be released")
+	}
+	return nil
 }
 
 func validateCommand(command InstallCommand) (install.OperationID, install.PlanDigest, *ApplicationError) {
@@ -338,6 +604,254 @@ func (a *InstallApplication) dispatch(
 		return a.activeRelease.CommitActiveRelease(ctx, request)
 	}
 	return PhaseOutput{}, applicationError(ErrorCodeIntegrityViolation, false, "installation phase is invalid")
+}
+
+type cancellationWatchResult struct {
+	intent CancellationIntent
+	err    error
+}
+
+// dispatchWatchingCancellation owns exactly one watcher and joins it before
+// return. Wait is required to honor context cancellation, so no polling
+// goroutine can survive its phase invocation.
+func (a *InstallApplication) dispatchWatchingCancellation(
+	ctx context.Context,
+	phase install.Phase,
+	request PhaseRequest,
+) (PhaseOutput, *CancellationIntent, error) {
+	phaseContext, cancelPhase := context.WithCancel(ctx)
+	watchContext, stopWatch := context.WithCancel(ctx)
+	watchResult := make(chan cancellationWatchResult, 1)
+	go func() {
+		intent, err := a.cancellationIntents.Wait(
+			watchContext, request.OperationID(), request.PlanDigest(),
+		)
+		switch {
+		case err == nil && !intent.ValidFor(request.OperationID(), request.PlanDigest()):
+			err = ErrCancellationIntentIntegrity
+		case err == nil && intent.Status == CancellationIntentRequested:
+			cancelPhase()
+		case err == nil:
+			err = ErrCancellationIntentIntegrity
+			cancelPhase()
+		case !isDeadlineBoundary(err):
+			cancelPhase()
+		}
+		watchResult <- cancellationWatchResult{intent: intent, err: err}
+	}()
+
+	output, phaseError := a.dispatch(phaseContext, phase, request)
+	stopWatch()
+	watched := <-watchResult
+	cancelPhase()
+
+	if watched.err == nil {
+		intent := watched.intent
+		return PhaseOutput{}, &intent, nil
+	}
+	if !isDeadlineBoundary(watched.err) {
+		return PhaseOutput{}, nil, mapCancellationIntentError(watched.err)
+	}
+	if ctx.Err() != nil {
+		return output, nil, phaseError
+	}
+	// The watcher is normally stopped after the phase returns. A final durable
+	// observation closes the boundary between phase completion and transition.
+	intent, observeError := a.cancellationIntents.Observe(
+		ctx, request.OperationID(), request.PlanDigest(),
+	)
+	switch {
+	case observeError == nil:
+		if !intent.ValidFor(request.OperationID(), request.PlanDigest()) ||
+			intent.Status != CancellationIntentRequested {
+			return PhaseOutput{}, nil, cancellationIntegrityError()
+		}
+		return PhaseOutput{}, &intent, nil
+	case errors.Is(observeError, ErrCancellationIntentNotFound):
+		return output, nil, phaseError
+	default:
+		return PhaseOutput{}, nil, mapCancellationIntentError(observeError)
+	}
+}
+
+func (a *InstallApplication) observeCancellation(
+	ctx context.Context,
+	operation *install.Operation,
+) (CancellationIntent, bool, *ApplicationError) {
+	intent, err := a.cancellationIntents.Observe(ctx, operation.ID(), operation.PlanDigest())
+	switch {
+	case err == nil:
+		if !intent.ValidFor(operation.ID(), operation.PlanDigest()) {
+			return CancellationIntent{}, false, cancellationIntegrityError()
+		}
+		if intent.Status == CancellationIntentAcknowledged && operation.State() != install.StateCancelled {
+			return CancellationIntent{}, false, cancellationIntegrityError()
+		}
+		return intent, true, nil
+	case errors.Is(err, ErrCancellationIntentNotFound):
+		return CancellationIntent{}, false, nil
+	default:
+		return CancellationIntent{}, false, mapCancellationIntentError(err)
+	}
+}
+
+func (a *InstallApplication) cancelIfRequested(
+	ctx context.Context,
+	operation *install.Operation,
+	canonicalPlan []byte,
+) (InstallResult, bool, error) {
+	intent, found, err := a.observeCancellation(ctx, operation)
+	if err != nil {
+		result := resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown)
+		result.ErrorCode = err.Code()
+		return result, false, err
+	}
+	if !found {
+		return InstallResult{}, false, nil
+	}
+	if intent.Status != CancellationIntentRequested {
+		err := cancellationIntegrityError()
+		result := resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown)
+		result.ErrorCode = err.Code()
+		return result, false, err
+	}
+	result, settleError := a.settleCancellation(ctx, operation, canonicalPlan, intent)
+	return result, true, settleError
+}
+
+func (a *InstallApplication) settleCancellation(
+	ctx context.Context,
+	operation *install.Operation,
+	canonicalPlan []byte,
+	intent CancellationIntent,
+) (InstallResult, error) {
+	if !intent.ValidFor(operation.ID(), operation.PlanDigest()) ||
+		intent.Status != CancellationIntentRequested {
+		return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), cancellationIntegrityError()
+	}
+	if !aggregateContainsRequestedIntent(operation, intent) {
+		refreshed, loadError := a.operations.Load(ctx, operation.ID())
+		if loadError != nil {
+			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapRepositoryError(
+				loadError, "installation state could not be refreshed for cancellation",
+			)
+		}
+		if refreshed == nil || refreshed.VerifyPlanBinding(operation.PlanDigest()) != nil {
+			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), cancellationIntegrityError()
+		}
+		if !aggregateContainsRequestedIntent(refreshed, intent) {
+			return resultFrom(refreshed, PhaseOutcomeUnknown, install.ResumeActionUnknown), cancellationIntegrityError()
+		}
+		operation = refreshed
+	}
+	if err := operation.Cancel(operation.PlanDigest()); err != nil {
+		return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(err)
+	}
+	result := resultFrom(operation, PhaseOutcomeCancelled, install.ResumeActionUnknown)
+	result.CancellationRequested = true
+	if err := a.saveAfterTransition(ctx, operation); err != nil {
+		var applicationBoundaryError *ApplicationError
+		if errors.As(err, &applicationBoundaryError) {
+			result.ErrorCode = applicationBoundaryError.Code()
+		}
+		return result, err
+	}
+	if reservationMayExist(operation) {
+		if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, ReservationReleaseCancelled); releaseError != nil {
+			result.ErrorCode = releaseError.Code()
+			return result, releaseError
+		}
+	}
+	acknowledged, acknowledgeError := a.acknowledgeCancellation(ctx, operation, intent)
+	if acknowledgeError != nil {
+		result.ErrorCode = acknowledgeError.Code()
+		return result, acknowledgeError
+	}
+	result.CancellationSettled = acknowledged.Status == CancellationIntentAcknowledged
+	return result, nil
+}
+
+func aggregateContainsRequestedIntent(operation *install.Operation, intent CancellationIntent) bool {
+	if operation == nil || !intent.ValidFor(intent.OperationID, intent.PlanDigest) ||
+		intent.Status != CancellationIntentRequested || operation.ID() != intent.OperationID ||
+		!operation.PlanDigest().Equal(intent.PlanDigest) {
+		return false
+	}
+	persisted, ok := operation.CancellationIntent()
+	return ok && persisted.Status() == install.CancellationRequested &&
+		persisted.RequestedAtVersion() == intent.Revision
+}
+
+func (a *InstallApplication) reconcileConcurrentCancellation(
+	ctx context.Context,
+	stale *install.Operation,
+	canonicalPlan []byte,
+	saveError error,
+) (InstallResult, bool, error) {
+	var applicationBoundaryError *ApplicationError
+	if !errors.As(saveError, &applicationBoundaryError) || applicationBoundaryError.Code() != ErrorCodeConflict {
+		return InstallResult{}, false, nil
+	}
+	current, loadError := a.operations.Load(ctx, stale.ID())
+	if loadError != nil {
+		if errors.Is(loadError, ErrOperationNotFound) {
+			return InstallResult{}, false, nil
+		}
+		return resultFrom(stale, PhaseOutcomeUnknown, install.ResumeActionUnknown), true, mapRepositoryError(
+			loadError, "installation state could not be reconciled",
+		)
+	}
+	if current == nil || current.VerifyPlanBinding(stale.PlanDigest()) != nil {
+		return resultFrom(stale, PhaseOutcomeUnknown, install.ResumeActionUnknown), true, cancellationIntegrityError()
+	}
+	intent, found, intentError := a.observeCancellation(ctx, current)
+	if intentError != nil {
+		return resultFrom(current, PhaseOutcomeUnknown, install.ResumeActionUnknown), true, intentError
+	}
+	if !found || intent.Status != CancellationIntentRequested {
+		return InstallResult{}, false, nil
+	}
+	result, settleError := a.settleCancellation(ctx, current, canonicalPlan, intent)
+	return result, true, settleError
+}
+
+func (a *InstallApplication) acknowledgeCancellation(
+	ctx context.Context,
+	operation *install.Operation,
+	intent CancellationIntent,
+) (CancellationIntent, *ApplicationError) {
+	if operation.State() != install.StateCancelled ||
+		!intent.ValidFor(operation.ID(), operation.PlanDigest()) {
+		return CancellationIntent{}, cancellationIntegrityError()
+	}
+	if intent.Status == CancellationIntentAcknowledged {
+		return intent, nil
+	}
+	finalizationContext, cancelFinalization := freshFinalizationContext(ctx)
+	defer cancelFinalization()
+	acknowledged, err := a.cancellationIntents.Acknowledge(
+		finalizationContext, intent, install.StateCancelled,
+	)
+	if err != nil {
+		return CancellationIntent{}, mapCancellationIntentError(err)
+	}
+	if !acknowledged.ValidFor(operation.ID(), operation.PlanDigest()) ||
+		acknowledged.Status != CancellationIntentAcknowledged {
+		return CancellationIntent{}, cancellationIntegrityError()
+	}
+	return acknowledged, nil
+}
+
+func cancellationResult(operation *install.Operation, intent CancellationIntent) InstallResult {
+	result := resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown)
+	result.CancellationRequested = intent.Status == CancellationIntentRequested ||
+		intent.Status == CancellationIntentAcknowledged
+	result.CancellationSettled = intent.Status == CancellationIntentAcknowledged &&
+		operation.State() == install.StateCancelled
+	if operation.State() == install.StateCancelled {
+		result.Outcome = PhaseOutcomeCancelled
+	}
+	return result
 }
 
 func (a *InstallApplication) applyOutput(

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && cgo)
 
 package filesystem
 
@@ -453,13 +453,13 @@ func TestPF001InstallJournalReportsBoundaryFailures(t *testing.T) {
 		if err := os.WriteFile(path, []byte("file"), 0o600); err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		err := verifyPrivateDirectory(path)
+		err := verifyPrivateDirectory(context.Background(), path)
 		assertErrorIs(t, err, journalport.ErrUnsafePermission)
 	})
 
 	t.Run("sync missing directory", func(t *testing.T) {
 		t.Parallel()
-		err := syncDirectory(filepath.Join(t.TempDir(), "missing"))
+		err := syncDirectory(context.Background(), filepath.Join(t.TempDir(), "missing"))
 		assertErrorIs(t, err, journalport.ErrIO)
 	})
 }
@@ -554,7 +554,7 @@ func TestPF001InstallJournalReportsRenameAndParentSyncFailures(t *testing.T) {
 			t.Fatalf("construct journal: %v", err)
 		}
 		err = journal.Append(context.Background(), 0, testSnapshot(1))
-		assertErrorIs(t, err, journalport.ErrIO)
+		assertErrorIs(t, err, journalport.ErrUnsafePermission)
 	})
 }
 

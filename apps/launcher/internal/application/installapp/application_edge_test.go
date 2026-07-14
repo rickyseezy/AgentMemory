@@ -299,6 +299,21 @@ func TestPF001PhaseRequestIsImmutableByCopyAndPlanBound(t *testing.T) {
 	if string(request.CanonicalPlan()) != "canonical plan" {
 		t.Fatal("CanonicalPlan() exposed mutable storage")
 	}
+	if _, ok := request.ResumeReceipt(); ok {
+		t.Fatal("ordinary phase request exposed a reboot receipt")
+	}
+	receipt := install.DigestBytes([]byte("verified runtime receipt"))
+	resumed := newRuntimeResumePhaseRequest(operation, []byte("canonical plan"), receipt)
+	actualReceipt, ok := resumed.ResumeReceipt()
+	if !ok || !actualReceipt.Equal(receipt) {
+		t.Fatal("resumed runtime phase request lost its verified receipt")
+	}
+	if _, err := NewPhaseRequestForIntegration(operationID, plan, 1, []byte("plan"), install.Digest{}); err == nil {
+		t.Fatal("integration request accepted a zero resume receipt")
+	}
+	if _, err := NewPhaseRequestForIntegration(operationID, plan, 1, []byte("plan"), receipt, receipt); err == nil {
+		t.Fatal("integration request accepted multiple resume receipts")
+	}
 }
 
 func TestPF001PhaseOutcomeStringsAreStable(t *testing.T) {
@@ -390,6 +405,26 @@ func TestPF001PhaseOutputValidationDecisionTable(t *testing.T) {
 	}
 }
 
+func TestPF001PhaseOutputProjectsOnlyConstructorVerifiedEvidence(t *testing.T) {
+	t.Parallel()
+	completed := completedOutputForPhase(install.PhaseVerifyRelease)
+	if completed.Outcome() != PhaseOutcomeCompleted || completed.InputDigest().IsZero() ||
+		completed.OutputDigest().IsZero() || completed.VerifiedArtifactDigest().IsZero() ||
+		!completed.RuntimeOwnership().Valid() || completed.NextSafeAction() == "" {
+		t.Fatalf("completed output=%+v", completed)
+	}
+	receipt := install.DigestBytes([]byte("reboot receipt"))
+	reboot := mustRebootOutput(t, receipt, mustSafeAction(t, "restart.host"))
+	projected, present := reboot.ResumeReceipt()
+	if reboot.Outcome() != PhaseOutcomeRebootRequired || !present || !projected.Equal(receipt) ||
+		reboot.NextSafeAction() != "restart.host" {
+		t.Fatalf("reboot output=%+v receipt=%+v present=%t", reboot, projected, present)
+	}
+	if _, present := completed.ResumeReceipt(); present {
+		t.Fatal("completed output exposed a reboot receipt")
+	}
+}
+
 func TestPF001PhaseOutputEnforcesPhaseSpecificProofPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -419,6 +454,13 @@ func TestPF001PhaseOutputEnforcesPhaseSpecificProofPolicy(t *testing.T) {
 		},
 		{name: "host rejects resolved ownership", phase: install.PhaseVerifyHost, input: base},
 		{name: "runtime accepts resolved ownership", phase: install.PhaseEnsureContainerRuntime, input: base, valid: true},
+		{
+			name:  "runtime rejects missing verified installer artifact",
+			phase: install.PhaseEnsureContainerRuntime,
+			input: withCompletion(base, func(input *CompletionOutput) {
+				input.VerifiedArtifactDigest = install.Digest{}
+			}),
+		},
 		{
 			name:  "runtime rejects undetermined ownership",
 			phase: install.PhaseEnsureContainerRuntime,

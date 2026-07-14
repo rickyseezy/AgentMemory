@@ -1,0 +1,170 @@
+name: Product quality
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/product-quality.yml"
+      - ".github/workflows/pf001-model-qualification.yml"
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "apps/setup-ui/**"
+      - "apps/launcher/internal/adapters/setuphttp/assets/**"
+      - ".importlinter"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/daemon/**"
+      - "migrations/**"
+      - "src/**"
+      - "tests/**"
+      - "tools/**"
+      - "deploy/model-source-lock.v1.json"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - ".github/workflows/product-quality.yml"
+      - ".github/workflows/pf001-model-qualification.yml"
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "apps/setup-ui/**"
+      - "apps/launcher/internal/adapters/setuphttp/assets/**"
+      - ".importlinter"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/daemon/**"
+      - "migrations/**"
+      - "src/**"
+      - "tests/**"
+      - "tools/**"
+      - "deploy/model-source-lock.v1.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Local Core
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install the pinned Python runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.6"
+          check-latest: false
+
+      - name: Install the pinned uv package manager
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.11.28"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Restore the exact reviewed environment
+        run: uv sync --frozen --all-groups
+
+      - name: Enforce formatting and strict lint policy
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+
+      - name: Verify immutable official model sources
+        run: uv run python tools/verify_model_source_lock.py deploy/model-source-lock.v1.json
+
+      - name: Enforce strict static types
+        run: |
+          uv run mypy src apps tests tools
+          uv run pyright
+
+      - name: Enforce Clean Architecture imports
+        run: uv run lint-imports
+
+      - name: Run security analyzers
+        run: |
+          uv run bandit --quiet --recursive src apps
+          uv run pip-audit --strict
+
+      - name: Run randomized tests and branch coverage
+        env:
+          PYTHONHASHSEED: random
+        run: |
+          mkdir -p build
+          uv run pytest tests \
+            --cov=src/agentmemory \
+            --cov=apps \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=xml:build/core-coverage.xml \
+            --cov-fail-under=80
+
+      - name: Enforce package and changed-code coverage
+        env:
+          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          uv run coverage json -o build/coverage.json
+          uv run python tools/check_package_coverage.py build/coverage.json \
+            --line 80 \
+            --branch 80 \
+            --changed 90
+
+      - name: Prove deterministic public OpenAPI
+        run: |
+          mkdir -p build
+          uv run agentmemory-openapi > build/openapi-first.json
+          uv run agentmemory-openapi > build/openapi-second.json
+          cmp build/openapi-first.json build/openapi-second.json
+
+      - name: Build the locked Python distribution
+        run: uv build --no-sources
+
+  setup-ui:
+    name: Embedded setup UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Node.js runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24.18.0"
+          check-latest: false
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install the pinned pnpm package manager
+        run: |
+          npm install --global pnpm@11.12.0 --ignore-scripts
+          test "$(pnpm --version)" = "11.12.0"
+
+      - name: Restore exact reviewed dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Enforce TypeScript, lint, and formatting policy
+        run: pnpm --filter @agentmemory/setup-ui check
+
+      - name: Run behavior and coverage gates
+        run: pnpm --filter @agentmemory/setup-ui test:coverage
+
+      - name: Rebuild the signed embedded setup assets
+        run: |
+          pnpm --filter @agentmemory/setup-ui build
+          git diff --exit-code -- apps/launcher/internal/adapters/setuphttp/assets
+
+      - name: Audit production dependency advisories
+        run: pnpm audit --prod --audit-level high

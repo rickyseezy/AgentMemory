@@ -1,0 +1,535 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.local/contracts/release-manifest/v1.json",
+  "title": "AgentMemory ReleaseManifest v1",
+  "description": "Closed execution-authoritative release inventory. Cross-resource subject, OCI index, topology, policy, and rollback bindings are additionally enforced by the releaseinventory domain constructor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "build_id",
+    "build_timestamp",
+    "channel",
+    "compatibility",
+    "data_generation",
+    "docker_topology",
+    "license_policy_digest",
+    "prior_releases",
+    "protocol",
+    "release_id",
+    "resources",
+    "rollback_releases",
+    "schema_version",
+    "sequence",
+    "source_commit",
+    "trust_policy",
+    "valid_from",
+    "valid_until",
+    "version",
+    "vulnerability_policy_digest"
+  ],
+  "properties": {
+    "build_id": { "$ref": "#/$defs/identifier" },
+    "build_timestamp": { "$ref": "#/$defs/safePositiveInteger" },
+    "channel": {
+      "enum": ["stable", "candidate", "beta", "nightly", "development"]
+    },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "data_generation": { "$ref": "#/$defs/safePositiveInteger" },
+    "docker_topology": { "$ref": "#/$defs/dockerTopology" },
+    "license_policy_digest": { "$ref": "#/$defs/digest" },
+    "prior_releases": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/priorRelease" }
+    },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "release_id": { "$ref": "#/$defs/identifier" },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/resource" }
+    },
+    "rollback_releases": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/rollbackRelease" }
+    },
+    "schema_version": { "const": 1 },
+    "sequence": { "$ref": "#/$defs/safePositiveInteger" },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "trust_policy": { "$ref": "#/$defs/trustPolicy" },
+    "valid_from": { "$ref": "#/$defs/safePositiveInteger" },
+    "valid_until": { "$ref": "#/$defs/safePositiveInteger" },
+    "version": { "$ref": "#/$defs/stableSemver" },
+    "vulnerability_policy_digest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "safePositiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "optionalIdentifier": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^(?:|[a-z0-9][a-z0-9._-]*)$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "optionalDigest": {
+      "type": "string",
+      "pattern": "^(?:|[0-9a-f]{64})$"
+    },
+    "stableSemver": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+    },
+    "versionRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum", "minimum"],
+      "properties": {
+        "maximum": { "$ref": "#/$defs/stableSemver" },
+        "minimum": { "$ref": "#/$defs/stableSemver" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compose",
+        "core_api",
+        "launcher",
+        "mcp",
+        "neo4j",
+        "provider",
+        "runtime_catalog",
+        "schema",
+        "sqlite"
+      ],
+      "properties": {
+        "compose": { "$ref": "#/$defs/versionRange" },
+        "core_api": { "$ref": "#/$defs/versionRange" },
+        "launcher": { "$ref": "#/$defs/versionRange" },
+        "mcp": { "$ref": "#/$defs/versionRange" },
+        "neo4j": { "$ref": "#/$defs/versionRange" },
+        "provider": { "$ref": "#/$defs/versionRange" },
+        "runtime_catalog": { "$ref": "#/$defs/versionRange" },
+        "schema": { "$ref": "#/$defs/versionRange" },
+        "sqlite": { "$ref": "#/$defs/versionRange" }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum", "minimum"],
+      "properties": {
+        "maximum": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "minimum": { "type": "integer", "minimum": 1, "maximum": 4294967295 }
+      }
+    },
+    "trustPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "revocation_set_digest",
+        "runtime_trust_root_id",
+        "transparency_log_id",
+        "trust_root_id"
+      ],
+      "properties": {
+        "mode": { "enum": ["key_id", "certificate_transparency"] },
+        "revocation_set_digest": { "$ref": "#/$defs/digest" },
+        "runtime_trust_root_id": { "$ref": "#/$defs/identifier" },
+        "transparency_log_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "trust_root_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "priorRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_digest",
+        "maximum_data_generation",
+        "minimum_data_generation",
+        "release_id"
+      ],
+      "properties": {
+        "manifest_digest": { "$ref": "#/$defs/digest" },
+        "maximum_data_generation": { "$ref": "#/$defs/safePositiveInteger" },
+        "minimum_data_generation": { "$ref": "#/$defs/safePositiveInteger" },
+        "release_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "rollbackRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data_generation", "manifest_digest", "release_id"],
+      "properties": {
+        "data_generation": { "$ref": "#/$defs/safePositiveInteger" },
+        "manifest_digest": { "$ref": "#/$defs/digest" },
+        "release_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "platform": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["architecture", "os"],
+          "properties": {
+            "architecture": { "const": "" },
+            "os": { "const": "" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["architecture", "os"],
+          "properties": {
+            "architecture": { "enum": ["amd64", "arm64"] },
+            "os": { "enum": ["darwin", "linux", "windows"] }
+          }
+        }
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cyclonedx_sbom_resource_id",
+        "digest",
+        "id",
+        "kind",
+        "license_resource_id",
+        "media_type",
+        "native_publisher_identity",
+        "native_publisher_policy_id",
+        "oci_index_digest",
+        "oci_index_resource_id",
+        "platform",
+        "policy_snapshot_digest",
+        "provenance_resource_id",
+        "provider_role",
+        "purpose",
+        "qualification_expires_at",
+        "qualification_result",
+        "size",
+        "source_allowlist",
+        "source_ref",
+        "spdx_sbom_resource_id",
+        "subject_digest",
+        "subject_resource_id",
+        "vulnerability_resource_id"
+      ],
+      "properties": {
+        "cyclonedx_sbom_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": [
+            "launcher",
+            "helper",
+            "compose_bundle",
+            "oci_image",
+            "oci_index",
+            "schema",
+            "migration",
+            "setup_ui",
+            "verifier",
+            "model",
+            "tokenizer",
+            "template",
+            "offline_bundle_component",
+            "runtime_catalog",
+            "cyclonedx_sbom",
+            "spdx_sbom",
+            "provenance",
+            "license",
+            "vulnerability_report"
+          ]
+        },
+        "license_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "media_type": {
+          "enum": [
+            "application/vnd.agentmemory.native-executable",
+            "application/vnd.docker.compose.project+yaml",
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.agentmemory.contract-bundle+tar",
+            "application/vnd.agentmemory.migration-set+tar",
+            "application/vnd.agentmemory.setup-ui+tar",
+            "application/vnd.agentmemory.model-weights",
+            "application/vnd.agentmemory.tokenizer+json",
+            "text/vnd.agentmemory.prompt-template",
+            "application/vnd.agentmemory.offline-component",
+            "application/vnd.agentmemory.runtime-catalog+json",
+            "application/vnd.cyclonedx+json",
+            "application/spdx+json",
+            "application/vnd.in-toto+json",
+            "application/vnd.agentmemory.license-evaluation+json",
+            "application/vnd.agentmemory.vulnerability-evaluation+json"
+          ]
+        },
+        "native_publisher_identity": { "$ref": "#/$defs/optionalIdentifier" },
+        "native_publisher_policy_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "oci_index_digest": { "$ref": "#/$defs/optionalDigest" },
+        "oci_index_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "policy_snapshot_digest": { "$ref": "#/$defs/optionalDigest" },
+        "provenance_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "provider_role": { "enum": ["", "embedding", "reranking", "extraction"] },
+        "purpose": {
+          "enum": [
+            "native_launcher",
+            "native_helper",
+            "compose_lock",
+            "oci_platform_manifest",
+            "oci_multiarch_index",
+            "contract_bundle",
+            "migration_set",
+            "setup_ui",
+            "offline_verifier",
+            "model_weights",
+            "tokenizer",
+            "prompt_template",
+            "offline_bundle_component",
+            "runtime_catalog",
+            "cyclonedx_sbom",
+            "spdx_sbom",
+            "slsa_provenance",
+            "license_evaluation",
+            "vulnerability_evaluation"
+          ]
+        },
+        "qualification_expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "qualification_result": { "enum": ["", "passed"] },
+        "size": { "$ref": "#/$defs/safePositiveInteger" },
+        "source_allowlist": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "source_ref": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "spdx_sbom_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "subject_digest": { "$ref": "#/$defs/optionalDigest" },
+        "subject_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
+        "vulnerability_resource_id": { "$ref": "#/$defs/optionalIdentifier" }
+      }
+    },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^com\\.agentmemory\\.[a-z0-9.-]+$"
+        },
+        "value": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "internal", "labels"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "internal": { "type": "boolean" },
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/label" }
+        }
+      }
+    },
+    "volume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "labels", "purpose"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/label" }
+        },
+        "purpose": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "healthProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arguments",
+        "http_path",
+        "id",
+        "interval_seconds",
+        "kind",
+        "port",
+        "retries",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "arguments": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+        },
+        "http_path": { "type": "string", "maxLength": 256 },
+        "id": { "$ref": "#/$defs/identifier" },
+        "interval_seconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "kind": { "enum": ["http", "exec"] },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "retries": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 300 }
+      }
+    },
+    "volumeMount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_only", "target", "volume_id"],
+      "properties": {
+        "read_only": { "type": "boolean" },
+        "target": { "type": "string", "pattern": "^/[^\\\\]*$", "maxLength": 256 },
+        "volume_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "portBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container_port", "host", "host_port"],
+      "properties": {
+        "container_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "host": { "enum": ["127.0.0.1", "::1"] },
+        "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capabilities",
+        "group_id",
+        "health_probe_id",
+        "id",
+        "image_resource_ids",
+        "labels",
+        "network_ids",
+        "no_new_privileges",
+        "privileged",
+        "profiles",
+        "published_ports",
+        "read_only_root_filesystem",
+        "user_id",
+        "volume_mounts"
+      ],
+      "properties": {
+        "capabilities": { "type": "array", "maxItems": 0 },
+        "group_id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "health_probe_id": { "$ref": "#/$defs/identifier" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "image_resource_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/label" }
+        },
+        "network_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "no_new_privileges": { "const": true },
+        "privileged": { "const": false },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "published_ports": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/portBinding" }
+        },
+        "read_only_root_filesystem": { "const": true },
+        "user_id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "volume_mounts": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/volumeMount" }
+        }
+      }
+    },
+    "dockerTopology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health_probes", "networks", "profiles", "services", "volumes"],
+      "properties": {
+        "health_probes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/healthProbe" }
+        },
+        "networks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/network" }
+        },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "services": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/service" }
+        },
+        "volumes": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/volume" }
+        }
+      }
+    }
+  }
+}

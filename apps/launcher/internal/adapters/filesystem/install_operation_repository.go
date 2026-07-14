@@ -18,7 +18,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
-const operationSnapshotSchemaVersion = 2
+const operationSnapshotSchemaVersion = 3
 
 // OperationRepositoryClock supplies deterministic UTC capture times without
 // coupling the repository to ambient wall-clock state.
@@ -34,19 +34,30 @@ type OperationJournalProvider interface {
 	JournalFor(context.Context, install.OperationID) (journalport.Journal, error)
 }
 
+// OperationStateFence serializes only authenticated operation-journal
+// transactions across processes. It is independent of the long-lived machine
+// mutation lock, allowing cancellation intent to race phases but never the
+// aggregate compare-and-swap authority.
+type OperationStateFence interface {
+	WithExclusive(context.Context, install.OperationID, func() error) error
+}
+
 // InstallOperationRepository stores complete installation aggregates in an
 // authenticated, append-only InstallJournal.
 type InstallOperationRepository struct {
 	journalProvider OperationJournalProvider
 	clock           OperationRepositoryClock
+	fence           OperationStateFence
 }
 
 var _ installapp.OperationRepository = (*InstallOperationRepository)(nil)
+var _ installapp.CancellationIntentPort = (*InstallOperationRepository)(nil)
 
 // NewInstallOperationRepository creates a journal-backed aggregate repository.
 func NewInstallOperationRepository(
 	journalProvider OperationJournalProvider,
 	clock OperationRepositoryClock,
+	fence OperationStateFence,
 ) (*InstallOperationRepository, error) {
 	if nilInterface(journalProvider) {
 		return nil, errors.New("install operation repository journal provider is required")
@@ -54,12 +65,28 @@ func NewInstallOperationRepository(
 	if nilInterface(clock) {
 		return nil, errors.New("install operation repository clock is required")
 	}
-	return &InstallOperationRepository{journalProvider: journalProvider, clock: clock}, nil
+	if nilInterface(fence) {
+		return nil, errors.New("install operation repository state fence is required")
+	}
+	return &InstallOperationRepository{journalProvider: journalProvider, clock: clock, fence: fence}, nil
 }
 
 // Load authenticates, strictly decodes, and domain-validates the latest
 // operation snapshot before returning an executable aggregate.
 func (r *InstallOperationRepository) Load(
+	ctx context.Context,
+	operationID install.OperationID,
+) (*install.Operation, error) {
+	var operation *install.Operation
+	err := r.fence.WithExclusive(ctx, operationID, func() error {
+		loaded, loadError := r.loadUnfenced(ctx, operationID)
+		operation = loaded
+		return loadError
+	})
+	return operation, err
+}
+
+func (r *InstallOperationRepository) loadUnfenced(
 	ctx context.Context,
 	operationID install.OperationID,
 ) (*install.Operation, error) {
@@ -94,6 +121,15 @@ func (r *InstallOperationRepository) Load(
 // Save validates and appends a complete aggregate snapshot at the next journal
 // revision. The journal remains the authority for optimistic-write conflicts.
 func (r *InstallOperationRepository) Save(
+	ctx context.Context,
+	snapshot install.OperationSnapshot,
+) error {
+	return r.fence.WithExclusive(ctx, snapshot.OperationID(), func() error {
+		return r.saveUnfenced(ctx, snapshot)
+	})
+}
+
+func (r *InstallOperationRepository) saveUnfenced(
 	ctx context.Context,
 	snapshot install.OperationSnapshot,
 ) error {
@@ -191,15 +227,16 @@ func (r *InstallOperationRepository) journalFor(
 }
 
 type operationSnapshotDTO struct {
-	SchemaVersion    uint32               `json:"schema_version"`
-	OperationID      string               `json:"operation_id"`
-	PlanDigest       string               `json:"plan_digest"`
-	AggregateVersion *uint64              `json:"aggregate_version"`
-	State            string               `json:"state"`
-	CurrentPhase     string               `json:"current_phase"`
-	Attempt          uint32               `json:"attempt"`
-	CompletedSteps   []stepEvidenceDTO    `json:"completed_steps"`
-	RebootCheckpoint *rebootCheckpointDTO `json:"reboot_checkpoint"`
+	SchemaVersion      uint32                 `json:"schema_version"`
+	OperationID        string                 `json:"operation_id"`
+	PlanDigest         string                 `json:"plan_digest"`
+	AggregateVersion   *uint64                `json:"aggregate_version"`
+	State              string                 `json:"state"`
+	CurrentPhase       string                 `json:"current_phase"`
+	Attempt            uint32                 `json:"attempt"`
+	CompletedSteps     []stepEvidenceDTO      `json:"completed_steps"`
+	RebootCheckpoint   *rebootCheckpointDTO   `json:"reboot_checkpoint"`
+	CancellationIntent *cancellationIntentDTO `json:"cancellation_intent,omitempty"`
 }
 
 type stepEvidenceDTO struct {
@@ -229,6 +266,11 @@ type rebootCheckpointDTO struct {
 	NextSafeAction string `json:"next_safe_action"`
 }
 
+type cancellationIntentDTO struct {
+	RequestedAtVersion    uint64 `json:"requested_at_version"`
+	AcknowledgedAtVersion uint64 `json:"acknowledged_at_version,omitempty"`
+}
+
 func encodeOperationSnapshot(snapshot install.OperationSnapshot) ([]byte, string, error) {
 	checkpoint, hasCheckpoint := snapshot.RebootCheckpoint()
 	restoreInput := install.RestoreInput{
@@ -242,6 +284,12 @@ func encodeOperationSnapshot(snapshot install.OperationSnapshot) ([]byte, string
 	}
 	if hasCheckpoint {
 		restoreInput.RebootCheckpoint = &checkpoint
+	}
+	if cancellation, hasCancellation := snapshot.CancellationIntent(); hasCancellation {
+		restoreInput.CancellationIntent = &install.CancellationRestoreInput{
+			RequestedAtVersion:    cancellation.RequestedAtVersion(),
+			AcknowledgedAtVersion: cancellation.AcknowledgedAtVersion(),
+		}
 	}
 	operation, err := install.RestoreOperation(restoreInput)
 	if err != nil {
@@ -270,6 +318,12 @@ func encodeOperationSnapshot(snapshot install.OperationSnapshot) ([]byte, string
 			Attempt:        restoredCheckpoint.Attempt(),
 			ReceiptDigest:  restoredCheckpoint.ReceiptDigest().String(),
 			NextSafeAction: restoredCheckpoint.NextSafeAction().String(),
+		}
+	}
+	if cancellation, exists := verified.CancellationIntent(); exists {
+		dto.CancellationIntent = &cancellationIntentDTO{
+			RequestedAtVersion:    cancellation.RequestedAtVersion(),
+			AcknowledgedAtVersion: cancellation.AcknowledgedAtVersion(),
 		}
 	}
 
@@ -321,7 +375,7 @@ func decodeOperationSnapshot(payload []byte) (*install.Operation, error) {
 	if err := requireJSONEnd(decoder); err != nil {
 		return nil, errors.New("operation snapshot JSON contains trailing data")
 	}
-	if dto.SchemaVersion != operationSnapshotSchemaVersion {
+	if dto.SchemaVersion != 2 && dto.SchemaVersion != operationSnapshotSchemaVersion {
 		return nil, errors.New("operation snapshot schema version is unsupported")
 	}
 	if dto.CompletedSteps == nil {
@@ -372,6 +426,12 @@ func decodeOperationSnapshot(payload []byte) (*install.Operation, error) {
 			return nil, checkpointError
 		}
 		restoreInput.RebootCheckpoint = &checkpoint
+	}
+	if dto.CancellationIntent != nil {
+		restoreInput.CancellationIntent = &install.CancellationRestoreInput{
+			RequestedAtVersion:    dto.CancellationIntent.RequestedAtVersion,
+			AcknowledgedAtVersion: dto.CancellationIntent.AcknowledgedAtVersion,
+		}
 	}
 
 	operation, err := install.RestoreOperation(restoreInput)

@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "llama_cpp": {
+    "repository": "https://github.com/ggml-org/llama.cpp.git",
+    "revision": "99f3dc32296f825fec94f202da1e9fede1e78cf9",
+    "release": "b9982",
+    "server_container": "ghcr.io/ggml-org/llama.cpp:server-b9982@sha256:ae4883b4bf0814bfe44cb8b4cdc5208412f61599200fb8482a96935cdacc184e",
+    "converter_container": "ghcr.io/ggml-org/llama.cpp:full-b9982@sha256:5c2193980b19f18a4f16499d74e78b45e4b691be2295d9376b14bd562637ee6e"
+  },
+  "models": [
+    {
+      "role": "embedding",
+      "model_id": "Qwen/Qwen3-Embedding-0.6B",
+      "license": "Apache-2.0",
+      "source": {
+        "repository": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+        "revision": "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
+        "files": [
+          {
+            "path": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+            "size": 639150592
+          }
+        ]
+      },
+      "assembly": {
+        "kind": "direct-gguf",
+        "input": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+        "output": "models/embedding/model.gguf",
+        "output_sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+        "output_size": 639150592
+      }
+    },
+    {
+      "role": "reranking",
+      "model_id": "Qwen/Qwen3-Reranker-0.6B",
+      "license": "Apache-2.0",
+      "source": {
+        "repository": "Qwen/Qwen3-Reranker-0.6B",
+        "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+        "files": [
+          {
+            "path": "1_LogitScore/config.json",
+            "sha256": "73e3156450564d8a98b7e47bcf5aace0f29600828b51937da545571e84db3ff3",
+            "size": 57
+          },
+          {
+            "path": "chat_template.jinja",
+            "sha256": "6f682162495ec5b39fd9005c01b6aa2a74669379fe967039f1e2cbbe8752369d",
+            "size": 741
+          },
+          {
+            "path": "config.json",
+            "sha256": "d479c427a9ca5295218063d4f9aca4f297ab4ac27487cca7af42c84643d51ef0",
+            "size": 727
+          },
+          {
+            "path": "generation_config.json",
+            "sha256": "81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db",
+            "size": 214
+          },
+          {
+            "path": "merges.txt",
+            "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+            "size": 1671853
+          },
+          {
+            "path": "model.safetensors",
+            "sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b",
+            "size": 1191588280
+          },
+          {
+            "path": "tokenizer.json",
+            "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
+            "size": 11422654
+          },
+          {
+            "path": "tokenizer_config.json",
+            "sha256": "253153d0738ceb4c668d2eff957714dd2bea0b56de772a9fdccd96cbf517e6a0",
+            "size": 9706
+          },
+          {
+            "path": "vocab.json",
+            "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+            "size": 2776833
+          }
+        ]
+      },
+      "assembly": {
+        "kind": "llama-cpp-conversion",
+        "arguments": [
+          "convert_hf_to_gguf.py",
+          "--outtype",
+          "q8_0",
+          "--outfile",
+          "models/reranking/model.gguf",
+          "source/reranking"
+        ],
+        "output": "models/reranking/model.gguf",
+        "output_sha256": "7b840768f926dba9c95ef20a841a9351e525a25f09abfd8e399e8c0a5450c3b8",
+        "output_size": 639150080
+      }
+    },
+    {
+      "role": "extraction",
+      "model_id": "Qwen/Qwen3-4B-GGUF-Q4_K_M",
+      "license": "Apache-2.0",
+      "source": {
+        "repository": "Qwen/Qwen3-4B-GGUF",
+        "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b",
+        "files": [
+          {
+            "path": "Qwen3-4B-Q4_K_M.gguf",
+            "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+            "size": 2497280256
+          }
+        ]
+      },
+      "assembly": {
+        "kind": "direct-gguf",
+        "input": "Qwen3-4B-Q4_K_M.gguf",
+        "output": "models/extraction/model.gguf",
+        "output_sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "output_size": 2497280256
+      }
+    }
+  ]
+}

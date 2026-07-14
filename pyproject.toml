@@ -1,0 +1,159 @@
+[build-system]
+requires = ["uv_build==0.11.28"]
+build-backend = "uv_build"
+
+[project]
+name = "agentmemory"
+version = "0.1.0"
+description = "Local, evidence-backed persistent memory for AI agents"
+readme = "README.md"
+requires-python = ">=3.14.6,<3.15"
+license = { text = "Apache-2.0" }
+authors = [{ name = "AgentMemory contributors" }]
+dependencies = [
+  "aiosqlite==0.22.1",
+  "alembic==1.18.5",
+  "fastapi==0.138.0",
+  "greenlet==3.5.3",
+  "httpx==0.28.1",
+  "neo4j==6.2.0",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "sqlalchemy==2.0.51",
+  "uvicorn==0.51.0",
+]
+
+[project.scripts]
+agentmemory-core = "agentmemory.operations.infrastructure.entrypoints:serve"
+agentmemory-migrate = "agentmemory.operations.infrastructure.entrypoints:migrate"
+agentmemory-healthcheck = "agentmemory.operations.infrastructure.entrypoints:healthcheck"
+agentmemory-openapi = "agentmemory.operations.infrastructure.entrypoints:export_openapi"
+agentmemory-provider = "agentmemory.providers.infrastructure.entrypoints:main"
+
+[dependency-groups]
+dev = [
+  "bandit==1.9.4",
+  "coverage==7.15.1",
+  "hypothesis==6.156.6",
+  "import-linter==2.9",
+  "mypy==2.2.0",
+  "pip-audit==2.10.1",
+  "pyright==1.1.408",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.3.0",
+  "pytest-cov==7.0.0",
+  "ruff==0.15.21",
+]
+
+[tool.uv]
+required-version = ">=0.11.28,<0.12"
+
+[tool.uv.build-backend]
+module-name = "agentmemory"
+module-root = "src"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "apps", "adapters", "sdk/python"]
+extend-exclude = ["**/generated/**", "**/vendor/**"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "COM812",
+  "ISC001",
+  "W191",
+  "E111",
+  "E114",
+  "E117",
+  "D203",
+  "D206",
+  "D300",
+  "Q000",
+  "Q001",
+  "Q002",
+  "Q003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN", "ARG001", "D", "INP001", "PLR2004", "S101", "SLF001"]
+"migrations/**/*.py" = ["ANN", "D", "INP001"]
+"apps/cli/**/*.py" = ["T201"]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = false
+suppress-dummy-args = false
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+parametrize-names-type = "tuple"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+warn_unused_configs = true
+show_error_codes = true
+pretty = true
+plugins = ["pydantic.mypy"]
+exclude = ["(^|/)generated/", "(^|/)vendor/"]
+enable_error_code = [
+  "explicit-override",
+  "mutable-override",
+  "possibly-undefined",
+  "redundant-expr",
+  "truthy-bool",
+]
+
+[tool.pyright]
+include = ["src", "apps", "tests", "tools"]
+exclude = ["**/generated", "**/vendor"]
+pythonVersion = "3.14"
+pythonPlatform = "All"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.pytest.ini_options]
+minversion = "9.1"
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+asyncio_mode = "strict"
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+  "contract: public/repository contract suite",
+  "integration: real supported infrastructure",
+  "e2e: complete user workflow",
+  "security: authorization or adversarial security",
+  "privacy: classification, egress, retention, or deletion",
+  "migration: schema/projection upgrade and rollback",
+  "resilience: fault, retry, backup, restore, or chaos",
+  "load: performance or soak suite",
+  "live_provider: controlled paid-provider certification",
+]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+source = ["src/agentmemory", "apps", "adapters"]
+omit = ["**/generated/**", "**/vendor/**"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+precision = 2
+exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "migrations"]
+targets = ["src", "apps"]
+skips = []

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
@@ -26,6 +27,9 @@ func TestPF001InstallApplicationCompletesEveryPhaseInNormativeOrder(t *testing.T
 	}
 	if result.Outcome != PhaseOutcomeCompleted {
 		t.Fatalf("Install() outcome = %s, want completed", result.Outcome)
+	}
+	if len(capabilities.releaseReasons) != 1 || capabilities.releaseReasons[0] != ReservationReleaseCompleted {
+		t.Fatalf("activation settlement reasons = %v", capabilities.releaseReasons)
 	}
 	assertPhasesEqual(t, capabilities.calls, install.OrderedPhases())
 
@@ -158,6 +162,164 @@ func TestPF001InstallApplicationMapsExpectedCapabilityOutcomesDurably(t *testing
 				t.Fatalf("durable state was not %s", test.wantState)
 			}
 		})
+	}
+}
+
+func TestPF001CancelPersistsTerminalIntentBeforeRetryableReservationCleanup(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryOperationRepository()
+	capabilities := newPhaseCapabilities()
+	capabilities.outputs[install.PhaseReserveSpace] = mustExpectedOutput(t, PhaseOutcomeFailedRecoverable)
+	application := mustApplication(t, repository, capabilities)
+	installCommand := command("cancel-after-reservation", "plan-a")
+
+	paused, err := application.Install(context.Background(), installCommand)
+	if err != nil || paused.State != install.StateFailedRecoverable || paused.CurrentPhase != install.PhaseReserveSpace {
+		t.Fatalf("paused Install()=(%+v,%v)", paused, err)
+	}
+	phaseCalls := len(capabilities.calls)
+	capabilities.releaseError = errors.New("private reservation cleanup failure")
+	requested, err := application.Cancel(context.Background(), CancelCommand{
+		OperationID: installCommand.OperationID, CanonicalPlan: installCommand.CanonicalPlan,
+	})
+	if err != nil || !requested.CancellationRequested || requested.CancellationSettled ||
+		requested.State == install.StateCancelled {
+		t.Fatalf("Cancel()=(%+v,%v), want durable request without false settlement", requested, err)
+	}
+	result, err := application.Install(context.Background(), installCommand)
+	assertApplicationErrorCode(t, err, ErrorCodeDependencyUnavailable)
+	if result.State != install.StateCancelled || repository.mustLoad(t, installCommand.OperationID).State() != install.StateCancelled {
+		t.Fatalf("cancel state result/durable=%s/%s", result.State, repository.mustLoad(t, installCommand.OperationID).State())
+	}
+	if len(capabilities.releaseReasons) != 1 || capabilities.releaseReasons[0] != ReservationReleaseCancelled ||
+		len(capabilities.calls) != phaseCalls {
+		t.Fatalf("cleanup reasons/phase calls=%v/%v", capabilities.releaseReasons, capabilities.calls)
+	}
+
+	capabilities.releaseError = nil
+	replayed, err := application.Install(context.Background(), installCommand)
+	if err != nil || replayed.State != install.StateCancelled || !replayed.CancellationSettled ||
+		len(capabilities.releaseReasons) != 2 {
+		t.Fatalf("replayed Install()=(%+v,%v), releases=%v", replayed, err, capabilities.releaseReasons)
+	}
+}
+
+func TestPF001TerminalOutcomeSettlesReservationButEarlyTerminationDoesNotInventOne(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name         string
+		phase        install.Phase
+		outcome      PhaseOutcome
+		wantReleases int
+		wantReason   ReservationReleaseReason
+	}{
+		{name: "early unsupported", phase: install.PhaseVerifyHost, outcome: PhaseOutcomeUnsupportedHost},
+		{name: "cancel after reserve", phase: install.PhaseEnsureDirectories, outcome: PhaseOutcomeCancelled, wantReleases: 1, wantReason: ReservationReleaseCancelled},
+		{name: "conflict after reserve", phase: install.PhaseEnsureDirectories, outcome: PhaseOutcomeRuntimeConflict, wantReleases: 1, wantReason: ReservationReleaseRollback},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			repository := newMemoryOperationRepository()
+			capabilities := newPhaseCapabilities()
+			if test.outcome != PhaseOutcomeCompleted {
+				capabilities.outputs[test.phase] = mustExpectedOutput(t, test.outcome)
+			}
+			application := mustApplication(t, repository, capabilities)
+			result, err := application.Install(context.Background(), command("settle-"+strings.ReplaceAll(test.name, " ", "-"), "plan-a"))
+			if err != nil {
+				t.Fatalf("Install() error=%v", err)
+			}
+			if len(capabilities.releaseReasons) != test.wantReleases {
+				t.Fatalf("release reasons=%v, want count %d", capabilities.releaseReasons, test.wantReleases)
+			}
+			if test.wantReleases == 1 && capabilities.releaseReasons[0] != test.wantReason {
+				t.Fatalf("release reason=%v, want %v", capabilities.releaseReasons[0], test.wantReason)
+			}
+			if result.State == install.StateReady {
+				t.Fatal("terminal non-ready outcome reached Ready")
+			}
+		})
+	}
+}
+
+func TestPF001TerminalReservationCleanupRetriesWithoutRepeatingInstallSideEffects(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		phase      install.Phase
+		outcome    PhaseOutcome
+		wantState  install.State
+		wantReason ReservationReleaseReason
+	}{
+		{
+			name: "ready", phase: install.PhaseCommitActiveRelease, outcome: PhaseOutcomeCompleted,
+			wantState: install.StateReady, wantReason: ReservationReleaseCompleted,
+		},
+		{
+			name: "runtime conflict", phase: install.PhaseEnsureDirectories, outcome: PhaseOutcomeRuntimeConflict,
+			wantState: install.StateRuntimeConflict, wantReason: ReservationReleaseRollback,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			repository := newMemoryOperationRepository()
+			capabilities := newPhaseCapabilities()
+			if test.outcome != PhaseOutcomeCompleted {
+				capabilities.outputs[test.phase] = mustExpectedOutput(t, test.outcome)
+			}
+			capabilities.releaseError = errors.New("private cleanup failure")
+			application := mustApplication(t, repository, capabilities)
+			installCommand := command("terminal-cleanup-"+strings.ReplaceAll(test.name, " ", "-"), "plan-a")
+
+			first, firstError := application.Install(context.Background(), installCommand)
+			assertApplicationErrorCode(t, firstError, ErrorCodeDependencyUnavailable)
+			if first.State != test.wantState || repository.mustLoad(t, installCommand.OperationID).State() != test.wantState ||
+				len(capabilities.releaseReasons) != 1 || capabilities.releaseReasons[0] != test.wantReason {
+				t.Fatalf("first result/state/releases=%+v/%s/%v", first, repository.mustLoad(t, installCommand.OperationID).State(), capabilities.releaseReasons)
+			}
+			phaseCalls := len(capabilities.calls)
+			capabilities.releaseError = nil
+			replayed, replayError := application.Install(context.Background(), installCommand)
+			if replayError != nil || replayed.State != test.wantState || len(capabilities.calls) != phaseCalls ||
+				len(capabilities.releaseReasons) != 2 || capabilities.releaseReasons[1] != test.wantReason {
+				t.Fatalf("replay result/error/calls/releases=%+v/%v/%d/%v", replayed, replayError, len(capabilities.calls), capabilities.releaseReasons)
+			}
+
+			foreign := installCommand
+			foreign.CanonicalPlan = []byte("foreign-plan")
+			if _, err := application.Install(context.Background(), foreign); err == nil || len(capabilities.releaseReasons) != 2 {
+				t.Fatalf("foreign terminal replay error/releases=%v/%v", err, capabilities.releaseReasons)
+			}
+		})
+	}
+}
+
+func TestPF001CancelRejectsReadyAndForeignPlanWithoutCleanup(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryOperationRepository()
+	capabilities := newPhaseCapabilities()
+	application := mustApplication(t, repository, capabilities)
+	installCommand := command("cancel-rejected", "plan-a")
+	if _, err := application.Install(context.Background(), installCommand); err != nil {
+		t.Fatalf("Install() error=%v", err)
+	}
+	settledBeforeRejectedCancel := len(capabilities.releaseReasons)
+	for _, cancelCommand := range []CancelCommand{
+		{OperationID: installCommand.OperationID, CanonicalPlan: []byte("plan-b")},
+		{OperationID: installCommand.OperationID, CanonicalPlan: installCommand.CanonicalPlan},
+	} {
+		if _, err := application.Cancel(context.Background(), cancelCommand); err == nil {
+			t.Fatal("Cancel() error=nil, want plan/terminal conflict")
+		}
+	}
+	if len(capabilities.releaseReasons) != settledBeforeRejectedCancel {
+		t.Fatalf("rejected cancellation released capacity: %v", capabilities.releaseReasons)
 	}
 }
 
@@ -338,6 +500,7 @@ func TestPF001NewInstallApplicationRejectsEveryMissingProductionDependency(t *te
 		remove func(*Dependencies)
 	}{
 		{name: "operation repository", remove: func(d *Dependencies) { d.Operations = nil }},
+		{name: "cancellation intents", remove: func(d *Dependencies) { d.CancellationIntents = nil }},
 		{name: "installation lock", remove: func(d *Dependencies) { d.InstallationLock = nil }},
 		{name: "verify host", remove: func(d *Dependencies) { d.HostVerification = nil }},
 		{name: "ensure container runtime", remove: func(d *Dependencies) { d.ContainerRuntime = nil }},
@@ -397,6 +560,7 @@ func TestPF001PhaseOutputConstructorsRejectUnverifiedData(t *testing.T) {
 }
 
 type memoryOperationRepository struct {
+	mu         sync.Mutex
 	operations map[string]install.OperationSnapshot
 	saves      int
 	failSaveAt int
@@ -410,6 +574,8 @@ func newMemoryOperationRepository() *memoryOperationRepository {
 }
 
 func (r *memoryOperationRepository) Load(_ context.Context, id install.OperationID) (*install.Operation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.loadError != nil {
 		return nil, r.loadError
 	}
@@ -424,6 +590,8 @@ func (r *memoryOperationRepository) Load(_ context.Context, id install.Operation
 }
 
 func (r *memoryOperationRepository) Save(_ context.Context, snapshot install.OperationSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.saves++
 	if r.failSaveAt != 0 && r.saves == r.failSaveAt {
 		if r.saveError != nil {
@@ -454,7 +622,7 @@ func restoreSnapshot(snapshot install.OperationSnapshot) (*install.Operation, er
 	if hasCheckpoint {
 		checkpointPointer = &checkpoint
 	}
-	return install.RestoreOperation(install.RestoreInput{
+	restoreInput := install.RestoreInput{
 		OperationID:      snapshot.OperationID(),
 		PlanDigest:       snapshot.PlanDigest(),
 		AggregateVersion: snapshot.AggregateVersion(),
@@ -463,7 +631,14 @@ func restoreSnapshot(snapshot install.OperationSnapshot) (*install.Operation, er
 		Attempt:          snapshot.Attempt(),
 		Completed:        snapshot.CompletedEvidence(),
 		RebootCheckpoint: checkpointPointer,
-	})
+	}
+	if cancellation, ok := snapshot.CancellationIntent(); ok {
+		restoreInput.CancellationIntent = &install.CancellationRestoreInput{
+			RequestedAtVersion:    cancellation.RequestedAtVersion(),
+			AcknowledgedAtVersion: cancellation.AcknowledgedAtVersion(),
+		}
+	}
+	return install.RestoreOperation(restoreInput)
 }
 
 type memoryLockPort struct {
@@ -480,11 +655,13 @@ type noopInstallationLock struct{}
 func (noopInstallationLock) Release(context.Context) error { return nil }
 
 type phaseCapabilities struct {
-	calls      []install.Phase
-	outputs    map[install.Phase]PhaseOutput
-	errors     map[install.Phase]error
-	failOnceAt install.Phase
-	failed     bool
+	calls          []install.Phase
+	outputs        map[install.Phase]PhaseOutput
+	errors         map[install.Phase]error
+	failOnceAt     install.Phase
+	failed         bool
+	releaseReasons []ReservationReleaseReason
+	releaseError   error
 }
 
 func newPhaseCapabilities() *phaseCapabilities {
@@ -520,6 +697,14 @@ func (p *phaseCapabilities) VerifyRelease(context.Context, PhaseRequest) (PhaseO
 }
 func (p *phaseCapabilities) ReserveSpace(context.Context, PhaseRequest) (PhaseOutput, error) {
 	return p.execute(install.PhaseReserveSpace)
+}
+func (p *phaseCapabilities) ReleaseSpace(
+	_ context.Context,
+	_ PhaseRequest,
+	reason ReservationReleaseReason,
+) error {
+	p.releaseReasons = append(p.releaseReasons, reason)
+	return p.releaseError
 }
 func (p *phaseCapabilities) EnsureDirectories(context.Context, PhaseRequest) (PhaseOutput, error) {
 	return p.execute(install.PhaseEnsureDirectories)
@@ -557,7 +742,7 @@ func completedOutputForPhase(phase install.Phase) PhaseOutput {
 	action, _ := install.NewSafeAction("continue." + strings.ToLower(phase.String()))
 	fact, _ := install.NewNonSecretFact("verified_phase", phase.String())
 	var verifiedArtifactDigest install.Digest
-	if phase == install.PhaseVerifyRelease || phase == install.PhaseEnsureComposeBundle {
+	if install.PhaseRequiresVerifiedArtifact(phase) {
 		verifiedArtifactDigest = install.DigestBytes([]byte("artifact:" + phase.String()))
 	}
 	runtimeOwnership := install.RuntimeOwnershipUndetermined
@@ -584,8 +769,10 @@ func command(operationID, plan string) InstallCommand {
 }
 
 func dependencies(repository OperationRepository, capabilities *phaseCapabilities) Dependencies {
+	authority := newMemoryOperationAuthority(repository)
 	return Dependencies{
-		Operations:          repository,
+		Operations:          authority,
+		CancellationIntents: authority,
 		InstallationLock:    &memoryLockPort{},
 		HostVerification:    capabilities,
 		ContainerRuntime:    capabilities,
@@ -601,6 +788,18 @@ func dependencies(repository OperationRepository, capabilities *phaseCapabilitie
 		AgentConfiguration:  capabilities,
 		Readiness:           capabilities,
 		ActiveRelease:       capabilities,
+	}
+}
+
+type memoryOperationAuthority struct {
+	OperationRepository
+	*memoryCancellationIntentPort
+}
+
+func newMemoryOperationAuthority(repository OperationRepository) *memoryOperationAuthority {
+	return &memoryOperationAuthority{
+		OperationRepository:          repository,
+		memoryCancellationIntentPort: newMemoryCancellationIntentPort(repository),
 	}
 }
 

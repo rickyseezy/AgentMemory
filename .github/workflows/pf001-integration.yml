@@ -1,0 +1,128 @@
+name: PF-001 integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/pf001-integration.yml"
+      - "go.mod"
+      - "go.sum"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/launcher/**"
+      - "deploy/**"
+      - "migrations/**"
+      - "src/**"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - ".github/workflows/pf001-integration.yml"
+      - "go.mod"
+      - "go.sum"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "apps/launcher/**"
+      - "deploy/**"
+      - "migrations/**"
+      - "src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pf001-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-stack:
+    name: Pinned local stack and Compose conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Verify the exact reviewed Compose executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/agentmemory-tools"
+          curl --fail --location --proto '=https' --tlsv1.3 \
+            --output "$RUNNER_TEMP/agentmemory-tools/docker-compose" \
+            https://github.com/docker/compose/releases/download/v5.1.4/docker-compose-linux-x86_64
+          printf '%s  %s\n' \
+            '33b208d7e76639db742fae84b966cc01dacae58ca3fc4dabbc907045aefdf0c4' \
+            "$RUNNER_TEMP/agentmemory-tools/docker-compose" | sha256sum --check --strict
+          chmod 0555 "$RUNNER_TEMP/agentmemory-tools/docker-compose"
+          test "$($RUNNER_TEMP/agentmemory-tools/docker-compose version --short)" = "5.1.4"
+
+      - name: Build every pinned PF-001 runtime image without pulling at test time
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull=false --file deploy/docker/core.Dockerfile \
+            --target core --tag agentmemory/core:pf001 .
+          docker build --pull=false --file deploy/docker/core.Dockerfile \
+            --target migrate --tag agentmemory/migrate:pf001 .
+          docker build --pull=false --file deploy/docker/neo4j.Dockerfile \
+            --tag agentmemory/neo4j:pf001 .
+          docker build --pull=false --file deploy/docker/provider.Dockerfile \
+            --tag agentmemory/provider:pf001 .
+          docker build --pull=false --file deploy/docker/secret-projector.Dockerfile \
+            --tag agentmemory/secret-projector:pf001 .
+          docker build --pull=false --file deploy/docker/capacity-helper.Dockerfile \
+            --tag agentmemory/capacity-helper:pf001 .
+
+      - name: Verify exact reviewed runtime image identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binding in \
+            'agentmemory/core:pf001=10001:10001' \
+            'agentmemory/migrate:pf001=10001:10001' \
+            'agentmemory/neo4j:pf001=7474:7474' \
+            'agentmemory/provider:pf001=10001:10001' \
+            'agentmemory/secret-projector:pf001=0:0' \
+            'agentmemory/capacity-helper:pf001=10001:10001'
+          do
+            image="${binding%%=*}"
+            expected_user="${binding#*=}"
+            test -n "$(docker image inspect --format '{{.Id}}' "$image")"
+            test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "$expected_user"
+          done
+
+      - name: Exercise protected projection, pristine migration, and exact Compose rendering
+        env:
+          AGENTMEMORY_COMPOSE_CONFORMANCE: "1"
+          AGENTMEMORY_SECRET_PROJECTOR_IMAGE: agentmemory/secret-projector:pf001
+          AGENTMEMORY_TEST_COMPOSE_EXECUTABLE: ${{ runner.temp }}/agentmemory-tools/docker-compose
+          AGENTMEMORY_TEST_DOCKER_ENDPOINT: unix:///var/run/docker.sock
+          AGENTMEMORY_TEST_MIGRATE_IMAGE: agentmemory/migrate:pf001
+          AGENTMEMORY_TEST_NEO4J_IMAGE: agentmemory/neo4j:pf001
+        run: |
+          go test -race -shuffle=on -count=1 \
+            ./apps/launcher/internal/secretprojector \
+            ./apps/launcher/internal/adapters/dockercli
+
+      - name: Prove release images remain present and locally addressed
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image inspect \
+            agentmemory/core:pf001 \
+            agentmemory/migrate:pf001 \
+            agentmemory/neo4j:pf001 \
+            agentmemory/provider:pf001 \
+            agentmemory/secret-projector:pf001 \
+            agentmemory/capacity-helper:pf001 \
+            --format '{{.RepoTags}} {{.Id}}'

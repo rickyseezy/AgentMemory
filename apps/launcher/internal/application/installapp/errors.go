@@ -82,6 +82,21 @@ func mapRepositoryError(err error, dependencyMessage string) *ApplicationError {
 	}
 }
 
+func cancellationIntegrityError() *ApplicationError {
+	return applicationError(ErrorCodeIntegrityViolation, false, "installation cancellation intent could not be verified")
+}
+
+func mapCancellationIntentError(err error) *ApplicationError {
+	switch {
+	case errors.Is(err, ErrCancellationIntentIntegrity):
+		return cancellationIntegrityError()
+	case errors.Is(err, ErrCancellationIntentConflict):
+		return applicationError(ErrorCodeConflict, true, "installation cancellation intent changed concurrently")
+	default:
+		return mapExternalBoundaryError(err, "installation cancellation intent could not be persisted")
+	}
+}
+
 func isDeadlineBoundary(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

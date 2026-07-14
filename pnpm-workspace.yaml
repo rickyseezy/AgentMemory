@@ -1,0 +1,7 @@
+packages:
+  - "apps/setup-ui"
+
+strictPeerDependencies: true
+
+onlyBuiltDependencies:
+  - esbuild

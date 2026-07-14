@@ -7,8 +7,10 @@ It is designed to preserve useful context across sessions, repositories, directo
 agent vendors while keeping the Brain and its data on the user's own machine.
 
 > [!IMPORTANT]
-> AgentMemory is in **early production implementation**. The PF-001 installer kernel is being
-> built, but there is not yet a working release or installable MCP package. See the
+> AgentMemory is in **early production implementation**. PF-001 now has a substantial,
+> fail-closed installer control plane—including durable active cancellation, split capacity
+> policy, release-bound Docker/Compose execution, and protected Linux/macOS/Windows configuration
+> stores—but there is not yet a working release or installable MCP package. See the
 > [PF-001 implementation record](docs/implementation/PF-001.md) for the exact delivered and
 > outstanding scope; no current code should be interpreted as a completed installer.
 
@@ -330,24 +332,34 @@ the technical specification defines how it must be implemented and proven.
 Present today:
 
 - complete product requirements;
-- normative production architecture and stack requirements, with the required ADR decision
-  set still outstanding;
+- normative production architecture and stack requirements, with ADR-001 through ADR-018
+  accepted;
 - local Docker deployment and zero-knowledge installation contract;
 - graph, memory, indexing, retrieval, provider, and learning specifications;
 - security, privacy, backup, upgrade, recovery, and supply-chain requirements;
 - 99 implementation-ready user stories and their acceptance/test contracts;
-- the first unreleasable PF-001 foundation slice: installer domain state machine,
-  application saga contracts, portable operation repository, durable Linux journal, and
-  quality tooling.
+- the unreleasable PF-001 control-plane increments: the resumable installation saga,
+  authenticated operation/cancellation journals and rollback anchors, signed runtime/release
+  catalogs, resumable artifact acquisition and per-purpose capacity state, release-bound direct
+  Docker/Compose execution policy, Docker resource policy, readiness and activation gates,
+  protected Linux/macOS/Windows configuration stores, and strict quality tooling.
 
 Not present yet:
 
 - a working end-user installer or runnable Brain/core application;
-- Docker images or Compose release artifacts;
-- production host/runtime, agent, or provider adapters;
-- dedicated macOS extended-ACL and Windows DACL-aware durable journal adapters;
-- completed required ADRs and the full PF-001 mutation, security, fault-injection, and
-  certified-host acceptance evidence;
+- signed production Docker images, model files, Compose bundles, schemas, migrations, SBOMs,
+  provenance, or release catalogs;
+- a production launcher composition root, runnable product runtime, native runtime provisioners,
+  setup/status UI, supported-agent format/lifecycle adapters, or signed-launcher MCP handshake;
+- signed target-representation fields and the corresponding representation-specific Docker
+  execution engines; physical capacity leases, source-bound expanded-target lifecycle journals,
+  exact-usage reconciliation, ownership transfer, and verified retirement are implemented but
+  intentionally reject the current under-authorized signed plan before target mutation;
+- a Windows native process broker with atomic Job Object assignment or a Windows artifact
+  reservation implementation; these paths intentionally fail closed today;
+- platform signing/notarization identities, vendor redistribution approvals, or the full
+  PF-001 pristine-host, offline, interruption, packet-capture, usability, and certified-host
+  acceptance evidence;
 - an installable MCP package;
 - published releases or support guarantees.
 

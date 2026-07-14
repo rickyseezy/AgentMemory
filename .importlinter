@@ -1,0 +1,66 @@
+[importlinter]
+root_packages =
+    agentmemory
+include_external_packages = True
+
+[importlinter:contract:operations layers]
+name = Operations clean architecture layers
+type = layers
+layers =
+    agentmemory.operations.infrastructure
+    agentmemory.operations.adapters
+    agentmemory.operations.application
+    agentmemory.operations.domain
+
+[importlinter:contract:domain independence]
+name = Domain is independent of frameworks and adapters
+type = forbidden
+source_modules =
+    agentmemory.operations.domain
+forbidden_modules =
+    fastapi
+    pydantic
+    sqlalchemy
+    neo4j
+    httpx
+    agentmemory.operations.application
+    agentmemory.operations.adapters
+    agentmemory.operations.infrastructure
+
+[importlinter:contract:application independence]
+name = Application is independent of frameworks and infrastructure
+type = forbidden
+source_modules =
+    agentmemory.operations.application
+forbidden_modules =
+    fastapi
+    pydantic
+    sqlalchemy
+    neo4j
+    httpx
+    agentmemory.operations.adapters
+    agentmemory.operations.infrastructure
+
+[importlinter:contract:provider layers]
+name = Provider clean architecture layers
+type = layers
+layers =
+    agentmemory.providers.infrastructure
+    agentmemory.providers.adapters
+    agentmemory.providers.application
+    agentmemory.providers.domain
+
+[importlinter:contract:provider domain independence]
+name = Provider domain is framework independent
+type = forbidden
+source_modules =
+    agentmemory.providers.domain
+forbidden_modules =
+    fastapi
+    httpx
+    pydantic
+    pydantic_settings
+    uvicorn
+    agentmemory.providers.application
+    agentmemory.providers.adapters
+    agentmemory.providers.infrastructure

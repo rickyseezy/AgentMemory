@@ -1,0 +1,66 @@
+name: PF-001 default model qualification
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pf001-model-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Reproducible offline model qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Python runtime
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.6"
+          check-latest: false
+
+      - name: Install the pinned uv package manager
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.11.28"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Restore the exact reviewed release environment
+        run: uv sync --frozen --all-groups
+
+      - name: Verify the immutable source lock before network access
+        run: uv run python tools/verify_model_source_lock.py deploy/model-source-lock.v1.json
+
+      - name: Rebuild twice and live-qualify every local model role
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker info --format '{{.OSType}}')" = linux
+          uv run python -m tools.qualify_default_models \
+            deploy/model-source-lock.v1.json \
+            "${RUNNER_TEMP}/qualified"
+          test -s "${RUNNER_TEMP}/qualified/models/embedding/model.gguf"
+          test -s "${RUNNER_TEMP}/qualified/models/reranking/model.gguf"
+          test -s "${RUNNER_TEMP}/qualified/models/extraction/model.gguf"
+          test -s "${RUNNER_TEMP}/qualified/qualification.json"
+
+      - name: Retain the canonical qualification input for release assembly
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pf001-default-model-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/qualified/qualification.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

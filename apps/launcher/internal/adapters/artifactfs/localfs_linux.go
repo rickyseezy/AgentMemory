@@ -36,7 +36,10 @@ func localFilesystemDescriptor(directory *os.File) (bool, string, error) {
 	if err := unix.Fstatfs(int(directory.Fd()), &stat); err != nil {
 		return false, "", err
 	}
-	typeValue := uint64(stat.Type)
+	typeValue, typeValid := nonNegativeFilesystemType(stat.Type)
+	if !typeValid {
+		return false, "", artifactapp.ErrStoreIntegrity
+	}
 	localType := typeValue == extFilesystemMagic || typeValue == xfsFilesystemMagic || typeValue == btrfsMagic
 	local := localType && provenLocalBlockDevice(directory)
 	identity := fmt.Sprintf("fs-%d-%d", stat.Fsid.Val[0], stat.Fsid.Val[1])
@@ -55,7 +58,10 @@ func reservationFilesystemSafeDescriptor(directory *os.File) (bool, error) {
 	if err := unix.Fstatfs(int(directory.Fd()), &stat); err != nil {
 		return false, err
 	}
-	typeValue := uint64(stat.Type)
+	typeValue, typeValid := nonNegativeFilesystemType(stat.Type)
+	if !typeValid {
+		return false, artifactapp.ErrStoreIntegrity
+	}
 	return (typeValue == extFilesystemMagic || typeValue == xfsFilesystemMagic) && provenLocalBlockDevice(directory), nil
 }
 
@@ -64,7 +70,7 @@ func provenLocalBlockDevice(directory *os.File) bool {
 	if unix.Fstat(int(directory.Fd()), &stat) != nil {
 		return false
 	}
-	device := strconv.FormatUint(uint64(unix.Major(uint64(stat.Dev))), 10) + ":" + strconv.FormatUint(uint64(unix.Minor(uint64(stat.Dev))), 10)
+	device := strconv.FormatUint(uint64(unix.Major(stat.Dev)), 10) + ":" + strconv.FormatUint(uint64(unix.Minor(stat.Dev)), 10)
 	resolved, err := filepath.EvalSymlinks(filepath.Join("/sys/dev/block", device))
 	if err != nil || !strings.HasPrefix(resolved, "/sys/devices/") {
 		return false
@@ -89,6 +95,13 @@ func provenLocalBlockDevice(directory *os.File) bool {
 		}
 	}
 	return false
+}
+
+func nonNegativeFilesystemType(value int64) (uint64, bool) {
+	if value < 0 {
+		return 0, false
+	}
+	return uint64(value), true // #nosec G115 -- non-negativity is proven above.
 }
 
 func availableBytes(path string) (uint64, error) {

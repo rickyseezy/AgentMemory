@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
@@ -148,6 +149,7 @@ func testToolAuthority(
 	planDigest [sha256.Size]byte,
 ) argvprocess.ExecutableAuthority {
 	t.Helper()
+	path = testPlatformToolPath(path)
 	authority, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
 		CanonicalID: id, CanonicalPath: path, SHA256: sha256.Sum256([]byte(id)),
 		OwnerIdentity: "test-owner", PublisherIdentity: "test-publisher",
@@ -158,4 +160,11 @@ func testToolAuthority(
 		t.Fatal(err)
 	}
 	return authority
+}
+
+func testPlatformToolPath(unixPath string) string {
+	if runtime.GOOS != "windows" {
+		return unixPath
+	}
+	return `C:\verified\` + strings.ReplaceAll(strings.TrimPrefix(unixPath, "/verified/"), "/", `\`) + ".exe"
 }

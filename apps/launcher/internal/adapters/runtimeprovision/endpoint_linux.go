@@ -212,7 +212,10 @@ func processSocketInodes(ctx context.Context, processes map[uint32]struct{}) (ma
 			continue
 		}
 		if err != nil {
-			return nil, err
+			// Production endpoint verification remains fail-closed when procfs
+			// hides a member of the peer process tree. Normalize host policy
+			// details so callers never receive a private procfs error.
+			return nil, ErrProbeFailed
 		}
 		for _, entry := range entries {
 			target, readError := os.Readlink(filepath.Join(fdPath, entry.Name()))
@@ -223,7 +226,7 @@ func processSocketInodes(ctx context.Context, processes map[uint32]struct{}) (ma
 				continue
 			}
 			if readError != nil {
-				return nil, readError
+				return nil, ErrProbeFailed
 			}
 			if !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
 				continue

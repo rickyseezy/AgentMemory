@@ -36,13 +36,18 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 		_ = command.Wait()
 		return err
 	}
-	defer unix.Close(pidfd)
+	defer func() { _ = unix.Close(pidfd) }()
+	if pidfd > int(^uint32(0)>>1) {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = command.Wait()
+		return os.ErrInvalid
+	}
 	return superviseUnixProcessGroup(ctx, command, pid, func(timeout time.Duration) (bool, error) {
 		milliseconds := int(timeout / time.Millisecond)
 		if milliseconds < 1 {
 			milliseconds = 1
 		}
-		descriptors := []unix.PollFd{{Fd: int32(pidfd), Events: unix.POLLIN}}
+		descriptors := []unix.PollFd{{Fd: int32(pidfd), Events: unix.POLLIN}} // #nosec G115 -- pidfd is bounded to int32 above.
 		_, pollError := unix.Poll(descriptors, milliseconds)
 		if pollError != nil && !errors.Is(pollError, unix.EINTR) {
 			return false, pollError

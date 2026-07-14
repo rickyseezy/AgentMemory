@@ -33,7 +33,7 @@ func platformExecutableIdentity(info os.FileInfo) (string, error) {
 		return "", os.ErrInvalid
 	}
 	return executableIdentityText(
-		uint64(status.Dev), status.Ino, status.Ctim.Sec, status.Ctim.Nsec, info.Size(),
+		status.Dev, status.Ino, status.Ctim.Sec, status.Ctim.Nsec, info.Size(),
 	), nil
 }
 

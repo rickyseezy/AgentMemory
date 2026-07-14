@@ -35,7 +35,7 @@ func TestPF001DockerCapacityPoolProbeBindsStableLocalDaemonIdentity(t *testing.T
 
 	want := []string{"--host", "unix:///var/run/docker.sock", "info", "--format", capacityInfoTemplate}
 	if len(runner.invocations) != 2 || !reflect.DeepEqual(runner.invocations[0].Arguments(), want) ||
-		runner.invocations[0].Executable() != "/verified/docker" {
+		runner.invocations[0].Executable() != testPlatformToolPath("/verified/docker") {
 		t.Fatalf("capacity invocation = %+v", runner.invocations)
 	}
 }

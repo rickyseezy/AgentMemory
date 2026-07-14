@@ -47,7 +47,7 @@ func TestPF001ManagedResourceInspectUsesExactAddressedArgv(t *testing.T) {
 				format = networkInspectTemplate
 			}
 			wantInspect := []string{"--host", endpoint.String(), resource, "inspect", "--format", format, "--", spec.Name()}
-			if !reflect.DeepEqual(runner.invocations[1].Arguments(), wantInspect) || runner.invocations[1].Executable() != "/verified/docker" {
+			if !reflect.DeepEqual(runner.invocations[1].Arguments(), wantInspect) || runner.invocations[1].Executable() != testPlatformToolPath("/verified/docker") {
 				t.Fatalf("inspect=%q %q", runner.invocations[1].Executable(), runner.invocations[1].Arguments())
 			}
 		})

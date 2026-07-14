@@ -105,7 +105,7 @@ func readOSRelease() (string, string, bool) {
 		_ = unix.Close(descriptor)
 		return "", "", false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var stat unix.Stat_t
 	if unix.Fstat(descriptor, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG ||
 		stat.Uid != 0 || stat.Mode&0o022 != 0 || stat.Size <= 0 || stat.Size > maximumOSReleaseBytes {
@@ -173,12 +173,16 @@ func linuxResources() (uint32, uint64, bool) {
 	if unix.Sysinfo(&information) != nil || information.Totalram == 0 || information.Unit == 0 {
 		return 0, 0, false
 	}
-	memory := uint64(information.Totalram)
+	memory := information.Totalram
 	unit := uint64(information.Unit)
 	if memory > ^uint64(0)/unit {
 		return 0, 0, false
 	}
-	return uint32(affinity.Count()), memory * unit, true
+	count := affinity.Count()
+	if count > int(^uint32(0)) {
+		return 0, 0, false
+	}
+	return uint32(count), memory * unit, true // #nosec G115 -- count is bounded to uint32 above.
 }
 
 func linuxVirtualization(ctx context.Context) bool {
@@ -189,7 +193,7 @@ func linuxVirtualization(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	defer unix.Close(descriptor)
+	defer func() { _ = unix.Close(descriptor) }()
 	var stat unix.Stat_t
 	if unix.Fstat(descriptor, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFCHR {
 		return false
@@ -203,6 +207,7 @@ func linuxEncryption(file *os.File) (hostverification.EncryptionKind, bool) {
 		return "", false
 	}
 	var policy [64]byte
+	// #nosec G103 -- FS_IOC_GET_ENCRYPTION_POLICY requires a fixed native output buffer.
 	_, _, ioctlError := unix.Syscall(unix.SYS_IOCTL, file.Fd(), uintptr(unix.FS_IOC_GET_ENCRYPTION_POLICY), uintptr(unsafe.Pointer(&policy[0])))
 	if ioctlError == 0 && (policy[0] == 0 || policy[0] == 2) {
 		return hostverification.EncryptionFScrypt, true
@@ -211,7 +216,7 @@ func linuxEncryption(file *os.File) (hostverification.EncryptionKind, bool) {
 	if unix.Fstat(int(file.Fd()), &stat) != nil {
 		return "", false
 	}
-	deviceLink := filepath.Join("/sys/dev/block", formatDevice(unix.Major(uint64(stat.Dev)), unix.Minor(uint64(stat.Dev))))
+	deviceLink := filepath.Join("/sys/dev/block", formatDevice(unix.Major(stat.Dev), unix.Minor(stat.Dev)))
 	resolved, err := filepath.EvalSymlinks(deviceLink)
 	if err != nil || !strings.HasPrefix(resolved, "/sys/devices/") {
 		return "", false
@@ -247,7 +252,7 @@ func encryptedDeviceLeaves(path string, encrypted bool, depth int, visited map[s
 	}
 	visited[path] = true
 	defer delete(visited, path)
-	uuid, err := os.ReadFile(filepath.Join(path, "dm", "uuid"))
+	uuid, err := os.ReadFile(filepath.Join(path, "dm", "uuid")) // #nosec G304 -- path is a bounded, resolved /sys/devices node.
 	if err == nil && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(string(uuid))), "CRYPT-") {
 		encrypted = true
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {

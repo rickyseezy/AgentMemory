@@ -613,8 +613,8 @@ func requireEntries(rootFD int, expected ...string) error {
 	if len(actual) != len(expected) {
 		return errors.New("capacity volume contains an unknown entry")
 	}
-	for index := range actual {
-		if actual[index] != expected[index] {
+	for index, value := range actual {
+		if value != expected[index] { // #nosec G602 -- exact slice lengths are proven immediately above.
 			return errors.New("capacity volume contains an unknown entry")
 		}
 	}

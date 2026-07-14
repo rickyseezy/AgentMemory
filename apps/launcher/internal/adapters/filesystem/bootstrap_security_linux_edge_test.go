@@ -217,7 +217,7 @@ func TestPF001LinuxBootstrapSecurityRejectsEveryAnchorRecordMutation(t *testing.
 func TestPF001LinuxProtectedFileHelpersRejectUnsafeTargets(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // G302: owner-only directory is the security fixture.
 		t.Fatal(err)
 	}
 	missing := filepath.Join(root, "missing")

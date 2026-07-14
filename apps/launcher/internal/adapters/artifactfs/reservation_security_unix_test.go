@@ -526,7 +526,15 @@ func TestPF001ReservationReplaysNativeAllocatedSlotAfterInterruptedJournalCommit
 	request := fsReservationRequest(t, "false-allocation-proof", plan)
 	allocation := request.Allocations[0]
 	path := filepath.Join(root, ".reservations", allocation.SlotID()+".slot")
-	if err := os.WriteFile(path, make([]byte, allocation.Bytes()), 0o600); err != nil {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := allocatePhysical(context.Background(), file, allocation.Bytes()); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(path)

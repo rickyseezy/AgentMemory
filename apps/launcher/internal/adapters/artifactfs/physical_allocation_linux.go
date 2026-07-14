@@ -26,7 +26,8 @@ func allocatePhysical(ctx context.Context, file *os.File, size uint64) error {
 	if unix.Fstatfs(int(file.Fd()), &stat) != nil {
 		return artifactapp.ErrReservationOperation
 	}
-	if uint64(stat.Type) != extFilesystemMagic && uint64(stat.Type) != xfsFilesystemMagic && uint64(stat.Type) != btrfsMagic {
+	typeValue, typeValid := nonNegativeFilesystemType(stat.Type)
+	if !typeValid || typeValue != extFilesystemMagic && typeValue != xfsFilesystemMagic && typeValue != btrfsMagic {
 		return artifactapp.ErrReservationUnsupported
 	}
 	info, err := file.Stat()
@@ -34,7 +35,7 @@ func allocatePhysical(ctx context.Context, file *os.File, size uint64) error {
 	if err != nil || !sizeValid {
 		return artifactapp.ErrReservationOperation
 	}
-	if uint64(stat.Type) == btrfsMagic {
+	if typeValue == btrfsMagic {
 		flags, flagError := unix.IoctlGetInt(int(file.Fd()), unix.FS_IOC_GETFLAGS)
 		if flagError != nil {
 			return artifactapp.ErrReservationUnsupported
@@ -60,7 +61,10 @@ func platformAllocationInvariant(file *os.File) bool {
 	if unix.Fstatfs(int(file.Fd()), &stat) != nil {
 		return false
 	}
-	typeValue := uint64(stat.Type)
+	typeValue, typeValid := nonNegativeFilesystemType(stat.Type)
+	if !typeValid {
+		return false
+	}
 	if typeValue != extFilesystemMagic && typeValue != xfsFilesystemMagic && typeValue != btrfsMagic {
 		return false
 	}

@@ -17,6 +17,7 @@ func ensurePrivateTestDirectory(t *testing.T, path string) {
 	if err := os.Chmod(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	removeInheritedTestACL(t, path, true)
 }
 
 func writePrivateTestFile(t *testing.T, path string, contents []byte) {
@@ -27,4 +28,5 @@ func writePrivateTestFile(t *testing.T, path string, contents []byte) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	removeInheritedTestACL(t, path, false)
 }

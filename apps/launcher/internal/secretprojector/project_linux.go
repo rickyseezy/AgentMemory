@@ -210,7 +210,7 @@ func allZero(value []byte) bool {
 func processMetadataContains(values map[string]protectedValue) bool {
 	metadata := make([]byte, 0, maximumStatusBytes)
 	for _, path := range []string{"/proc/self/cmdline", "/proc/self/environ"} {
-		value, err := os.ReadFile(path)
+		value, err := os.ReadFile(path) // #nosec G304 -- path comes from the fixed /proc/self allowlist above.
 		if err != nil || len(value) > maximumStatusBytes-len(metadata) {
 			clear(metadata)
 			return true

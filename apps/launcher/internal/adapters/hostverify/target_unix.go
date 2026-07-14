@@ -73,7 +73,10 @@ func openControlledTarget(ctx context.Context, target string) (unixTargetEvidenc
 	if unix.Fstatfs(current, &filesystem) != nil {
 		return unixTargetEvidence{}, false
 	}
-	blockSize := uint64(filesystem.Bsize)
+	if filesystem.Bsize <= 0 {
+		return unixTargetEvidence{}, false
+	}
+	blockSize := uint64(filesystem.Bsize) // #nosec G115 -- positivity is proven above.
 	available := filesystem.Bavail
 	if blockSize == 0 || available == 0 || available > math.MaxUint64/blockSize {
 		return unixTargetEvidence{}, false

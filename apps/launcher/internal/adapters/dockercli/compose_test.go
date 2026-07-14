@@ -95,8 +95,9 @@ func TestPF001ComposeAdapterUsesOnlyExactAddressedArgv(t *testing.T) {
 				t.Fatal("configuration render unexpectedly received stdin")
 			}
 			want := append(append([]string(nil), wantPrefix...), test.operation...)
-			if lastInvocation.Executable() != "/verified/docker-compose" || !reflect.DeepEqual(lastInvocation.Arguments(), want) {
-				t.Fatalf("invocation = %q %q, want %q %q", lastInvocation.Executable(), lastInvocation.Arguments(), "/verified/docker-compose", want)
+			wantExecutable := testPlatformToolPath("/verified/docker-compose")
+			if lastInvocation.Executable() != wantExecutable || !reflect.DeepEqual(lastInvocation.Arguments(), want) {
+				t.Fatalf("invocation = %q %q, want %q %q", lastInvocation.Executable(), lastInvocation.Arguments(), wantExecutable, want)
 			}
 			wantInvocations := 3
 			if test.name == "migrate" {

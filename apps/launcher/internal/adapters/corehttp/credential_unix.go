@@ -135,10 +135,10 @@ func openCredentialFile(ctx context.Context, path string) (*os.File, credentialI
 
 func verifyCredentialDirectory(file *os.File, uid uint32, final bool) error {
 	var status unix.Stat_t
-	if unix.Fstat(int(file.Fd()), &status) != nil || uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) {
+	if unix.Fstat(int(file.Fd()), &status) != nil || uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) { //nolint:unconvert // Darwin and Linux expose different native mode widths.
 		return errCredentialIntegrity
 	}
-	permissions := uint32(status.Mode) & 0o7777
+	permissions := uint32(status.Mode) & 0o7777 //nolint:unconvert // Darwin and Linux expose different native mode widths.
 	if permissions&0o022 != 0 {
 		return errCredentialIntegrity
 	}
@@ -162,8 +162,11 @@ func credentialFileIdentity(file *os.File) (credentialIdentity, error) {
 	}
 	return credentialIdentity{
 		device: device,
-		inode:  status.Ino, mode: uint32(status.Mode),
-		owner: status.Uid, links: uint64(status.Nlink), size: status.Size,
+		inode:  status.Ino,
+		mode:   uint32(status.Mode), //nolint:unconvert // Darwin and Linux expose different native mode widths.
+		owner:  status.Uid,
+		links:  uint64(status.Nlink), //nolint:unconvert // Darwin and Linux expose different native link-count widths.
+		size:   status.Size,
 	}, nil
 }
 

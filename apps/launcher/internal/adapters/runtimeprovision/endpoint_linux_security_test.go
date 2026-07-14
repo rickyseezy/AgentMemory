@@ -5,6 +5,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 func TestPF001LinuxEndpointProcessProofTraversesTheExactLivePeerTree(t *testing.T) {
 	uid := mustTestUint32(t, os.Getuid())
 	pid := mustTestUint32(t, os.Getpid())
+	procRoot := endpointTestProcRoot(t, pid, uid)
 	path := filepath.Join(t.TempDir(), "engine.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
@@ -41,8 +43,8 @@ func TestPF001LinuxEndpointProcessProofTraversesTheExactLivePeerTree(t *testing.
 	if !ok || stat.Ino == 0 {
 		t.Fatalf("socket stat=%T %+v", info.Sys(), info.Sys())
 	}
-	if noTCP, proofError := endpointProcessTreeHasNoTCP(
-		context.Background(), path, uid, stat.Ino,
+	if noTCP, proofError := endpointProcessTreeHasNoTCPAt(
+		context.Background(), path, uid, stat.Ino, procRoot,
 	); proofError != nil || !noTCP {
 		t.Fatalf("endpoint process proof=(%t,%v)", noTCP, proofError)
 	}
@@ -55,14 +57,14 @@ func TestPF001LinuxEndpointProcessProofTraversesTheExactLivePeerTree(t *testing.
 		t.Fatal("endpoint proof did not establish the peer connection")
 	}
 
-	processes, err := sameUserProcessTree(context.Background(), pid, uid)
+	processes, err := sameUserProcessTreeAt(context.Background(), pid, uid, procRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, present := processes[pid]; !present {
 		t.Fatalf("peer process absent from exact tree: %v", processes)
 	}
-	if sockets, socketError := processSocketInodes(context.Background(), processes); socketError != nil || sockets == nil {
+	if sockets, socketError := processSocketInodesAt(context.Background(), processes, procRoot); socketError != nil || sockets == nil {
 		t.Fatalf("process sockets=(%v,%v)", sockets, socketError)
 	}
 }
@@ -97,4 +99,27 @@ func mustTestUint32(t *testing.T, value int) uint32 {
 	}
 	//nolint:gosec // The preceding bounds check proves G115 cannot occur.
 	return uint32(value)
+}
+
+func endpointTestProcRoot(t *testing.T, pid, uid uint32) string {
+	t.Helper()
+	root := t.TempDir()
+	processRoot := filepath.Join(root, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(filepath.Join(processRoot, "fd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := fmt.Sprintf("Name:\tagentmemory-test\nPPid:\t1\nUid:\t%d\t%d\t%d\t%d\n", uid, uid, uid, uid)
+	if err := os.WriteFile(filepath.Join(processRoot, "status"), []byte(status), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "net"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	header := []byte("sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n")
+	for _, name := range []string{"tcp", "tcp6"} {
+		if err := os.WriteFile(filepath.Join(root, "net", name), header, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
 }

@@ -16,7 +16,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const maximumProcProcesses = 1048576
+const (
+	maximumProcProcesses = 1048576
+	nativeProcRoot       = "/proc"
+)
 
 // NativeEndpointProbe proves socket ownership and daemon-process listener state.
 type NativeEndpointProbe struct{}
@@ -67,6 +70,19 @@ func (*NativeEndpointProbe) ProbeLinuxEndpoint(
 }
 
 func endpointProcessTreeHasNoTCP(ctx context.Context, path string, uid uint32, inode uint64) (bool, error) {
+	return endpointProcessTreeHasNoTCPAt(ctx, path, uid, inode, nativeProcRoot)
+}
+
+func endpointProcessTreeHasNoTCPAt(
+	ctx context.Context,
+	path string,
+	uid uint32,
+	inode uint64,
+	procRoot string,
+) (bool, error) {
+	if procRoot == "" || !filepath.IsAbs(procRoot) || filepath.Clean(procRoot) != procRoot {
+		return false, ErrProbeFailed
+	}
 	connection, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
 		return false, err
@@ -87,16 +103,17 @@ func endpointProcessTreeHasNoTCP(ctx context.Context, path string, uid uint32, i
 	}); err != nil || controlError != nil || credentials == nil || credentials.Pid <= 1 || credentials.Uid != uid {
 		return false, ErrProbeFailed
 	}
-	processes, err := sameUserProcessTree(ctx, uint32(credentials.Pid), uid)
+	processes, err := sameUserProcessTreeAt(ctx, uint32(credentials.Pid), uid, procRoot)
 	if err != nil {
 		return false, err
 	}
-	sockets, err := processSocketInodes(ctx, processes)
+	sockets, err := processSocketInodesAt(ctx, processes, procRoot)
 	if err != nil {
 		return false, err
 	}
 	listeners := make(map[uint64]struct{})
-	for _, procPath := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+	for _, name := range []string{"tcp", "tcp6"} {
+		procPath := filepath.Join(procRoot, "net", name)
 		rawTable, readError := os.ReadFile(procPath) // #nosec G304 -- procPath comes from the fixed literal allowlist above.
 		if readError != nil {
 			return false, readError
@@ -134,7 +151,19 @@ type processIdentity struct {
 }
 
 func sameUserProcessTree(ctx context.Context, peer, uid uint32) (map[uint32]struct{}, error) {
-	entries, err := os.ReadDir("/proc")
+	return sameUserProcessTreeAt(ctx, peer, uid, nativeProcRoot)
+}
+
+func sameUserProcessTreeAt(
+	ctx context.Context,
+	peer uint32,
+	uid uint32,
+	procRoot string,
+) (map[uint32]struct{}, error) {
+	if procRoot == "" || !filepath.IsAbs(procRoot) || filepath.Clean(procRoot) != procRoot {
+		return nil, ErrProbeFailed
+	}
+	entries, err := os.ReadDir(procRoot)
 	if err != nil || len(entries) > maximumProcProcesses {
 		return nil, ErrProbeFailed
 	}
@@ -147,7 +176,7 @@ func sameUserProcessTree(ctx context.Context, peer, uid uint32) (map[uint32]stru
 		if parseError != nil || pidValue == 0 || !entry.IsDir() {
 			continue
 		}
-		raw, readError := os.ReadFile(filepath.Join("/proc", entry.Name(), "status"))
+		raw, readError := os.ReadFile(filepath.Join(procRoot, entry.Name(), "status")) // #nosec G304 -- procRoot is the fixed production root or a private test fixture.
 		if errors.Is(readError, os.ErrNotExist) || errors.Is(readError, os.ErrPermission) {
 			continue
 		}
@@ -201,12 +230,23 @@ func sameUserProcessTree(ctx context.Context, peer, uid uint32) (map[uint32]stru
 }
 
 func processSocketInodes(ctx context.Context, processes map[uint32]struct{}) (map[uint64]struct{}, error) {
+	return processSocketInodesAt(ctx, processes, nativeProcRoot)
+}
+
+func processSocketInodesAt(
+	ctx context.Context,
+	processes map[uint32]struct{},
+	procRoot string,
+) (map[uint64]struct{}, error) {
+	if procRoot == "" || !filepath.IsAbs(procRoot) || filepath.Clean(procRoot) != procRoot {
+		return nil, ErrProbeFailed
+	}
 	result := make(map[uint64]struct{})
 	for pid := range processes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		fdPath := "/proc/" + strconv.FormatUint(uint64(pid), 10) + "/fd"
+		fdPath := filepath.Join(procRoot, strconv.FormatUint(uint64(pid), 10), "fd")
 		entries, err := os.ReadDir(fdPath)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

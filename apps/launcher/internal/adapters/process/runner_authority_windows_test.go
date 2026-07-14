@@ -18,16 +18,36 @@ func testExecutableAuthority(t *testing.T, path string) argvprocess.ExecutableAu
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := windows.GetCurrentProcessToken()
-	user, err := token.GetTokenUser()
-	if err != nil || user == nil || user.User.Sid == nil {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.CreateFile(
+		pointer,
+		windows.GENERIC_READ|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = windows.CloseHandle(handle) }()
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil || descriptor == nil {
+		t.Fatal("test executable security descriptor is unavailable")
+	}
+	owner, defaulted, err := descriptor.Owner()
+	if err != nil || owner == nil || defaulted || !owner.IsValid() {
 		t.Fatal("test executable owner SID is unavailable")
 	}
 	authority, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
 		CanonicalID:           "test-executable",
 		CanonicalPath:         path,
 		SHA256:                sha256.Sum256(contents),
-		OwnerIdentity:         "sid:" + user.User.Sid.String(),
+		OwnerIdentity:         "sid:" + owner.String(),
 		PublisherIdentity:     "test-publisher",
 		PublisherPolicyID:     "test-policy",
 		ReleaseManifestDigest: sha256.Sum256([]byte("test-release-manifest")),

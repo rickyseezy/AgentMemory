@@ -43,8 +43,9 @@ func TestRepositoryDurablyPublishesAndLoadsExactPlan(t *testing.T) {
 	if !loaded.Digest().Equal(plan.Digest()) || !bytes.Equal(loaded.CanonicalBytes(), plan.CanonicalBytes()) {
 		t.Fatal("repository changed canonical authority")
 	}
-	info, err := os.Stat(filepath.Join(root, planFilename(plan.Digest())))
-	if err != nil || info.Mode().Perm()&0o077 != 0 {
+	publishedPath := filepath.Join(root, planFilename(plan.Digest()))
+	info, err := os.Stat(publishedPath)
+	if err != nil || !securePublishedPlanFile(t, publishedPath, info) {
 		t.Fatalf("published mode = %v/%v", info, err)
 	}
 	foreign, _ := install.BindPlan([]byte("foreign"))

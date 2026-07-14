@@ -381,6 +381,12 @@ func digestWindowsDesktopArtifact(
 	file *os.File,
 	expected uint64,
 ) (runtimeinstall.Hash, uint64, error) {
+	if ctx == nil {
+		return runtimeinstall.Hash{}, 0, context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return runtimeinstall.Hash{}, 0, err
+	}
 	if file == nil || expected == 0 || expected > math.MaxInt64 {
 		return runtimeinstall.Hash{}, 0, ErrProvisionIntegrity
 	}
@@ -390,7 +396,13 @@ func digestWindowsDesktopArtifact(
 	hasher := sha256.New()
 	limited := io.LimitReader(file, int64(expected)+1) // #nosec G115 -- bounded by MaxInt64 above.
 	written, err := io.CopyBuffer(hasher, &contextReader{ctx: ctx, reader: limited}, make([]byte, 1024*1024))
-	if err != nil || written < 0 || uint64(written) != expected {
+	if err != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return runtimeinstall.Hash{}, 0, contextError
+		}
+		return runtimeinstall.Hash{}, 0, ErrProvisionIntegrity
+	}
+	if written < 0 || uint64(written) != expected {
 		return runtimeinstall.Hash{}, 0, ErrProvisionIntegrity
 	}
 	var digest runtimeinstall.Hash

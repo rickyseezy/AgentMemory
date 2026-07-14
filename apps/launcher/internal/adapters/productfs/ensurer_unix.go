@@ -454,7 +454,7 @@ func privateDirectoryIdentity(
 	return unixObjectIdentity{
 		device: device,
 		inode:  state.Ino,
-		mode:   uint32(state.Mode), //nolint:unconvert // Darwin and Linux expose different native mode widths.
+		mode:   uint32(state.Mode), //nolint:unconvert,nolintlint // Darwin and Linux expose different native mode widths.
 		owner:  state.Uid,
 	}, nil
 }

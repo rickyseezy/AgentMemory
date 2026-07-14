@@ -331,8 +331,10 @@ func TestPF001WindowsJobBrokerHelper(_ *testing.T) {
 		if arguments[0] == "wait" {
 			time.Sleep(30 * time.Second)
 		}
+		os.Exit(0)
 	case "linger":
 		time.Sleep(30 * time.Second)
+		os.Exit(0)
 	case "signal-handle":
 		if len(arguments) != 1 {
 			os.Exit(97)
@@ -346,20 +348,21 @@ func TestPF001WindowsJobBrokerHelper(_ *testing.T) {
 		} else {
 			_, _ = fmt.Fprintln(os.Stdout, "inherited=true")
 		}
+		os.Exit(0)
 	case "attempt-breakaway":
 		child := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestPF001WindowsJobBrokerHelper$", "--", "linger") // #nosec G204,G702 -- exact current test executable and fixed helper entrypoint.
 		child.Env = os.Environ()
 		child.SysProcAttr = &windows.SysProcAttr{CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB}
 		if err := child.Start(); err != nil {
 			_, _ = fmt.Fprintln(os.Stdout, "breakaway=denied")
-			return
+			os.Exit(0)
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "breakaway=allowed pid=%d\n", child.Process.Pid)
 		_ = child.Process.Kill()
 		_ = child.Wait()
 		os.Exit(100)
 	case "exit-zero":
-		return
+		os.Exit(0)
 	default:
 		os.Exit(99)
 	}

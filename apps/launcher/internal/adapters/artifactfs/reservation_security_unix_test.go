@@ -526,6 +526,7 @@ func TestPF001ReservationReplaysNativeAllocatedSlotAfterInterruptedJournalCommit
 	request := fsReservationRequest(t, "false-allocation-proof", plan)
 	allocation := request.Allocations[0]
 	path := filepath.Join(root, ".reservations", allocation.SlotID()+".slot")
+	//nolint:gosec // G304: the path is a fixed reservation child below this test's isolated resolvedTempDir.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)

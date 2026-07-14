@@ -238,7 +238,7 @@ func TestPF001DirectoryPathGuardRetainsEveryAncestor(t *testing.T) {
 
 func TestPF001WindowsNativeSecurityIntegration(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "config")
-	if err := os.Mkdir(root, 0o700); err != nil {
+	if err := CreatePrivateDirectory(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	operationDirectory := filepath.Join(root, "AgentMemory", "bootstrap", "sha256-"+string(bytes.Repeat([]byte{'a'}, 64)))
@@ -464,7 +464,7 @@ func TestPF001WindowsNativeSecurityIntegration(t *testing.T) {
 
 func TestPF001WindowsNativeRejectsUnsafeFilesAndBoundaryInputs(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "config")
-	if err := os.Mkdir(root, 0o700); err != nil {
+	if err := CreatePrivateDirectory(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	operationDirectory := filepath.Join(root, "AgentMemory", "bootstrap", "sha256-"+strings.Repeat("b", 64))

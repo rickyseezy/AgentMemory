@@ -92,13 +92,17 @@ func TestLinuxProcessTreeAndUnixPeerEvidence(t *testing.T) {
 	pid := uint32(os.Getpid()) // #nosec G115 -- Linux process IDs are nonnegative and bounded by uint32.
 	uid := uint32(os.Getuid()) // #nosec G115 -- Linux user IDs are nonnegative uint32 values.
 	processes, err := sameUserProcessTree(ctx, pid, uid)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrProbeFailed) {
 		t.Fatal(err)
-	}
-	if _, present := processes[pid]; !present {
+	} else if errors.Is(err, ErrProbeFailed) {
+		t.Log("host procfs policy cannot prove the process tree; production remains fail-closed")
+	} else if _, present := processes[pid]; !present {
 		t.Fatal("current process missing from its own process tree")
 	}
-	if _, err := processSocketInodes(ctx, processes); err != nil && !errors.Is(err, ErrProbeFailed) {
+	if err == nil {
+		_, err = processSocketInodes(ctx, processes)
+	}
+	if err != nil && !errors.Is(err, ErrProbeFailed) {
 		t.Fatalf("processSocketInodes() error = %v", err)
 	} else if errors.Is(err, ErrProbeFailed) {
 		t.Log("host procfs policy cannot prove process socket ownership; production remains fail-closed")

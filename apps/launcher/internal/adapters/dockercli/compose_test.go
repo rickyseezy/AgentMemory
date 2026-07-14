@@ -229,10 +229,7 @@ func TestPF001ComposeProjectionCancellationStopsBeforeMigrationAndPreservesCause
 
 func composeFixture(t *testing.T, directoryName string) (containerengine.ComposeProject, []byte) {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := secureComposeTestRoot(t)
 	directory := filepath.Join(root, directoryName)
 	ensurePrivateTestDirectory(t, directory)
 	registerExecutionMaterializationCleanup(t, directory)

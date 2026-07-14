@@ -327,7 +327,7 @@ func TestDarwinDesktopProbeWorkspaceRequiresOwnerOnlyExpectedContent(t *testing.
 	}
 	authority := desktopDarwinAuthorityAtHome(t, baseAuthority, fakeHome)
 	workspace, err := prepareNativeDesktopProbeWorkspace(context.Background(), authority)
-	if err != nil || !workspace.valid(desktopDockerCapabilityProjection(authority).workspacePrefix) {
+	if err != nil || !workspace.valid(desktopDockerCapabilityProjection(authority).workspacePrefix, "darwin") {
 		t.Fatalf("native desktop workspace = %#v, %v", workspace, err)
 	}
 	observed, err := os.ReadFile(workspace.inputPath)

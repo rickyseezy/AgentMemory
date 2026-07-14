@@ -480,10 +480,7 @@ func TestPF001DockerComposeV514AcceptsBoundCanonicalJSONFromStdin(t *testing.T) 
 
 func validComposePolicyFixture(t *testing.T) (string, []byte, composeplan.PolicyPlan, map[string]any) {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := secureComposeTestRoot(t)
 	directory := filepath.Join(root, "managed-compose")
 	ensurePrivateTestDirectory(t, directory)
 	registerExecutionMaterializationCleanup(t, directory)

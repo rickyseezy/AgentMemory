@@ -240,7 +240,7 @@ func TestPF001WindowsJournalReconcilesAmbiguousPostRenameFailure(t *testing.T) {
 func windowsTestConfigRoot(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "config")
-	if err := os.Mkdir(root, 0o700); err != nil {
+	if err := windowssecurity.CreatePrivateDirectory(context.Background(), root); err != nil {
 		t.Fatal(err)
 	}
 	return root

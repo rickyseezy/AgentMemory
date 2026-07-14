@@ -58,6 +58,9 @@ func (p *Port) mutexName(ctx context.Context) (string, error) {
 	}
 	machineGUID, err := p.machineIdentity(ctx)
 	if err != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return "", contextError
+		}
 		return "", errors.New("installation mutex machine identity is unavailable")
 	}
 	machineGUID = strings.ToLower(machineGUID)

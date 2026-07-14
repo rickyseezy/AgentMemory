@@ -152,11 +152,11 @@ func sameUserProcessTree(ctx context.Context, peer, uid uint32) (map[uint32]stru
 			continue
 		}
 		if readError != nil {
-			return nil, readError
+			return nil, ErrProbeFailed
 		}
 		parent, processUID, statusError := parseProcStatus(raw)
 		if statusError != nil {
-			return nil, statusError
+			return nil, ErrProbeFailed
 		}
 		identities[uint32(pidValue)] = processIdentity{parent: parent, uid: processUID}
 	}

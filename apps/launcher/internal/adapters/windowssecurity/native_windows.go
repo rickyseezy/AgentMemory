@@ -1183,10 +1183,26 @@ func VerifyPathIdentity(ctx context.Context, path string, expected FileIdentity,
 	return nil
 }
 
-// Flush forces an opened file or directory handle through FlushFileBuffers.
+// Flush forces an opened regular-file handle through FlushFileBuffers. Windows
+// does not define FlushFileBuffers for an ordinary directory handle. Directory
+// metadata durability is therefore established by the mutation primitive:
+// FILE_FLAG_WRITE_THROUGH for native create/rename handles, or
+// MOVEFILE_WRITE_THROUGH for path publication. Callers still pass retained
+// directory handles here so their type and continued validity are proven at
+// the durability boundary.
 func Flush(file *os.File) error {
 	if file == nil {
 		return errors.New("windows durability descriptor is absent")
+	}
+	var information windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &information); err != nil {
+		return fmt.Errorf("inspect Windows durability descriptor: %w", err)
+	}
+	if information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		if information.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DEVICE) != 0 {
+			return errors.New("windows durability directory is unsafe")
+		}
+		return nil
 	}
 	if err := windows.FlushFileBuffers(windows.Handle(file.Fd())); err != nil {
 		return fmt.Errorf("flush Windows filesystem buffers: %w", err)

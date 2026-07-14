@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,9 +51,14 @@ type composeCapabilityService struct {
 	ReadOnly    bool              `json:"read_only"`
 }
 
-func (w probeWorkspace) valid(prefix string) bool {
+func (w probeWorkspace) valid(prefix, platform string) bool {
+	separator := "/"
+	if platform == "windows" {
+		separator = `\`
+	}
+	expectedInput := strings.TrimRight(w.directory, `/\`) + separator + "input.bin"
 	return prefix != "" && strings.HasPrefix(w.directory, prefix) &&
-		w.inputPath == filepath.Join(w.directory, "input.bin") && !w.digest.IsZero() && w.cleanup != nil
+		w.inputPath == expectedInput && !w.digest.IsZero() && w.cleanup != nil
 }
 
 func (p dockerCapabilityProjection) valid() bool {
@@ -116,7 +120,7 @@ func (p *DockerCapabilityProbe) VerifyLinuxCapabilities(
 		return CapabilityEvidence{}, ErrProvisionIntegrity
 	}
 	workspace, err := p.workspace(ctx, authority)
-	if err != nil || !workspace.valid(projection.workspacePrefix) {
+	if err != nil || !workspace.valid(projection.workspacePrefix, projection.platform) {
 		return CapabilityEvidence{}, sanitizedContextError(ctx, ErrProbeFailed)
 	}
 	if _, err := p.executeProjectedProbe(ctx, projection, workspace); err != nil {
@@ -150,7 +154,7 @@ func (p *DockerCapabilityProbe) VerifyDesktopCapabilities(
 		return runtimeinstall.Hash{}, ErrProvisionIntegrity
 	}
 	workspace, err := p.desktopWorkspace(ctx, authority)
-	if err != nil || !workspace.valid(projection.workspacePrefix) {
+	if err != nil || !workspace.valid(projection.workspacePrefix, projection.platform) {
 		return runtimeinstall.Hash{}, sanitizedContextError(ctx, ErrProbeFailed)
 	}
 	return p.executeProjectedProbe(ctx, projection, workspace)

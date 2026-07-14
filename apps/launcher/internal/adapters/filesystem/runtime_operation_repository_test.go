@@ -228,6 +228,172 @@ func TestPF001RuntimeOperationRepositoryMapsJournalErrorsAndRejectsPartialCompos
 	}
 }
 
+func TestPF001RuntimeOperationRepositoryCoversDurabilityAndCodecEdges(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	operation, _ := runtimeRepositoryOperation(t, "runtime-edge")
+
+	if _, err := (&RuntimeOperationRepository{}).Load(ctx, "invalid/id"); !errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) {
+		t.Fatalf("invalid Load() error = %v", err)
+	}
+	invalidSnapshot := operation.Snapshot()
+	invalidSnapshot.OperationID = "invalid/id"
+	if err := (&RuntimeOperationRepository{}).Save(ctx, invalidSnapshot); !errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) {
+		t.Fatalf("invalid Save() error = %v", err)
+	}
+	if _, _, err := encodeRuntimeOperationSnapshot(runtimeinstall.OperationSnapshot{}); err == nil {
+		t.Fatal("invalid snapshot encoded")
+	}
+	if err := runtimeOperationIntegrity(nil); err.Error() != runtimeinstallapp.ErrOperationIntegrity.Error() {
+		t.Fatalf("integrity error = %q", err)
+	}
+	if err := runtimeOperationConflict("conflict"); err.Error() != runtimeinstallapp.ErrOperationConflict.Error() {
+		t.Fatalf("conflict error = %q", err)
+	}
+
+	providerError := journalport.NewError(journalport.ErrorIO, "provide", errors.New("unavailable"))
+	repository, err := NewRuntimeOperationRepository(
+		&repositoryJournalProviderStub{provideError: providerError},
+		repositoryClockStub{now: repositoryFixedTime},
+		&repositoryFenceStub{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Load(ctx, operation.ID()); !errors.Is(err, journalport.ErrIO) {
+		t.Fatalf("provider Load() error = %v", err)
+	}
+	if err := repository.Save(ctx, operation.Snapshot()); !errors.Is(err, journalport.ErrIO) {
+		t.Fatalf("provider Save() error = %v", err)
+	}
+	nilProvider := &repositoryJournalProviderStub{}
+	repository, _ = NewRuntimeOperationRepository(nilProvider, repositoryClockStub{now: repositoryFixedTime}, &repositoryFenceStub{})
+	if _, err := repository.Load(ctx, operation.ID()); !errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) {
+		t.Fatalf("nil journal Load() error = %v", err)
+	}
+
+	for _, appendError := range []error{
+		journalport.ErrConflict,
+		journalport.ErrNotFound,
+		journalport.ErrCorrupt,
+		journalport.ErrInvalidSnapshot,
+		journalport.ErrUnsafePermission,
+		journalport.ErrIO,
+	} {
+		journal := &repositoryJournalStub{appendError: appendError}
+		repository := mustRuntimeOperationRepository(t, journal)
+		if err := repository.Save(ctx, operation.Snapshot()); err == nil {
+			t.Fatalf("append error %v was ignored", appendError)
+		}
+	}
+	journal := &repositoryJournalStub{}
+	repository, _ = NewRuntimeOperationRepository(
+		&repositoryJournalProviderStub{journal: journal},
+		repositoryClockStub{},
+		&repositoryFenceStub{},
+	)
+	if err := repository.Save(ctx, operation.Snapshot()); !errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) {
+		t.Fatalf("zero clock Save() error = %v", err)
+	}
+
+	journal = &repositoryJournalStub{}
+	repository = mustRuntimeOperationRepository(t, journal)
+	if err := repository.Save(ctx, operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	skipped := operation.Snapshot()
+	skipped.Version = 2
+	if err := repository.Save(ctx, skipped); !errors.Is(err, runtimeinstallapp.ErrOperationConflict) {
+		t.Fatalf("skipped version error = %v", err)
+	}
+	firstSkipped := operation.Snapshot()
+	firstSkipped.Version = 1
+	if err := mustRuntimeOperationRepository(t, &repositoryJournalStub{}).Save(ctx, firstSkipped); !errors.Is(err, runtimeinstallapp.ErrOperationConflict) {
+		t.Fatalf("first skipped version error = %v", err)
+	}
+	journal.latest.Revision = ^uint64(0)
+	advanced := operation.Snapshot()
+	advanced.Version = 1
+	if err := repository.Save(ctx, advanced); !errors.Is(err, runtimeinstallapp.ErrOperationConflict) {
+		t.Fatalf("exhausted revision error = %v", err)
+	}
+
+	valid, _, err := encodeRuntimeOperationSnapshot(operation.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base map[string]any
+	if err := json.Unmarshal(valid, &base); err != nil {
+		t.Fatal(err)
+	}
+	mutations := []func(map[string]any){
+		func(value map[string]any) { value["schema_version"] = float64(2) },
+		func(value map[string]any) { delete(value, "version") },
+		func(value map[string]any) { value["evidence"] = nil },
+		func(value map[string]any) { value["plan_digest"] = "invalid" },
+		func(value map[string]any) { value["state"] = "Future" },
+		func(value map[string]any) { value["current_phase"] = "Future" },
+		func(value map[string]any) { value["reboot_receipt"] = "invalid" },
+		func(value map[string]any) { value["attempt"] = float64(0) },
+	}
+	for index, mutate := range mutations {
+		copyBytes, _ := json.Marshal(base)
+		var candidate map[string]any
+		_ = json.Unmarshal(copyBytes, &candidate)
+		mutate(candidate)
+		encoded, _ := json.Marshal(candidate)
+		if _, err := decodeRuntimeOperationSnapshot(encoded); err == nil {
+			t.Fatalf("codec mutation %d accepted", index)
+		}
+	}
+
+	evidence := runtimeRepositoryEvidence(t, runtimeinstall.PhaseDetectHost, 1, operation.PlanDigest(), 0)
+	evidenceDocument := runtimeTransitionEvidenceDTO{
+		Phase: evidence.Phase.String(), Attempt: evidence.Attempt,
+		PlanDigest: evidence.PlanDigest.String(), InputDigest: evidence.InputDigest.String(),
+		OutputDigest: evidence.OutputDigest.String(), Ownership: "unknown",
+	}
+	for _, mutate := range []func(*runtimeTransitionEvidenceDTO){
+		func(value *runtimeTransitionEvidenceDTO) { value.PlanDigest = "invalid" },
+		func(value *runtimeTransitionEvidenceDTO) { value.Phase = "Future" },
+		func(value *runtimeTransitionEvidenceDTO) { value.Ownership = "future" },
+	} {
+		candidate := evidenceDocument
+		mutate(&candidate)
+		if _, err := decodeRuntimeTransitionEvidence(candidate); err == nil {
+			t.Fatal("invalid runtime transition evidence accepted")
+		}
+	}
+
+	for _, state := range []runtimeinstall.OperationState{
+		runtimeinstall.OperationStateRunning, runtimeinstall.OperationStateRebootPending,
+		runtimeinstall.OperationStateReady, runtimeinstall.OperationStateCancelled,
+		runtimeinstall.OperationStatePausedForAdministrator, runtimeinstall.OperationStateUnsupportedHost,
+		runtimeinstall.OperationStateRuntimeConflict, runtimeinstall.OperationStateFailedRecoverable,
+	} {
+		if parseRuntimeState(runtimeStateString(state)) != state {
+			t.Fatalf("state %s did not round trip", state)
+		}
+	}
+	if parseRuntimeState("future") != runtimeinstall.OperationStateUnknown ||
+		parseRuntimePhase("future") != runtimeinstall.PhaseUnknown {
+		t.Fatal("future enum was accepted")
+	}
+	for _, ownership := range []runtimeinstall.OwnershipDisposition{
+		runtimeinstall.OwnershipUnknown,
+		runtimeinstall.OwnershipReusedExternal,
+		runtimeinstall.OwnershipProvisionedByAgentMemory,
+	} {
+		if parseRuntimeOwnership(runtimeOwnershipString(ownership)) != ownership {
+			t.Fatalf("ownership %d did not round trip", ownership)
+		}
+	}
+	if runtimeOwnershipString(runtimeinstall.OwnershipDisposition(255)) != "invalid" ||
+		parseRuntimeOwnership("future") != runtimeinstall.OwnershipUnknown {
+		t.Fatal("future ownership was accepted")
+	}
+}
+
 func mustRuntimeOperationRepository(t testing.TB, journal journalport.Journal) *RuntimeOperationRepository {
 	t.Helper()
 	repository, err := NewRuntimeOperationRepository(

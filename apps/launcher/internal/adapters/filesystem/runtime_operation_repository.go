@@ -314,9 +314,13 @@ func decodeRuntimeTransitionEvidence(document runtimeTransitionEvidenceDTO) (run
 	if planErr != nil || inputErr != nil || outputErr != nil || artifactErr != nil {
 		return runtimeinstall.TransitionEvidence{}, errors.New("runtime transition digest is invalid")
 	}
+	ownership := parseRuntimeOwnership(document.Ownership)
+	if ownership == runtimeinstall.OwnershipUnknown && document.Ownership != "unknown" {
+		return runtimeinstall.TransitionEvidence{}, errors.New("runtime transition ownership is invalid")
+	}
 	evidence, err := runtimeinstall.NewTransitionEvidence(
 		parseRuntimePhase(document.Phase), document.Attempt, plan, input, output, artifact,
-		parseRuntimeOwnership(document.Ownership),
+		ownership,
 	)
 	if err != nil {
 		return runtimeinstall.TransitionEvidence{}, errors.New("runtime transition evidence is invalid")

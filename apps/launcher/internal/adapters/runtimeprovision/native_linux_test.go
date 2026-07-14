@@ -251,6 +251,29 @@ func TestLinuxProcessTreeAndUnixPeerEvidence(t *testing.T) {
 	}
 }
 
+func TestLinuxProcessSocketInventoryReadsTheExactOwnedProcess(t *testing.T) {
+	ctx := context.Background()
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "unix", filepath.Join(t.TempDir(), "inventory.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	pid := uint32(os.Getpid()) // #nosec G115 -- Linux process IDs are nonnegative and bounded by uint32.
+	inodes, err := processSocketInodes(ctx, map[uint32]struct{}{pid: {}})
+	if err != nil || len(inodes) == 0 {
+		t.Fatalf("owned process socket inventory = %#v, %v", inodes, err)
+	}
+	if empty, err := processSocketInodes(ctx, nil); err != nil || len(empty) != 0 {
+		t.Fatalf("empty process socket inventory = %#v, %v", empty, err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := processSocketInodes(cancelled, map[uint32]struct{}{pid: {}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled process socket inventory error = %v", err)
+	}
+}
+
 func TestLinuxProbeWorkspaceCleanupRejectsSubstitutionAndRemovesExactContent(t *testing.T) {
 	_, authority := adapterAuthority(t)
 	var nilContext context.Context

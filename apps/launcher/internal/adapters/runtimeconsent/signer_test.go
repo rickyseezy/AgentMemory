@@ -29,7 +29,13 @@ func TestProtectedConsentSignerAuthenticatesLinuxAndDesktopStatements(t *testing
 	if err != nil || signer.VerifyDesktop(context.Background(), desktopReceipt) != nil {
 		t.Fatalf("Desktop signature error=%v verify=%v", err, signer.VerifyDesktop(context.Background(), desktopReceipt))
 	}
-	if keys.ensureCalls != 4 || keys.useCalls != 4 {
+	removalReceipt, err := signer.SignManagedRuntimeRemovalConsent(
+		context.Background(), removalConsentPlan(t), time.Date(2026, 7, 15, 19, 0, 0, 0, time.UTC),
+	)
+	if err != nil || removalReceipt.IsZero() {
+		t.Fatalf("removal consent receipt=%s error=%v", removalReceipt, err)
+	}
+	if keys.ensureCalls != 5 || keys.useCalls != 5 {
 		t.Fatalf("protected key calls ensure=%d use=%d", keys.ensureCalls, keys.useCalls)
 	}
 }

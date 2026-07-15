@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha512"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"time"
 
 	bootstrapport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installbootstrap"
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeremoval"
 )
 
 const consentSigningOperationID = "019f6000-0000-7000-8000-000000000001"
@@ -20,6 +24,49 @@ type ProtectedSigner struct {
 	owners bootstrapport.OwnerBindingSource
 	keys   bootstrapport.OperationKeySource
 	keyID  install.OperationID
+}
+
+// SignManagedRuntimeRemovalConsent authenticates the complete separately
+// planned removal authority and its explicit, non-preselected approval using
+// the same protected owner/machine-bound consent key as runtime installation.
+func (s *ProtectedSigner) SignManagedRuntimeRemovalConsent(
+	ctx context.Context,
+	plan runtimeremoval.Plan,
+	acceptedAt time.Time,
+) (runtimeinstall.Hash, error) {
+	if !plan.Valid() || acceptedAt.IsZero() || acceptedAt.Location() != time.UTC {
+		return runtimeinstall.Hash{}, ErrIntegrity
+	}
+	payload, err := json.Marshal(struct {
+		Schema          string `json:"schema"`
+		Operation       string `json:"operation"`
+		SourceOperation string `json:"source_operation"`
+		Plan            string `json:"plan"`
+		Ownership       string `json:"ownership"`
+		InitialScan     string `json:"initial_scan"`
+		Impact          string `json:"impact"`
+		AcceptedAt      int64  `json:"accepted_at_unix_micro"`
+		Explicit        bool   `json:"explicit"`
+		NonPreselected  bool   `json:"non_preselected"`
+	}{
+		Schema:    "agentmemory.managed-runtime-removal-consent.v1",
+		Operation: plan.OperationID().String(), SourceOperation: plan.SourceOperationID(),
+		Plan: plan.Digest().String(), Ownership: plan.OwnershipRecordDigest().String(),
+		InitialScan: plan.ScanDigest().String(), Impact: plan.ImpactConfirmation(),
+		AcceptedAt: acceptedAt.UnixMicro(), Explicit: true, NonPreselected: true,
+	})
+	if err != nil {
+		return runtimeinstall.Hash{}, ErrIntegrity
+	}
+	signature, err := s.sign(ctx, payload)
+	if err != nil || len(signature) != sha512.Size {
+		return runtimeinstall.Hash{}, ErrIntegrity
+	}
+	receipt := make([]byte, 0, len(payload)+len(signature)+1)
+	receipt = append(receipt, payload...)
+	receipt = append(receipt, '\n')
+	receipt = append(receipt, signature...)
+	return runtimeinstall.Sum(receipt), nil
 }
 
 // NewProtectedSigner constructs a signer from native protected-key capabilities.

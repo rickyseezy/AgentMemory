@@ -160,6 +160,68 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 	}
 }
 
+func TestPF001DarwinDesktopManagedRuntimeRemovalComposesExactNativeBoundaries(t *testing.T) {
+	t.Parallel()
+	composition, err := composeNative(
+		t.Context(), nativeTestRoots(t.TempDir()),
+		func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+			return nativeMissingJournalProvider{}, nil
+		}, pendingReadySurface{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = composition.resources.Close(context.Background()) })
+	request, execution, certified := nativeRuntimeExecutionFixture(t)
+	desktop := launcherDesktopAuthorityForDigests(
+		t, runtimeinstall.PlatformDarwin, execution.Plan().Digest(), execution.Plan().CatalogDigest(),
+	)
+	resolver := &nativeDesktopAuthorityStub{authority: desktop}
+	helperAuthority, err := runtimeport.NewDesktopHelperAuthority(runtimeport.DesktopHelperAuthorityInput{
+		Platform: desktop.Platform(), Architecture: desktop.Architecture(), PlanDigest: desktop.PlanDigest(),
+		PrincipalID: desktop.PrincipalID(), MachineDigest: desktop.MachineDigest(),
+		CanonicalPath: "/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper",
+		SHA256:        runtimeinstall.Sum([]byte("helper")), PublisherIdentity: "agentmemory.publisher",
+		PublisherCertificate:  runtimeinstall.Sum([]byte("certificate")),
+		ReleaseManifestDigest: runtimeinstall.Sum([]byte("release")),
+		ExchangeDirectory:     "/Users/agentmemory/Library/Application Support/AgentMemory/bootstrap/test/native",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := &nativeDesktopHelperStub{helper: helperAuthority}
+	factory := &nativePlatformRuntimeFactory{
+		composition: &composition, release: &nativeReleaseAuthority{},
+		desktopAuthority: func(
+			context.Context, nativeVerifiedRuntimeExecution, *nativeReleaseAuthority,
+		) (nativeDesktopAuthoritySet, error) {
+			return nativeDesktopAuthoritySet{resolver: resolver, authority: desktop}, nil
+		},
+		desktopHelpers: func(
+			*nativeReleaseAuthority, nativeVerifiedRuntimeExecution,
+		) (nativeDesktopHelperSet, error) {
+			return nativeDesktopHelperSet{authority: helper, publisher: helper, encoder: helper}, nil
+		},
+	}
+	controller, err := factory.buildDesktopManagedRuntimeRemoval(t.Context(), nativeVerifiedRuntimeExecution{
+		request: request, authority: execution, runtime: certified,
+		catalog: nativeDesktopRuntimeVerifiedCatalog(t),
+	})
+	if err != nil || controller == nil {
+		t.Fatalf("controller=%T error=%v", controller, err)
+	}
+	if controller, err := (*nativePlatformRuntimeFactory)(nil).buildDesktopManagedRuntimeRemoval(
+		t.Context(), nativeVerifiedRuntimeExecution{},
+	); controller != nil || !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("nil factory controller=%T error=%v", controller, err)
+	}
+	if controller, err := newNativePlatformManagedRuntimeRemoval(
+		t.Context(), nil, nil, nativeVerifiedRuntimeExecution{},
+	); controller != nil || !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("nil production controller=%T error=%v", controller, err)
+	}
+}
+
 func nativeDesktopRuntimeVerifiedCatalog(t *testing.T) runtimecatalogapp.VerifiedCatalog {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/runtime-catalog-macos.json")

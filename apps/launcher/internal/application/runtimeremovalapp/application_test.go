@@ -33,6 +33,33 @@ func TestPF001ManagedRuntimeRemovalPersistsConsentAndIntentBeforeNativeEffect(t 
 	}
 }
 
+func TestPF001ManagedRuntimeRemovalPreparePersistsOnlySafePlanBeforeSecondConsent(t *testing.T) {
+	t.Parallel()
+	runtimePlan, ownership := managedOwnershipFixture(t)
+	harness := newRemovalHarness(t, ownership)
+	application := harness.application(t)
+	command := removalCommand(runtimePlan)
+	prepared, err := application.Prepare(t.Context(), command)
+	if err != nil || !prepared.Valid() || prepared.OperationID() != command.OperationID ||
+		prepared.SourceOperationID() != command.SourceOperationID || prepared.PlanDigest().IsZero() ||
+		prepared.Impact() != runtimeremoval.ImpactPreserveLocalRuntimeData ||
+		prepared.Product() != runtimePlan.Product() || prepared.Version() != runtimePlan.Version() ||
+		prepared.Platform() != runtimeinstall.PlatformLinux || harness.scanner.calls != 1 ||
+		harness.consent.calls != 0 || harness.remover.calls != 0 ||
+		len(harness.operations.savedStates) != 1 ||
+		harness.operations.savedStates[0] != runtimeremoval.StateAwaitingConsent {
+		t.Fatalf("prepared=%+v scans=%d consent=%d remover=%d states=%v error=%v",
+			prepared, harness.scanner.calls, harness.consent.calls, harness.remover.calls,
+			harness.operations.savedStates, err)
+	}
+	replayed, err := application.Prepare(t.Context(), command)
+	if err != nil || replayed.PlanDigest() != prepared.PlanDigest() || harness.scanner.calls != 1 ||
+		len(harness.operations.savedStates) != 1 {
+		t.Fatalf("replayed=%+v scans=%d states=%v error=%v", replayed, harness.scanner.calls,
+			harness.operations.savedStates, err)
+	}
+}
+
 func TestPF001ManagedRuntimeRemovalCrashRecoveryAcceptsOnlyExactAbsenceProof(t *testing.T) {
 	t.Parallel()
 	runtimePlan, ownership := managedOwnershipFixture(t)

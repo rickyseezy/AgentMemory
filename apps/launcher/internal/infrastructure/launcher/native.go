@@ -58,6 +58,7 @@ type NativeRoots struct {
 	PreparationState           string
 	RuntimeState               string
 	RuntimeOwnershipState      string
+	RuntimeRemovalState        string
 	RuntimeConsentKeyState     string
 	RuntimeConsentReceiptState string
 	RuntimeReplayState         string
@@ -268,6 +269,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		PreparationState:           filepath.Join(base, "preparation-state"),
 		RuntimeState:               filepath.Join(base, "runtime-state"),
 		RuntimeOwnershipState:      filepath.Join(base, "runtime-ownership-state"),
+		RuntimeRemovalState:        filepath.Join(base, "runtime-removal-state"),
 		RuntimeConsentKeyState:     filepath.Join(base, "runtime-consent-key-state"),
 		RuntimeConsentReceiptState: filepath.Join(base, "runtime-consent-receipt-state"),
 		RuntimeReplayState:         filepath.Join(base, "runtime-replay-state"),
@@ -288,7 +290,8 @@ func defaultNativeRoots() (NativeRoots, error) {
 func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
-		r.PreparationState, r.RuntimeState, r.RuntimeOwnershipState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
+		r.PreparationState, r.RuntimeState, r.RuntimeOwnershipState, r.RuntimeRemovalState,
+		r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
 		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState, r.RuntimeReplayState,
 		r.RebootContinuationState,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
@@ -320,8 +323,10 @@ type nativeComposition struct {
 	binder                    firststartapp.PreparationBinder
 	runtimeState              *filesystem.RuntimeOperationRepository
 	runtimeOwnership          *filesystem.RuntimeOwnershipRepository
+	runtimeRemoval            *filesystem.RuntimeRemovalOperationRepository
 	consentSigner             *runtimeconsent.ProtectedSigner
 	consentBroker             *runtimeconsent.Broker
+	removalConsentBroker      *runtimeconsent.RemovalBroker
 	consentRepository         *runtimeconsentjournal.Repository
 	replayJournals            filesystem.OperationJournalProvider
 	rebootCoordinator         *rebootapp.Application
@@ -391,6 +396,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	runtimeRemovalLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeRemovalState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	consentKeyLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeConsentKeyState)
 	if err != nil {
 		return nativeComposition{}, err
@@ -447,6 +456,10 @@ func composeNative(
 	if err != nil || nilCapability(runtimeOwnershipJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	runtimeRemovalJournals, err := journalFactory(runtimeRemovalLocator)
+	if err != nil || nilCapability(runtimeRemovalJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	consentReceiptJournals, err := journalFactory(consentReceiptLocator)
 	if err != nil || nilCapability(consentReceiptJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -484,6 +497,10 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	runtimeOwnershipFence, err := filesystem.NewNativeOperationStateFence(runtimeOwnershipLocator)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	runtimeRemovalFence, err := filesystem.NewNativeOperationStateFence(runtimeRemovalLocator)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -583,6 +600,12 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	runtimeRemoval, err := filesystem.NewRuntimeRemovalOperationRepository(
+		runtimeRemovalJournals, clock, runtimeRemovalFence,
+	)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	plans, err := installplanfs.NewRepository(ctx, roots.CanonicalPlans)
 	if err != nil {
 		return nativeComposition{}, err
@@ -617,6 +640,11 @@ func composeNative(
 		_ = resources.Close(context.WithoutCancel(ctx))
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	removalConsentBroker, err := runtimeconsent.NewRemovalBroker(consentSigner, clock)
+	if err != nil {
+		_ = resources.Close(context.WithoutCancel(ctx))
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	resolver, err := NewProtectedResolver(pointerJournals, plans, operations, clock)
 	if err != nil {
 		_ = resources.Close(context.WithoutCancel(ctx))
@@ -638,9 +666,11 @@ func composeNative(
 		resolver: resolver, runtime: runtime,
 		readinessRoot: roots.ReadinessState, agentConfigurationBackups: roots.AgentConfigurationBackups,
 		preparations: preparations, binder: binder,
-		runtimeState: runtimeState, runtimeOwnership: runtimeOwnership, releaseAnchor: releaseAnchorRepository,
+		runtimeState: runtimeState, runtimeOwnership: runtimeOwnership,
+		runtimeRemoval: runtimeRemoval, releaseAnchor: releaseAnchorRepository,
 		consentSigner:         consentSigner,
 		consentBroker:         consentBroker,
+		removalConsentBroker:  removalConsentBroker,
 		consentRepository:     consentRepository,
 		replayJournals:        replayJournals,
 		rebootCoordinator:     rebootCoordinator,
@@ -774,7 +804,7 @@ type runtimePlanProjection struct {
 }
 
 type runtimePlanDecoder func([]byte) (runtimePlanProjection, error)
-type readySurfaceFactory func(runtimePlanProjection) (mcpbootstrap.ReadySurfaceProvider, error)
+type readySurfaceFactory func(context.Context, runtimePlanProjection) (mcpbootstrap.ReadySurfaceProvider, error)
 
 func decodeRuntimePlan(canonical []byte) (runtimePlanProjection, error) {
 	plan, err := installplan.DecodeV1(canonical)
@@ -802,7 +832,10 @@ func decodeRuntimePlan(canonical []byte) (runtimePlanProjection, error) {
 	}, nil
 }
 
-func newNativeReadySurface(plan runtimePlanProjection) (mcpbootstrap.ReadySurfaceProvider, error) {
+func newNativeReadySurface(
+	_ context.Context,
+	plan runtimePlanProjection,
+) (mcpbootstrap.ReadySurfaceProvider, error) {
 	status, err := corehttp.NewStatusClient(
 		corehttp.NewNativeCredentialSource(), plan.coreEndpoint, plan.credentialPath,
 	)
@@ -861,7 +894,7 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 	}
 	ready := f.ready
 	if f.readyForPlan != nil {
-		ready, err = f.readyForPlan(plan)
+		ready, err = f.readyForPlan(ctx, plan)
 		if err != nil || nilCapability(ready) {
 			return BootstrapRuntime{}, mcpbootstrapapp.ErrBootstrapUnavailable
 		}

@@ -45,6 +45,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		roots.RuntimeReplayState == roots.RuntimeState ||
 		roots.RuntimeReplayState == roots.RuntimeConsentReceiptState ||
 		roots.RuntimeOwnershipState == roots.RuntimeState ||
+		roots.RuntimeRemovalState == roots.RuntimeState ||
+		roots.RuntimeRemovalState == roots.RuntimeOwnershipState ||
 		roots.ReleaseAnchorState == roots.RuntimeState || roots.RuntimeCatalogAnchorState == roots.RuntimeState ||
 		roots.RuntimeCatalogAnchorState == roots.ReleaseAnchorState {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
@@ -64,6 +66,8 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	missingContinuation.RebootContinuationState = ""
 	missingOwnership := valid
 	missingOwnership.RuntimeOwnershipState = ""
+	missingRemoval := valid
+	missingRemoval.RuntimeRemovalState = ""
 	for name, candidate := range map[string]NativeRoots{
 		"empty": {},
 		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
@@ -77,6 +81,7 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		"missing runtime": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
 			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime ownership":        missingOwnership,
+		"missing runtime removal":          missingRemoval,
 		"missing runtime consent":          missingConsent,
 		"missing runtime consent receipts": missingConsentReceipts,
 		"missing runtime replay":           missingReplay,
@@ -118,21 +123,23 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
 		composition.plans == nil || composition.operations == nil || composition.runtimeState == nil ||
-		composition.runtimeOwnership == nil ||
-		composition.consentSigner == nil || composition.consentBroker == nil || composition.consentRepository == nil ||
+		composition.runtimeOwnership == nil || composition.runtimeRemoval == nil ||
+		composition.consentSigner == nil || composition.consentBroker == nil || composition.removalConsentBroker == nil ||
+		composition.consentRepository == nil ||
 		composition.replayJournals == nil ||
 		composition.releaseAnchor == nil || composition.runtimeCatalogAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
 		composition.capacityState == nil || composition.artifactStore == nil || composition.activations == nil ||
 		composition.hostPointers == nil || composition.installLock == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 13 || observed[0] != roots.OperationState ||
+	if len(observed) != 14 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
 		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState ||
-		observed[5] != roots.RuntimeOwnershipState || observed[6] != roots.RuntimeConsentReceiptState ||
-		observed[7] != roots.RuntimeReplayState || observed[8] != roots.ReleaseAnchorState ||
-		observed[9] != roots.RuntimeCatalogAnchorState || observed[10] != roots.ArtifactState ||
-		observed[11] != roots.ResourceState || observed[12] != roots.ActiveReleaseState {
+		observed[5] != roots.RuntimeOwnershipState || observed[6] != roots.RuntimeRemovalState ||
+		observed[7] != roots.RuntimeConsentReceiptState || observed[8] != roots.RuntimeReplayState ||
+		observed[9] != roots.ReleaseAnchorState || observed[10] != roots.RuntimeCatalogAnchorState ||
+		observed[11] != roots.ArtifactState || observed[12] != roots.ResourceState ||
+		observed[13] != roots.ActiveReleaseState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -251,7 +258,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 13; failAt++ {
+	for failAt := 1; failAt <= 14; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -274,12 +281,12 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 	_, err := composeNative(context.Background(), roots,
 		func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
 			calls++
-			if calls == 9 {
+			if calls == 10 {
 				return nativePlainJournalProvider{}, nil
 			}
 			return nativeMissingJournalProvider{}, nil
 		}, pendingReadySurface{})
-	if err == nil || calls != 13 {
+	if err == nil || calls != 14 {
 		t.Fatalf("ordinary release-anchor journal accepted: calls=%d error=%v", calls, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -931,11 +938,11 @@ func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.
 		installationID: "019f5f20-1234-7abc-8123-0123456789ab",
 		coreEndpoint:   "http://127.0.0.1:38765", credentialPath: filepath.Join(t.TempDir(), "credential"),
 	}
-	if ready, err := newNativeReadySurface(readyProjection); err != nil || ready == nil {
+	if ready, err := newNativeReadySurface(context.Background(), readyProjection); err != nil || ready == nil {
 		t.Fatalf("newNativeReadySurface()=%T,%v", ready, err)
 	}
 	readyProjection.coreEndpoint = "https://remote.example"
-	if ready, err := newNativeReadySurface(readyProjection); err == nil || ready != nil {
+	if ready, err := newNativeReadySurface(context.Background(), readyProjection); err == nil || ready != nil {
 		t.Fatalf("remote newNativeReadySurface()=%T,%v", ready, err)
 	}
 	if surface, err := (pendingReadySurface{}).ReadySurface(context.Background()); err == nil ||
@@ -1052,6 +1059,7 @@ func nativeTestRoots(root string) NativeRoots {
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
 		RuntimeState:               filepath.Join(root, "runtime"),
 		RuntimeOwnershipState:      filepath.Join(root, "runtime-ownership"),
+		RuntimeRemovalState:        filepath.Join(root, "runtime-removal"),
 		RuntimeConsentKeyState:     filepath.Join(root, "runtime-consent-key"),
 		RuntimeConsentReceiptState: filepath.Join(root, "runtime-consent-receipt"),
 		RuntimeReplayState:         filepath.Join(root, "runtime-replay"),

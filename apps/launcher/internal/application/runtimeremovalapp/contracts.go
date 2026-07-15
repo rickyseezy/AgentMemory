@@ -34,6 +34,39 @@ type Result struct {
 	Outcome     Outcome
 }
 
+// PreparedRemoval is the exact safe-to-display plan produced after ownership
+// and the first exhaustive dependency scan, but before second consent or any
+// destructive intent. The full plan remains immutable for the trusted consent
+// adapter while public accessors expose only bounded non-secret facts.
+type PreparedRemoval struct{ plan runtimeremoval.Plan }
+
+// Valid reports whether the prepared removal retains complete plan authority.
+func (p PreparedRemoval) Valid() bool { return p.plan.Valid() }
+
+// OperationID returns the distinct deterministic removal operation identity.
+func (p PreparedRemoval) OperationID() string { return p.plan.OperationID().String() }
+
+// SourceOperationID returns the finalized runtime ownership operation.
+func (p PreparedRemoval) SourceOperationID() string { return p.plan.SourceOperationID() }
+
+// PlanDigest returns the exact confirmation and retry binding.
+func (p PreparedRemoval) PlanDigest() runtimeinstall.Hash { return p.plan.Digest() }
+
+// Impact returns the platform-specific destructive impact statement key.
+func (p PreparedRemoval) Impact() string { return p.plan.ImpactConfirmation() }
+
+// Platform returns the native runtime platform.
+func (p PreparedRemoval) Platform() runtimeinstall.Platform { return p.plan.Platform() }
+
+// Product returns the signed runtime product identity.
+func (p PreparedRemoval) Product() string { return p.plan.Product() }
+
+// Version returns the exact signed runtime version.
+func (p PreparedRemoval) Version() string { return p.plan.Version() }
+
+// RemovalPlan returns immutable trusted authority for the consent adapter.
+func (p PreparedRemoval) RemovalPlan() runtimeremoval.Plan { return p.plan }
+
 // ConsentDecision is an exact-plan, exact-impact second decision. Explicit
 // must be true only when the control was initially unselected and the user
 // actively confirmed it.

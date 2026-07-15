@@ -83,10 +83,145 @@ func TestPF001CoreReadyHandlersFailClosedAfterCoreRegression(t *testing.T) {
 	}
 }
 
+func TestPF001CoreReadySurfacePublishesTwoStepManagedRuntimeRemoval(t *testing.T) {
+	t.Parallel()
+	removal := &managedRuntimeRemovalStub{plan: managedRuntimeRemovalPlan{
+		OperationID: "019f5f20-1234-7abc-8123-0123456789ac",
+		PlanDigest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Impact:      "remove-managed-runtime-and-local-runtime-data",
+		Platform:    "darwin", Product: "docker-desktop", Version: "4.43.2",
+	}}
+	provider, err := newCoreReadySurfaceWithRemoval("installation", &coreStatusStub{ready: true}, removal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := provider.ReadySurface(context.Background())
+	if err != nil || len(surface.Tools) != 3 {
+		t.Fatalf("ReadySurface()=%+v,%v", surface, err)
+	}
+	prepareTool, removeTool := surface.Tools[1], surface.Tools[2]
+	if prepareTool.Tool.Name != toolManagedRuntimeRemovalPlan || removeTool.Tool.Name != toolRemoveManagedRuntime ||
+		prepareTool.Tool.Annotations == nil || prepareTool.Tool.Annotations.ReadOnlyHint ||
+		removeTool.Tool.Annotations == nil || removeTool.Tool.Annotations.DestructiveHint == nil ||
+		!*removeTool.Tool.Annotations.DestructiveHint {
+		t.Fatalf("removal tools=%+v,%+v", prepareTool.Tool, removeTool.Tool)
+	}
+	prepared, err := prepareTool.Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{}`)},
+	})
+	if err != nil || removal.prepareCalls != 1 {
+		t.Fatalf("prepare=%+v,%v calls=%d", prepared, err, removal.prepareCalls)
+	}
+	encoded, _ := json.Marshal(prepared.StructuredContent)
+	if string(encoded) != `{"contract_version":1,"explicit_confirmation_preselected":false,"impact":"remove-managed-runtime-and-local-runtime-data","operation_id":"019f5f20-1234-7abc-8123-0123456789ac","plan_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","platform":"darwin","product":"docker-desktop","version":"4.43.2"}` {
+		t.Fatalf("prepared=%s", encoded)
+	}
+	removed, err := removeTool.Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"operation_id":"019f5f20-1234-7abc-8123-0123456789ac","plan_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","impact":"remove-managed-runtime-and-local-runtime-data","approved":true,"explicit_confirmation":true}`)},
+	})
+	if err != nil || removal.removeCalls != 1 || !removal.input.Approved || !removal.input.ExplicitConfirmation {
+		t.Fatalf("remove=%+v,%v stub=%+v", removed, err, removal)
+	}
+	encoded, _ = json.Marshal(removed.StructuredContent)
+	if string(encoded) != `{"contract_version":1,"operation_id":"019f5f20-1234-7abc-8123-0123456789ac","outcome":"removed","plan_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}` {
+		t.Fatalf("removed=%s", encoded)
+	}
+}
+
+func TestPF001ManagedRuntimeRemovalReadyHandlersRejectImplicitOrSubstitutedDecisions(t *testing.T) {
+	t.Parallel()
+	if (managedRuntimeRemovalPlan{}).valid() || (managedRuntimeRemovalPlan{
+		OperationID: " operation", PlanDigest: "digest", Impact: "impact",
+		Platform: "linux", Product: "docker-ce", Version: "1",
+	}).valid() {
+		t.Fatal("invalid public removal plan accepted")
+	}
+	removal := &managedRuntimeRemovalStub{plan: managedRuntimeRemovalPlan{
+		OperationID: "operation", PlanDigest: "digest", Impact: "impact",
+		Platform: "linux", Product: "docker-ce", Version: "1",
+	}}
+	provider, _ := newCoreReadySurfaceWithRemoval("installation", &coreStatusStub{ready: true}, removal)
+	surface, _ := provider.ReadySurface(context.Background())
+	for name, raw := range map[string]string{
+		"missing request":          "",
+		"implicit approval":        `{"operation_id":"operation","plan_digest":"digest","impact":"impact","approved":true,"explicit_confirmation":false}`,
+		"substituted impact":       `{"operation_id":"operation","plan_digest":"digest","impact":"other","approved":true,"explicit_confirmation":true}`,
+		"unknown input":            `{"operation_id":"operation","plan_digest":"digest","impact":"impact","approved":false,"explicit_confirmation":false,"extra":true}`,
+		"non-object prepare input": `[]`,
+	} {
+		var handler mcp.ToolHandler
+		var request *mcp.CallToolRequest
+		if name == "non-object prepare input" {
+			handler = surface.Tools[1].Handler
+			request = &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(raw)}}
+		} else {
+			handler = surface.Tools[2].Handler
+			if raw != "" {
+				request = &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(raw)}}
+			}
+		}
+		if result, err := handler(context.Background(), request); result != nil || err == nil {
+			t.Fatalf("%s result=%+v error=%v", name, result, err)
+		}
+	}
+	if result, err := surface.Tools[1].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{}{}`)},
+	}); result != nil || err == nil {
+		t.Fatalf("trailing prepare input result=%+v error=%v", result, err)
+	}
+	if removal.removeCalls != 0 {
+		t.Fatalf("destructive boundary calls=%d", removal.removeCalls)
+	}
+	removal.prepareErr = errors.New("private prepare")
+	if result, err := surface.Tools[1].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{}`)},
+	}); result != nil || err == nil {
+		t.Fatalf("private prepare result=%+v error=%v", result, err)
+	}
+	removal.prepareErr = nil
+	removal.removeErr = errors.New("private removal")
+	if result, err := surface.Tools[2].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"operation_id":"operation","plan_digest":"digest","impact":"impact","approved":false,"explicit_confirmation":false}`)},
+	}); result != nil || err == nil {
+		t.Fatalf("private removal result=%+v error=%v", result, err)
+	}
+	if _, err := newCoreReadySurfaceWithRemoval("installation", &coreStatusStub{ready: true}, (*managedRuntimeRemovalStub)(nil)); err == nil {
+		t.Fatal("typed nil removal controller accepted")
+	}
+	if result, err := readyToolResult(make(chan int)); result != nil || err == nil {
+		t.Fatalf("unencodable response=%+v error=%v", result, err)
+	}
+}
+
 type coreStatusStub struct {
 	ready bool
 	err   error
 	calls int
+}
+
+type managedRuntimeRemovalStub struct {
+	plan         managedRuntimeRemovalPlan
+	input        managedRuntimeRemovalDecision
+	prepareCalls int
+	removeCalls  int
+	prepareErr   error
+	removeErr    error
+}
+
+func (s *managedRuntimeRemovalStub) PrepareManagedRuntimeRemoval(context.Context) (managedRuntimeRemovalPlan, error) {
+	s.prepareCalls++
+	return s.plan, s.prepareErr
+}
+
+func (s *managedRuntimeRemovalStub) DecideManagedRuntimeRemoval(
+	_ context.Context,
+	input managedRuntimeRemovalDecision,
+) (managedRuntimeRemovalResult, error) {
+	s.removeCalls++
+	s.input = input
+	return managedRuntimeRemovalResult{
+		OperationID: s.plan.OperationID, PlanDigest: s.plan.PlanDigest, Outcome: "removed",
+	}, s.removeErr
 }
 
 func (s *coreStatusStub) Ready(context.Context) (bool, error) {

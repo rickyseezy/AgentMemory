@@ -23,7 +23,7 @@ func composeDefaultNativeProduction(
 	if err != nil {
 		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
 	}
-	return composeNativeProductionFirstStart(ctx, nativeProductionFirstStartDependencies{
+	production, err := composeNativeProductionFirstStart(ctx, nativeProductionFirstStartDependencies{
 		Release: nativeReleaseAuthorityDependencies{
 			BundleRoot:   defaultNativeReleaseBundleRoot,
 			Trust:        loadEmbeddedNativeReleaseTrust,
@@ -38,4 +38,15 @@ func composeDefaultNativeProduction(
 			Runtime: composition.runtime,
 		},
 	})
+	if err != nil {
+		return nativeProductionFirstStart{}, err
+	}
+	ready, err := newNativeProductionReadySurfaceFactory(composition, production.Release)
+	if err != nil {
+		_ = production.Supervisor.Close(context.WithoutCancel(ctx))
+		_ = production.Release.Close(context.WithoutCancel(ctx))
+		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
+	}
+	composition.runtime.readyForPlan = ready
+	return production, nil
 }

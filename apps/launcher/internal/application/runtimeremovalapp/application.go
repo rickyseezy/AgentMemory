@@ -52,25 +52,9 @@ func New(dependencies Dependencies) (*Application, error) {
 
 // Remove starts or resumes until a durable terminal result or a fail-closed refusal.
 func (a *Application) Remove(ctx context.Context, command Command) (Result, error) {
-	operationID, sourceID, runtimePlan, err := validateCommand(command)
+	operation, err := a.loadOrCreateOperation(ctx, command)
 	if err != nil {
 		return Result{OperationID: command.OperationID}, err
-	}
-	operation, loadError := a.operations.Load(ctx, operationID.String())
-	switch {
-	case loadError == nil && operation == nil:
-		return Result{OperationID: command.OperationID}, ErrIntegrity
-	case loadError == nil:
-		if !commandMatches(operation.Plan(), operationID, sourceID, runtimePlan) {
-			return resultFor(operation, OutcomeUnknown), ErrIntegrity
-		}
-	case errors.Is(loadError, ErrOperationNotFound):
-		operation, err = a.createOperation(ctx, operationID, sourceID, runtimePlan)
-		if err != nil {
-			return Result{OperationID: command.OperationID}, err
-		}
-	default:
-		return Result{OperationID: command.OperationID}, loadError
 	}
 
 	plan := operation.Plan()
@@ -129,6 +113,52 @@ func (a *Application) Remove(ctx context.Context, command Command) (Result, erro
 		return resultFor(operation, OutcomeDeclined), nil
 	}
 	return resultFor(operation, OutcomeUnknown), ErrIntegrity
+}
+
+// Prepare starts or restores only the non-destructive plan step. It performs
+// finalized ownership verification and the first exhaustive scan, persists
+// StateAwaitingConsent, and never calls consent or native removal boundaries.
+func (a *Application) Prepare(ctx context.Context, command Command) (PreparedRemoval, error) {
+	operation, err := a.loadOrCreateOperation(ctx, command)
+	if err != nil {
+		return PreparedRemoval{}, err
+	}
+	prepared := PreparedRemoval{plan: operation.Plan()}
+	if !prepared.Valid() {
+		return PreparedRemoval{}, ErrIntegrity
+	}
+	return prepared, nil
+}
+
+func (a *Application) loadOrCreateOperation(
+	ctx context.Context,
+	command Command,
+) (*runtimeremoval.Operation, error) {
+	operationID, sourceID, runtimePlan, err := validateCommand(command)
+	if a == nil || ctx == nil || err != nil || nilBoundary(a.operations) || nilBoundary(a.ownership) ||
+		nilBoundary(a.scanner) || nilBoundary(a.consent) || nilBoundary(a.presence) || nilBoundary(a.remover) {
+		return nil, ErrIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	operation, loadError := a.operations.Load(ctx, operationID.String())
+	switch {
+	case loadError == nil && operation == nil:
+		return nil, ErrIntegrity
+	case loadError == nil:
+		if !commandMatches(operation.Plan(), operationID, sourceID, runtimePlan) {
+			return nil, ErrIntegrity
+		}
+	case errors.Is(loadError, ErrOperationNotFound):
+		operation, err = a.createOperation(ctx, operationID, sourceID, runtimePlan)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, loadError
+	}
+	return operation, nil
 }
 
 func (a *Application) createOperation(

@@ -17,6 +17,7 @@ type Dependencies struct {
 	Operations           OperationRepository
 	OwnershipAuthorities RuntimeOwnershipAuthorityResolver
 	OwnershipRecords     RuntimeOwnershipRepository
+	Compensation         RuntimeCompensator
 	Host                 HostCapabilityProbe
 	Detector             ContainerRuntimeDetector
 	Catalog              RuntimeReleaseCatalog
@@ -36,6 +37,7 @@ type Application struct {
 	operations           OperationRepository
 	ownershipAuthorities RuntimeOwnershipAuthorityResolver
 	ownershipRecords     RuntimeOwnershipRepository
+	compensation         RuntimeCompensator
 	host                 HostCapabilityProbe
 	detector             ContainerRuntimeDetector
 	catalog              RuntimeReleaseCatalog
@@ -55,6 +57,7 @@ func New(dependencies Dependencies) (*Application, error) {
 		dependencies.Operations,
 		dependencies.OwnershipAuthorities,
 		dependencies.OwnershipRecords,
+		dependencies.Compensation,
 		dependencies.Host,
 		dependencies.Detector,
 		dependencies.Catalog,
@@ -76,6 +79,7 @@ func New(dependencies Dependencies) (*Application, error) {
 		operations:           dependencies.Operations,
 		ownershipAuthorities: dependencies.OwnershipAuthorities,
 		ownershipRecords:     dependencies.OwnershipRecords,
+		compensation:         dependencies.Compensation,
 		host:                 dependencies.Host,
 		detector:             dependencies.Detector,
 		catalog:              dependencies.Catalog,
@@ -166,6 +170,9 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 				applicationError(ErrorCodeIntegrityViolation, false)
 		}
 		return completedResult(operation, ownership)
+	}
+	if operation.State() == runtimeinstall.OperationStateCancelled {
+		return a.finishCancellation(ctx, operation, plan)
 	}
 	if operation.State() == runtimeinstall.OperationStateRebootPending {
 		if _, _, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan); ownershipError != nil {
@@ -258,11 +265,117 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 			}
 			return completedResult(operation, ownership)
 		}
+		if operation.State() == runtimeinstall.OperationStateCancelled {
+			return a.finishCancellation(ctx, operation, plan)
+		}
 		if output.outcome != OutcomeCompleted {
 			return resultFrom(operation, output.outcome, codeForState(operation.State())), nil
 		}
 	}
 	return resultFrom(operation, OutcomeUnknown, ErrorCodeInternal), applicationError(ErrorCodeInternal, false)
+}
+
+// Cancel durably cancels the PF-006 child and completes only exact
+// ownership-authorized cleanup. A missing child is a proven no-op because no
+// runtime phase could have acquired or mutated state without creating it.
+func (a *Application) Cancel(ctx context.Context, command Command) (Result, error) {
+	plan, err := runtimeinstall.DecodePlanV1(command.CanonicalPlan)
+	if err != nil || command.OperationID == "" {
+		return Result{}, applicationError(ErrorCodeInvalidArgument, false)
+	}
+	operation, err := a.operations.Load(ctx, command.OperationID)
+	switch {
+	case errors.Is(err, ErrOperationNotFound):
+		return Result{
+			OperationID: command.OperationID, State: runtimeinstall.OperationStateCancelled,
+			Outcome: OutcomeCancelled, planDigest: plan.Digest(), CompensationSettled: true,
+		}, nil
+	case err != nil:
+		mapped := mapRepositoryError(err)
+		return Result{OperationID: command.OperationID, ErrorCode: errorCode(mapped)}, mapped
+	case operation == nil || operation.PlanDigest() != plan.Digest():
+		return Result{OperationID: command.OperationID}, applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	if operation.State() == runtimeinstall.OperationStateReady {
+		ownership, recorded, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan.CanonicalBytes())
+		if ownershipError != nil || !recorded {
+			if ownershipError == nil {
+				ownershipError = applicationError(ErrorCodeIntegrityViolation, false)
+			}
+			return resultFrom(operation, OutcomeUnknown, errorCode(ownershipError)), ownershipError
+		}
+		result, completionError := completedResult(operation, ownership)
+		result.CompensationSettled = completionError == nil
+		return result, completionError
+	}
+	if operation.State() != runtimeinstall.OperationStateCancelled {
+		if err := operation.Cancel(); err != nil {
+			return resultFrom(operation, outcomeForState(operation.State()), ErrorCodeConflict),
+				applicationError(ErrorCodeConflict, false)
+		}
+		if saveError := a.saveFresh(ctx, operation); saveError != nil {
+			return resultFrom(operation, OutcomeUnknown, errorCode(saveError)), saveError
+		}
+	}
+	return a.finishCancellation(ctx, operation, plan.CanonicalBytes())
+}
+
+func (a *Application) finishCancellation(
+	ctx context.Context,
+	operation *runtimeinstall.Operation,
+	canonicalPlan []byte,
+) (Result, error) {
+	if operation == nil || operation.State() != runtimeinstall.OperationStateCancelled {
+		return Result{}, applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	if operation.CompensationSettled() {
+		return resultFrom(operation, OutcomeCancelled, ErrorCodeCancelled), nil
+	}
+	if operation.CompensationStatus() != runtimeinstall.CompensationStatusPending {
+		return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
+			applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistenceTimeout)
+	defer cancel()
+	ownership, recorded, ownershipError := a.recordRuntimeOwnership(cleanupContext, operation, canonicalPlan)
+	if ownershipError != nil || !recorded {
+		if ownershipError == nil {
+			ownershipError = applicationError(ErrorCodeIntegrityViolation, false)
+		}
+		result := resultFrom(operation, OutcomeCancelled, errorCode(ownershipError))
+		result.CompensationSettled = false
+		return result, ownershipError
+	}
+	request, err := newRuntimeCompensationRequest(canonicalPlan, ownership)
+	if err != nil {
+		return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
+			applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	receipt, compensateError := a.compensation.CompensateRuntime(cleanupContext, request)
+	if compensateError != nil {
+		mapped := mapBoundaryError(compensateError)
+		result := resultFrom(operation, OutcomeCancelled, errorCode(mapped))
+		result.CompensationSettled = false
+		return result, mapped
+	}
+	if !receipt.ValidFor(request) || operation.CompleteCompensation(receipt.Digest()) != nil {
+		return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
+			applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	if saveError := a.saveFresh(cleanupContext, operation); saveError != nil {
+		result := resultFrom(operation, OutcomeCancelled, errorCode(saveError))
+		result.CompensationSettled = false
+		return result, saveError
+	}
+	if _, recorded, ownershipError = a.recordRuntimeOwnership(cleanupContext, operation, canonicalPlan); ownershipError != nil || !recorded {
+		if ownershipError == nil {
+			ownershipError = applicationError(ErrorCodeIntegrityViolation, false)
+		}
+		result := resultFrom(operation, OutcomeCancelled, errorCode(ownershipError))
+		result.CompensationSettled = false
+		return result, ownershipError
+	}
+	return resultFrom(operation, OutcomeCancelled, ErrorCodeCancelled), nil
 }
 
 func (a *Application) recordRuntimeOwnership(
@@ -413,14 +526,15 @@ func errorCode(err error) ErrorCode {
 
 func resultFrom(operation *runtimeinstall.Operation, outcome Outcome, code ErrorCode) Result {
 	result := Result{
-		OperationID:  operation.ID(),
-		State:        operation.State(),
-		CurrentPhase: operation.CurrentPhase(),
-		Attempt:      operation.Attempt(),
-		Version:      operation.Version(),
-		Outcome:      outcome,
-		ErrorCode:    code,
-		planDigest:   operation.PlanDigest(),
+		OperationID:         operation.ID(),
+		State:               operation.State(),
+		CurrentPhase:        operation.CurrentPhase(),
+		Attempt:             operation.Attempt(),
+		Version:             operation.Version(),
+		Outcome:             outcome,
+		ErrorCode:           code,
+		planDigest:          operation.PlanDigest(),
+		CompensationSettled: operation.CompensationSettled(),
 	}
 	if operation.State() == runtimeinstall.OperationStateRebootPending {
 		result.rebootReceipt = operation.Snapshot().RebootReceipt

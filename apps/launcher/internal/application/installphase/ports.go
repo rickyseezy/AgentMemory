@@ -97,6 +97,7 @@ type RuntimePlanQuery interface {
 // runtimeinstallapp.Application.
 type RuntimeEnsurer interface {
 	Ensure(context.Context, runtimeinstallapp.Command) (runtimeinstallapp.Result, error)
+	Cancel(context.Context, runtimeinstallapp.Command) (runtimeinstallapp.Result, error)
 }
 
 var _ RuntimeEnsurer = (*runtimeinstallapp.Application)(nil)

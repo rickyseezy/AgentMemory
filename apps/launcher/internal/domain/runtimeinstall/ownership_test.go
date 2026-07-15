@@ -115,6 +115,38 @@ func TestPF006OwnershipRecordRejectsSubstitutionRegressionAndPrematureProjection
 	}
 }
 
+func TestPF006OwnershipRecordRetainsMonotonicCompensationReceipt(t *testing.T) {
+	t.Parallel()
+	plan, _ := NewPlanV1(supportedHost(t), NewAbsentRuntimeDiscovery(), certifiedCatalog(t))
+	operation, _ := NewOperation("018f47f2-a5a1-7cc1-8e4f-123456789abc", plan.Digest())
+	completeOwnershipPhases(t, operation, PhaseAcquireRuntime)
+	authority := ownershipAuthorityForTest(t, plan)
+	prepared, err := NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := operation.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, &prepared)
+	if err != nil || !pending.CompensationReceiptDigest().IsZero() || !pending.CanFollow(prepared) {
+		t.Fatalf("pending ownership record = %#v, %v", pending.Snapshot(), err)
+	}
+	receipt := Sum([]byte("compensation-receipt"))
+	if err := operation.CompleteCompensation(receipt); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, &pending)
+	if err != nil || settled.CompensationReceiptDigest() != receipt || !settled.CanFollow(pending) {
+		t.Fatalf("settled ownership record = %#v, %v", settled.Snapshot(), err)
+	}
+	tampered := settled.Snapshot()
+	tampered.CompensationReceiptDigest = Hash{}
+	if _, err := RestoreRuntimeOwnershipRecord(tampered); err == nil {
+		t.Fatal("compensation receipt removal was accepted")
+	}
+}
+
 func TestPF006OwnershipAuthorityRejectsIncompleteOrAmbiguousFacts(t *testing.T) {
 	t.Parallel()
 	plan, _ := NewPlanV1(supportedHost(t), NewAbsentRuntimeDiscovery(), certifiedCatalog(t))

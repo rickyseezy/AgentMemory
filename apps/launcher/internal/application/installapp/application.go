@@ -230,10 +230,6 @@ func (a *InstallApplication) Install(
 			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(bindingError)
 		}
 		if terminalResult, releaseReason, terminal := replayableTerminalResult(operation); terminal {
-			if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
-				terminalResult.ErrorCode = cleanupError.Code()
-				return terminalResult, cleanupError
-			}
 			intent, hasIntent, intentError := a.observeCancellation(ctx, operation)
 			if intentError != nil {
 				terminalResult.ErrorCode = intentError.Code()
@@ -242,6 +238,16 @@ func (a *InstallApplication) Install(
 			if hasIntent && operation.State() != install.StateCancelled {
 				terminalResult.ErrorCode = ErrorCodeIntegrityViolation
 				return terminalResult, cancellationIntegrityError()
+			}
+			if hasIntent {
+				if cleanupError := a.settleRuntimeCancellation(ctx, operation, canonicalPlan); cleanupError != nil {
+					terminalResult.ErrorCode = cleanupError.Code()
+					return terminalResult, cleanupError
+				}
+			}
+			if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+				terminalResult.ErrorCode = cleanupError.Code()
+				return terminalResult, cleanupError
 			}
 			if releaseReason != ReservationReleaseUnknown && reservationMayExist(operation) {
 				if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, releaseReason); releaseError != nil {
@@ -810,6 +816,10 @@ func (a *InstallApplication) settleCancellation(
 		}
 		return result, err
 	}
+	if cleanupError := a.settleRuntimeCancellation(ctx, operation, canonicalPlan); cleanupError != nil {
+		result.ErrorCode = cleanupError.Code()
+		return result, cleanupError
+	}
 	if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
 		result.ErrorCode = cleanupError.Code()
 		return result, cleanupError
@@ -827,6 +837,29 @@ func (a *InstallApplication) settleCancellation(
 	}
 	result.CancellationSettled = acknowledged.Status == CancellationIntentAcknowledged
 	return result, nil
+}
+
+func (a *InstallApplication) settleRuntimeCancellation(
+	ctx context.Context,
+	operation *install.Operation,
+	canonicalPlan []byte,
+) *ApplicationError {
+	if operation.CurrentPhase() != install.PhaseEnsureContainerRuntime {
+		return nil
+	}
+	cleanupContext, cancelCleanup := freshFinalizationContext(ctx)
+	cleanupError := a.containerRuntime.CancelContainerRuntime(
+		cleanupContext,
+		newPhaseRequest(operation, canonicalPlan),
+	)
+	cancelCleanup()
+	if cleanupError == nil {
+		return nil
+	}
+	return mapExternalBoundaryError(
+		cleanupError,
+		"container runtime cancellation could not be settled",
+	)
 }
 
 func aggregateContainsRequestedIntent(operation *install.Operation, intent CancellationIntent) bool {

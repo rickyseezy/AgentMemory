@@ -95,6 +95,20 @@ func (discardOwnership) SaveRuntimeOwnership(
 	return nil
 }
 
+func (discardOwnership) CompensateRuntime(
+	_ context.Context,
+	request runtimeinstallapp.RuntimeCompensationRequest,
+) (runtimeinstallapp.RuntimeCompensationReceipt, error) {
+	runtimeDigest := runtimeinstall.Sum([]byte("preserved-test-runtime"))
+	return runtimeinstallapp.NewRuntimeCompensationReceipt(
+		request,
+		runtimeinstallapp.RuntimeCompensationReceiptInput{
+			RuntimeBeforeDigest: runtimeDigest, RuntimeAfterDigest: runtimeDigest,
+			ArtifactCleanupDigest: runtimeinstall.Sum([]byte("test-cleanup")), RuntimePreserved: true,
+		},
+	)
+}
+
 func adapterAuthority(t *testing.T) (runtimeinstall.Plan, runtimeport.LinuxAuthority) {
 	t.Helper()
 	host, err := runtimeinstall.NewHostCapabilities(

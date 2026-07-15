@@ -107,10 +107,16 @@ func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
+	compensation, err := runtimeprovision.NewLinuxRuntimeCompensator(
+		verified.catalog, authorityResolver, inspector, f.artifacts,
+	)
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: f.composition.runtimeState, OwnershipAuthorities: ownershipAuthorities,
-		OwnershipRecords: f.composition.runtimeOwnership,
-		Host:             provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
+		OwnershipRecords: f.composition.runtimeOwnership, Compensation: compensation,
+		Host: provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
 		Fetcher: provisioner, Verifier: provisioner, Prerequisites: provisioner,
 		Installer: provisioner, Terms: provisioner, Controller: provisioner, Capabilities: provisioner,
 	})

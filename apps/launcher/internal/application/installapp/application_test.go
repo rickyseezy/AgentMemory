@@ -710,6 +710,8 @@ type phaseCapabilities struct {
 	failed              bool
 	releaseReasons      []ReservationReleaseReason
 	releaseError        error
+	runtimeCancelCalls  int
+	runtimeCancelError  error
 	rebootRegistrations []rebootapp.Binding
 	rebootConsumptions  []rebootapp.Binding
 	rebootRemovals      []install.OperationID
@@ -743,6 +745,10 @@ func (p *phaseCapabilities) VerifyHost(context.Context, PhaseRequest) (PhaseOutp
 }
 func (p *phaseCapabilities) EnsureContainerRuntime(context.Context, PhaseRequest) (PhaseOutput, error) {
 	return p.execute(install.PhaseEnsureContainerRuntime)
+}
+func (p *phaseCapabilities) CancelContainerRuntime(context.Context, PhaseRequest) error {
+	p.runtimeCancelCalls++
+	return p.runtimeCancelError
 }
 func (p *phaseCapabilities) VerifyRelease(context.Context, PhaseRequest) (PhaseOutput, error) {
 	return p.execute(install.PhaseVerifyRelease)

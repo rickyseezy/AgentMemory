@@ -3,14 +3,19 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"testing"
+	"time"
 
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimecatalogapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
@@ -75,6 +80,7 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 	factory := &nativePlatformRuntimeFactory{
 		composition: &composition,
 		release:     &nativeReleaseAuthority{},
+		artifacts:   &artifactapp.Application{},
 		desktopAuthority: func(
 			context.Context, nativeVerifiedRuntimeExecution, *nativeReleaseAuthority,
 		) (nativeDesktopAuthoritySet, error) {
@@ -93,6 +99,7 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 	}
 	application, err := factory.buildDesktopRuntimeApplication(t.Context(), nativeVerifiedRuntimeExecution{
 		request: request, authority: execution, runtime: certified,
+		catalog: nativeDesktopRuntimeVerifiedCatalog(t),
 	})
 	if err != nil || application == nil {
 		t.Fatalf("application=%T error=%v", application, err)
@@ -151,6 +158,47 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 		!errors.Is(err, errNativeInstallerIntegrity) {
 		t.Fatalf("missing helpers application=%T error=%v", candidate, err)
 	}
+}
+
+func nativeDesktopRuntimeVerifiedCatalog(t *testing.T) runtimecatalogapp.VerifiedCatalog {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/runtime-catalog-macos.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := runtimecatalog.DecodeManifestV1(bytes.TrimSpace(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := runtimecatalog.NewSignedManifest(manifest, manifest.SigningKeyID(), []byte("test-signature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := runtimecatalog.NewHost(runtimecatalog.HostInput{
+		OperatingSystem: runtimecatalog.OSKindMacOS, Architecture: runtimecatalog.ArchitectureARM64,
+		Edition: "desktop", Distribution: "macos", OSVersion: "15.5.0", Build: 24000,
+		CPUCores: 8, MemoryBytes: 32 << 30, FreeDiskBytes: 100 << 30, Virtualization: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := &nativeDesktopVerifiedCatalogPorts{
+		host: host, now: time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
+	}
+	application, err := runtimecatalogapp.NewApplication(runtimecatalogapp.Dependencies{
+		Clock: ports, Host: ports, Signature: ports, NativePublisher: ports, AntiRollback: ports,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := application.Verify(t.Context(), runtimecatalogapp.Request{
+		SignedManifest: signed, ExpectedManifestDigest: manifest.Digest(),
+		SourceMode: runtimecatalog.SourceModeOfflineBundle,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verified
 }
 
 type nativeDesktopAuthorityStub struct {

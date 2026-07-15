@@ -102,30 +102,31 @@ type RuntimeMutationEvidence struct {
 
 // RuntimeOwnershipRecordSnapshot is the strict persistence representation.
 type RuntimeOwnershipRecordSnapshot struct {
-	SchemaVersion           uint16                    `json:"schema_version"`
-	OperationID             string                    `json:"operation_id"`
-	PlanDigest              Hash                      `json:"plan_digest"`
-	Revision                uint64                    `json:"revision"`
-	OperationState          OperationState            `json:"operation_state"`
-	Status                  OwnershipStatus           `json:"status"`
-	Disposition             OwnershipDisposition      `json:"disposition"`
-	Vendor                  string                    `json:"vendor"`
-	Version                 string                    `json:"version"`
-	Channel                 string                    `json:"channel"`
-	Endpoint                string                    `json:"endpoint"`
-	Context                 string                    `json:"context"`
-	Publisher               string                    `json:"publisher"`
-	PublisherDigest         Hash                      `json:"publisher_digest"`
-	ArtifactDigest          Hash                      `json:"artifact_digest"`
-	Components              []string                  `json:"components"`
-	Settings                []string                  `json:"settings"`
-	PreExistingStateDigest  Hash                      `json:"pre_existing_state_digest"`
-	ConsentDigest           Hash                      `json:"consent_digest"`
-	Mutations               []RuntimeMutationEvidence `json:"mutations"`
-	PrivilegeReceiptDigests []Hash                    `json:"privilege_receipt_digests"`
-	Continuations           []Hash                    `json:"continuations"`
-	CompatibilityDigest     Hash                      `json:"compatibility_digest"`
-	Digest                  Hash                      `json:"digest"`
+	SchemaVersion             uint16                    `json:"schema_version"`
+	OperationID               string                    `json:"operation_id"`
+	PlanDigest                Hash                      `json:"plan_digest"`
+	Revision                  uint64                    `json:"revision"`
+	OperationState            OperationState            `json:"operation_state"`
+	Status                    OwnershipStatus           `json:"status"`
+	Disposition               OwnershipDisposition      `json:"disposition"`
+	Vendor                    string                    `json:"vendor"`
+	Version                   string                    `json:"version"`
+	Channel                   string                    `json:"channel"`
+	Endpoint                  string                    `json:"endpoint"`
+	Context                   string                    `json:"context"`
+	Publisher                 string                    `json:"publisher"`
+	PublisherDigest           Hash                      `json:"publisher_digest"`
+	ArtifactDigest            Hash                      `json:"artifact_digest"`
+	Components                []string                  `json:"components"`
+	Settings                  []string                  `json:"settings"`
+	PreExistingStateDigest    Hash                      `json:"pre_existing_state_digest"`
+	ConsentDigest             Hash                      `json:"consent_digest"`
+	Mutations                 []RuntimeMutationEvidence `json:"mutations"`
+	PrivilegeReceiptDigests   []Hash                    `json:"privilege_receipt_digests"`
+	Continuations             []Hash                    `json:"continuations"`
+	CompatibilityDigest       Hash                      `json:"compatibility_digest"`
+	CompensationReceiptDigest Hash                      `json:"compensation_receipt_digest"`
+	Digest                    Hash                      `json:"digest"`
 }
 
 // RuntimeOwnershipRecord is the immutable, monotonic runtime lifecycle authority.
@@ -230,6 +231,7 @@ func NewRuntimeOwnershipRecord(
 		PreExistingStateDigest: preExisting, ConsentDigest: consent,
 		Mutations: mutations, PrivilegeReceiptDigests: privilegeReceipts,
 		Continuations: continuations, CompatibilityDigest: compatibility,
+		CompensationReceiptDigest: operationSnapshot.CompensationReceipt,
 	}
 	snapshot.Digest = ownershipRecordDigest(snapshot)
 	record, err := RestoreRuntimeOwnershipRecord(snapshot)
@@ -310,6 +312,8 @@ func validateRuntimeOwnershipRecordSnapshot(snapshot RuntimeOwnershipRecordSnaps
 		snapshot.Status == OwnershipStatusFinalized && snapshot.CompatibilityDigest.IsZero() ||
 		snapshot.Status == OwnershipStatusPrepared && !snapshot.CompatibilityDigest.IsZero():
 		return errors.New("runtime ownership record finalization is invalid")
+	case !snapshot.CompensationReceiptDigest.IsZero() && snapshot.OperationState != OperationStateCancelled:
+		return errors.New("runtime ownership compensation receipt is invalid")
 	case ownershipRecordDigest(snapshot) != snapshot.Digest:
 		return errors.New("runtime ownership record digest is invalid")
 	}
@@ -388,6 +392,8 @@ func (r RuntimeOwnershipRecord) CanFollow(previous RuntimeOwnershipRecord) bool 
 		prefixMutationEvidence(previous.snapshot.Mutations, r.snapshot.Mutations) &&
 		prefixHashes(previous.snapshot.PrivilegeReceiptDigests, r.snapshot.PrivilegeReceiptDigests) &&
 		prefixHashes(previous.snapshot.Continuations, r.snapshot.Continuations) &&
+		(previous.snapshot.CompensationReceiptDigest.IsZero() ||
+			r.snapshot.CompensationReceiptDigest == previous.snapshot.CompensationReceiptDigest) &&
 		(previous.Status() != OwnershipStatusFinalized || r.Status() == OwnershipStatusFinalized)
 }
 
@@ -494,6 +500,12 @@ func (r RuntimeOwnershipRecord) Continuations() []Hash {
 // CompatibilityDigest returns the last complete active-capability proof.
 func (r RuntimeOwnershipRecord) CompatibilityDigest() Hash {
 	return r.snapshot.CompatibilityDigest
+}
+
+// CompensationReceiptDigest returns the exact owned-cleanup receipt after a
+// cancelled runtime operation has settled.
+func (r RuntimeOwnershipRecord) CompensationReceiptDigest() Hash {
+	return r.snapshot.CompensationReceiptDigest
 }
 
 // Digest returns the canonical record digest protected by the repository journal.

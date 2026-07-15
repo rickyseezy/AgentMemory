@@ -190,15 +190,17 @@ func (r *RuntimeOperationRepository) journalFor(
 }
 
 type runtimeOperationSnapshotDTO struct {
-	SchemaVersion uint16                         `json:"schema_version"`
-	OperationID   string                         `json:"operation_id"`
-	PlanDigest    string                         `json:"plan_digest"`
-	State         string                         `json:"state"`
-	CurrentPhase  string                         `json:"current_phase"`
-	Attempt       uint32                         `json:"attempt"`
-	Version       *uint64                        `json:"version"`
-	Evidence      []runtimeTransitionEvidenceDTO `json:"evidence"`
-	RebootReceipt *string                        `json:"reboot_receipt"`
+	SchemaVersion       uint16                         `json:"schema_version"`
+	OperationID         string                         `json:"operation_id"`
+	PlanDigest          string                         `json:"plan_digest"`
+	State               string                         `json:"state"`
+	CurrentPhase        string                         `json:"current_phase"`
+	Attempt             uint32                         `json:"attempt"`
+	Version             *uint64                        `json:"version"`
+	Evidence            []runtimeTransitionEvidenceDTO `json:"evidence"`
+	RebootReceipt       *string                        `json:"reboot_receipt"`
+	CompensationStatus  string                         `json:"compensation_status"`
+	CompensationReceipt *string                        `json:"compensation_receipt"`
 }
 
 type runtimeTransitionEvidenceDTO struct {
@@ -219,14 +221,15 @@ func encodeRuntimeOperationSnapshot(snapshot runtimeinstall.OperationSnapshot) (
 	verified := operation.Snapshot()
 	version := verified.Version
 	document := runtimeOperationSnapshotDTO{
-		SchemaVersion: runtimeOperationRepositorySchemaVersion,
-		OperationID:   verified.OperationID,
-		PlanDigest:    verified.PlanDigest.String(),
-		State:         runtimeStateString(verified.State),
-		CurrentPhase:  runtimePhaseString(verified.CurrentPhase),
-		Attempt:       verified.Attempt,
-		Version:       &version,
-		Evidence:      make([]runtimeTransitionEvidenceDTO, 0, len(verified.Evidence)),
+		SchemaVersion:      runtimeOperationRepositorySchemaVersion,
+		OperationID:        verified.OperationID,
+		PlanDigest:         verified.PlanDigest.String(),
+		State:              runtimeStateString(verified.State),
+		CurrentPhase:       runtimePhaseString(verified.CurrentPhase),
+		Attempt:            verified.Attempt,
+		Version:            &version,
+		Evidence:           make([]runtimeTransitionEvidenceDTO, 0, len(verified.Evidence)),
+		CompensationStatus: verified.CompensationStatus.String(),
 	}
 	for _, evidence := range verified.Evidence {
 		artifactDigest := ""
@@ -243,6 +246,10 @@ func encodeRuntimeOperationSnapshot(snapshot runtimeinstall.OperationSnapshot) (
 	if !verified.RebootReceipt.IsZero() {
 		value := verified.RebootReceipt.String()
 		document.RebootReceipt = &value
+	}
+	if !verified.CompensationReceipt.IsZero() {
+		value := verified.CompensationReceipt.String()
+		document.CompensationReceipt = &value
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {
@@ -290,11 +297,23 @@ func decodeRuntimeOperationSnapshot(payload []byte) (*runtimeinstall.Operation, 
 			return nil, errors.New("runtime reboot receipt is invalid")
 		}
 	}
+	compensationStatus := parseRuntimeCompensationStatus(document.CompensationStatus)
+	if compensationStatus == runtimeinstall.CompensationStatusUnknown && document.CompensationStatus != "Unknown" {
+		return nil, errors.New("runtime compensation status is invalid")
+	}
+	compensationReceipt := runtimeinstall.Hash{}
+	if document.CompensationReceipt != nil {
+		compensationReceipt, err = runtimeinstall.ParseHash(*document.CompensationReceipt)
+		if err != nil || compensationReceipt.IsZero() {
+			return nil, errors.New("runtime compensation receipt is invalid")
+		}
+	}
 	operation, err := runtimeinstall.RestoreOperation(runtimeinstall.OperationSnapshot{
 		SchemaVersion: runtimeOperationRepositorySchemaVersion,
 		OperationID:   document.OperationID, PlanDigest: plan, State: state,
 		CurrentPhase: phase, Attempt: document.Attempt, Version: *document.Version,
 		Evidence: evidence, RebootReceipt: rebootReceipt,
+		CompensationStatus: compensationStatus, CompensationReceipt: compensationReceipt,
 	})
 	if err != nil {
 		return nil, errors.New("runtime operation snapshot violates domain invariants")
@@ -346,6 +365,20 @@ func parseRuntimeState(value string) runtimeinstall.OperationState {
 		}
 	}
 	return runtimeinstall.OperationStateUnknown
+}
+
+func parseRuntimeCompensationStatus(value string) runtimeinstall.CompensationStatus {
+	for _, status := range []runtimeinstall.CompensationStatus{
+		runtimeinstall.CompensationStatusUnknown,
+		runtimeinstall.CompensationStatusNotRequired,
+		runtimeinstall.CompensationStatusPending,
+		runtimeinstall.CompensationStatusCompleted,
+	} {
+		if status.String() == value {
+			return status
+		}
+	}
+	return runtimeinstall.CompensationStatusUnknown
 }
 
 func runtimePhaseString(phase runtimeinstall.Phase) string { return phase.String() }

@@ -28,6 +28,10 @@ func TestPF006ManagedNativeRuntimeApplicationSettlesNativeResources(t *testing.T
 	if err := managed.Close(t.Context()); err != nil || closer.calls != 1 {
 		t.Fatalf("idempotent close error=%v calls=%d", err, closer.calls)
 	}
+	cancelled, err := managed.Cancel(t.Context(), runtimeinstallapp.Command{})
+	if err != nil || cancelled != want || application.calls != 2 || closer.calls != 1 {
+		t.Fatalf("cancel result=%+v error=%v calls=%d/%d", cancelled, err, application.calls, closer.calls)
+	}
 }
 
 func TestPF006ManagedNativeRuntimeApplicationReportsCleanupFailure(t *testing.T) {
@@ -39,12 +43,18 @@ func TestPF006ManagedNativeRuntimeApplicationReportsCleanupFailure(t *testing.T)
 	if _, err := managed.Ensure(t.Context(), runtimeinstallapp.Command{}); !errors.Is(err, errNativeInstallerUnavailable) {
 		t.Fatalf("cleanup failure error=%v", err)
 	}
+	if _, err := managed.Cancel(t.Context(), runtimeinstallapp.Command{}); !errors.Is(err, errNativeInstallerUnavailable) {
+		t.Fatalf("cancellation cleanup failure error=%v", err)
+	}
 	var absent *managedNativeRuntimeApplication
 	if _, err := absent.Ensure(t.Context(), runtimeinstallapp.Command{}); !errors.Is(err, errNativeInstallerIntegrity) {
 		t.Fatalf("absent application error=%v", err)
 	}
 	if err := absent.Close(t.Context()); err != nil {
 		t.Fatalf("absent close error=%v", err)
+	}
+	if _, err := absent.Cancel(t.Context(), runtimeinstallapp.Command{}); !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("absent cancellation error=%v", err)
 	}
 }
 

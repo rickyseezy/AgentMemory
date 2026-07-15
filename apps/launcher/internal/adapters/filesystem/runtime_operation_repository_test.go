@@ -102,6 +102,64 @@ func TestPF001RuntimeOperationRepositoryRestoresRebootAndPauseStates(t *testing.
 	}
 }
 
+func TestPF001RuntimeOperationRepositoryPersistsCancellationCompensationLifecycle(t *testing.T) {
+	t.Parallel()
+	journal := &repositoryJournalStub{}
+	repository := mustRuntimeOperationRepository(t, journal)
+	operation, plan := runtimeRepositoryOperation(t, "runtime-compensation")
+	if err := repository.Save(context.Background(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	for index, phase := range runtimeinstall.OrderedPhases()[:5] {
+		if err := operation.Complete(
+			phase,
+			runtimeRepositoryEvidence(t, phase, operation.Attempt(), plan, index),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.Save(context.Background(), operation.Snapshot()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := operation.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Save(context.Background(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	pending := mustRuntimeRepositoryLoad(t, repository, operation.ID())
+	if pending.CompensationStatus() != runtimeinstall.CompensationStatusPending ||
+		pending.CompensationSettled() {
+		t.Fatalf("pending compensation = %+v", pending.Snapshot())
+	}
+	receipt := runtimeinstall.Sum([]byte("authenticated-compensation-receipt"))
+	if err := pending.CompleteCompensation(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Save(context.Background(), pending.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	completed := mustRuntimeRepositoryLoad(t, repository, operation.ID())
+	if completed.CompensationStatus() != runtimeinstall.CompensationStatusCompleted ||
+		completed.CompensationReceipt() != receipt || !completed.CompensationSettled() {
+		t.Fatalf("completed compensation = %+v", completed.Snapshot())
+	}
+
+	var document runtimeOperationSnapshotDTO
+	if err := json.Unmarshal(journal.latest.Payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	document.CompensationReceipt = nil
+	malformed, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.latest.Payload = malformed
+	if _, err := repository.Load(context.Background(), operation.ID()); !errors.Is(err, runtimeinstallapp.ErrOperationIntegrity) {
+		t.Fatalf("malformed compensation error = %v", err)
+	}
+}
+
 func TestPF001RuntimeOperationRepositoryEnforcesAggregateCASAndIdempotency(t *testing.T) {
 	t.Parallel()
 	journal := &repositoryJournalStub{}

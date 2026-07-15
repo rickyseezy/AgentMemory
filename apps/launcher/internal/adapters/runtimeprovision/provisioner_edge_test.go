@@ -572,7 +572,8 @@ func captureRequest(t *testing.T, plan runtimeinstall.Plan) runtimeinstallapp.Re
 	capturer := &requestCapturer{}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: &memoryRuntimeRepository{}, OwnershipAuthorities: discardOwnership{}, OwnershipRecords: discardOwnership{},
-		Host: capturer, Detector: capturer,
+		Compensation: discardOwnership{},
+		Host:         capturer, Detector: capturer,
 		Catalog: capturer, Consent: capturer, Fetcher: capturer, Verifier: capturer,
 		Prerequisites: capturer, Installer: capturer, Terms: capturer,
 		Controller: capturer, Capabilities: capturer,

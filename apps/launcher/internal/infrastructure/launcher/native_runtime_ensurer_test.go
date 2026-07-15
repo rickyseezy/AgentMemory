@@ -40,6 +40,12 @@ func TestPF006NativeRuntimeEnsurerRebuildsOnlyAfterDurableReverification(t *test
 		t.Fatalf("result=%+v error=%v calls=%d/%d/%d/%d", result, err,
 			query.calls, verification.calls, platform.calls, application.calls)
 	}
+	cancelled, err := ensurer.Cancel(t.Context(), command)
+	if err != nil || cancelled != want || query.calls != 2 || verification.calls != 2 ||
+		platform.calls != 2 || application.calls != 2 {
+		t.Fatalf("cancelled=%+v error=%v calls=%d/%d/%d/%d", cancelled, err,
+			query.calls, verification.calls, platform.calls, application.calls)
+	}
 }
 
 func TestPF006NativeRuntimeEnsurerRejectsSubstitutionBeforePlatformBuild(t *testing.T) {
@@ -181,6 +187,14 @@ type nativeRuntimeApplicationStub struct {
 }
 
 func (s *nativeRuntimeApplicationStub) Ensure(
+	context.Context,
+	runtimeinstallapp.Command,
+) (runtimeinstallapp.Result, error) {
+	s.calls++
+	return s.result, s.err
+}
+
+func (s *nativeRuntimeApplicationStub) Cancel(
 	context.Context,
 	runtimeinstallapp.Command,
 ) (runtimeinstallapp.Result, error) {

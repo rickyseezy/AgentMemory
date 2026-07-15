@@ -150,6 +150,9 @@ type Result struct {
 	planDigest        runtimeinstall.Hash
 	completionReceipt CompletionReceipt
 	rebootReceipt     runtimeinstall.Hash
+	// CompensationSettled is true only when cancellation required no owned
+	// cleanup or the authenticated cleanup receipt is durably recorded.
+	CompensationSettled bool
 }
 
 // PlanDigest returns the exact nested runtime plan bound to this result.

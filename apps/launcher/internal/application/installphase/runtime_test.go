@@ -123,7 +123,8 @@ func TestPF001ContainerRuntimePhaseTranslatesTypedRuntimeApplicationRetry(t *tes
 	capabilities := failingRuntimeCapabilities{}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: runtimeOperationRepositoryStub{}, OwnershipAuthorities: unusedRuntimeOwnership{},
-		OwnershipRecords: unusedRuntimeOwnership{}, Host: capabilities, Detector: capabilities,
+		OwnershipRecords: unusedRuntimeOwnership{}, Compensation: unusedRuntimeOwnership{},
+		Host: capabilities, Detector: capabilities,
 		Catalog: capabilities, Consent: capabilities, Fetcher: capabilities, Verifier: capabilities,
 		Prerequisites: capabilities, Installer: capabilities, Terms: capabilities,
 		Controller: capabilities, Capabilities: capabilities,
@@ -140,6 +141,49 @@ func TestPF001ContainerRuntimePhaseTranslatesTypedRuntimeApplicationRetry(t *tes
 		output.NextSafeAction() != "installation.runtime_retry" {
 		t.Fatalf("EnsureContainerRuntime() = %#v, %v", output, err)
 	}
+}
+
+func TestPF001ContainerRuntimePhaseCancellationPreservesReadyRuntime(t *testing.T) {
+	t.Parallel()
+	request, plan, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
+	ensurer.result.CompensationSettled = true
+	phase, err := NewContainerRuntimePhase(query, ensurer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase.CancelContainerRuntime(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if ensurer.calls != 1 || ensurer.last.OperationID != request.OperationID().String() ||
+		ensurer.last.ResumeReceipt != nil || runtimeinstall.Sum(ensurer.last.CanonicalPlan) != plan.PlanDigest() {
+		t.Fatalf("cancel command/calls = %+v/%d", ensurer.last, ensurer.calls)
+	}
+}
+
+func TestPF001ContainerRuntimePhaseCancellationFailsClosed(t *testing.T) {
+	t.Parallel()
+	request, _, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
+	phase, _ := NewContainerRuntimePhase(query, ensurer)
+	ensurer.err = errors.New("private runtime failure")
+	if err := phase.CancelContainerRuntime(context.Background(), request); runtimePhaseErrorCode(err) != ErrorCodeRuntimeUnavailable {
+		t.Fatalf("runtime error = %v", err)
+	}
+	ensurer.err = nil
+	ensurer.result.CompensationSettled = false
+	if err := phase.CancelContainerRuntime(context.Background(), request); runtimePhaseErrorCode(err) != ErrorCodeInvalidBinding {
+		t.Fatalf("unsettled result error = %v", err)
+	}
+	if err := phase.CancelContainerRuntime(context.Background(), installapp.PhaseRequest{}); runtimePhaseErrorCode(err) != ErrorCodeInvalidBinding {
+		t.Fatalf("invalid request error = %v", err)
+	}
+}
+
+func runtimePhaseErrorCode(err error) ErrorCode {
+	var typed *Error
+	if errors.As(err, &typed) {
+		return typed.Code()
+	}
+	return ""
 }
 
 type unusedRuntimeOwnership struct{}
@@ -163,6 +207,13 @@ func (unusedRuntimeOwnership) SaveRuntimeOwnership(
 	runtimeinstall.RuntimeOwnershipRecord,
 ) error {
 	return nil
+}
+
+func (unusedRuntimeOwnership) CompensateRuntime(
+	context.Context,
+	runtimeinstallapp.RuntimeCompensationRequest,
+) (runtimeinstallapp.RuntimeCompensationReceipt, error) {
+	return runtimeinstallapp.RuntimeCompensationReceipt{}, errors.New("unused runtime compensation")
 }
 
 func TestPF001ContainerRuntimePhaseFailsClosedOnInvalidAuthority(t *testing.T) {
@@ -542,6 +593,16 @@ func (s *runtimeEnsurerStub) Ensure(
 		receipt := *command.ResumeReceipt
 		s.last.ResumeReceipt = &receipt
 	}
+	return s.result, s.err
+}
+
+func (s *runtimeEnsurerStub) Cancel(
+	_ context.Context,
+	command runtimeinstallapp.Command,
+) (runtimeinstallapp.Result, error) {
+	s.calls++
+	s.last = command
+	s.last.CanonicalPlan = append([]byte(nil), command.CanonicalPlan...)
 	return s.result, s.err
 }
 

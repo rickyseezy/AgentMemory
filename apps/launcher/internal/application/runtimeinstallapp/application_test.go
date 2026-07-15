@@ -284,6 +284,88 @@ func TestPF001RuntimeApplicationCancellationStaysRecoverableAndPrivacySafe(t *te
 	}
 }
 
+func TestPF001RuntimeApplicationSettlesOwnedCancellationBeforeReturning(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	harness := &phaseHarness{
+		repository: repository,
+		outcomeAt:  runtimeinstall.PhaseVerifyRuntimeArtifact,
+		outcome:    OutcomeCancelled,
+	}
+	application := newTestApplication(t, repository, harness)
+	result, err := application.Ensure(context.Background(), testCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != runtimeinstall.OperationStateCancelled || !result.CompensationSettled ||
+		harness.compensations != 1 {
+		t.Fatalf("cancel result/compensations = %+v/%d", result, harness.compensations)
+	}
+	if repository.snapshot.CompensationStatus != runtimeinstall.CompensationStatusCompleted ||
+		repository.snapshot.CompensationReceipt.IsZero() ||
+		harness.ownership.snapshot.CompensationReceiptDigest() != repository.snapshot.CompensationReceipt {
+		t.Fatal("compensation receipt was not durably bound to operation and ownership records")
+	}
+}
+
+func TestPF001RuntimeApplicationRetriesPendingCompensationIdempotently(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	harness := &phaseHarness{
+		repository:    repository,
+		outcomeAt:     runtimeinstall.PhaseVerifyRuntimeArtifact,
+		outcome:       OutcomeCancelled,
+		compensateErr: errors.New("private cleanup path"),
+	}
+	application := newTestApplication(t, repository, harness)
+	first, firstErr := application.Ensure(context.Background(), testCommand())
+	if errorCode(firstErr) != ErrorCodeInternal || first.State != runtimeinstall.OperationStateCancelled ||
+		first.CompensationSettled || repository.snapshot.CompensationStatus != runtimeinstall.CompensationStatusPending {
+		t.Fatalf("first cancellation = %+v/%v", first, firstErr)
+	}
+	if firstErr.Error() != string(ErrorCodeInternal) {
+		t.Fatalf("compensation error leaked private detail: %q", firstErr)
+	}
+	harness.compensateErr = nil
+	second, secondErr := application.Ensure(context.Background(), testCommand())
+	if secondErr != nil || second.State != runtimeinstall.OperationStateCancelled ||
+		!second.CompensationSettled || harness.compensations != 2 {
+		t.Fatalf("retried cancellation = %+v/%v, calls %d", second, secondErr, harness.compensations)
+	}
+}
+
+func TestPF001RuntimeApplicationCancelMissingChildIsProvenNoOp(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	harness := &phaseHarness{repository: repository}
+	application := newTestApplication(t, repository, harness)
+	result, err := application.Cancel(context.Background(), testCommand())
+	if err != nil || result.State != runtimeinstall.OperationStateCancelled ||
+		!result.CompensationSettled || harness.compensations != 0 || repository.exists {
+		t.Fatalf("missing child cancellation = %+v/%v", result, err)
+	}
+}
+
+func TestPF001RuntimeApplicationCancelPreservesReadyRuntime(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	harness := &phaseHarness{repository: repository}
+	application := newTestApplication(t, repository, harness)
+	ready, err := application.Ensure(context.Background(), testCommand())
+	if err != nil || ready.State != runtimeinstall.OperationStateReady {
+		t.Fatalf("ready result = %+v/%v", ready, err)
+	}
+	result, err := application.Cancel(context.Background(), testCommand())
+	if err != nil || result.State != runtimeinstall.OperationStateReady || result.Outcome != OutcomeCompleted ||
+		!result.CompensationSettled || harness.compensations != 0 {
+		t.Fatalf("ready cancellation = %+v/%v", result, err)
+	}
+}
+
 func TestPF001RuntimeApplicationConstructorRejectsNilAndTypedNil(t *testing.T) {
 	t.Parallel()
 
@@ -336,6 +418,7 @@ func testDependencies(repository OperationRepository, harness *phaseHarness) Dep
 		Operations:           repository,
 		OwnershipAuthorities: harness,
 		OwnershipRecords:     harness.ownership,
+		Compensation:         harness,
 		Host:                 harness,
 		Detector:             harness,
 		Catalog:              harness,
@@ -457,6 +540,30 @@ type phaseHarness struct {
 	outcome       Outcome
 	invalidAt     runtimeinstall.Phase
 	ownership     *memoryOwnershipRepository
+	compensations int
+	compensateErr error
+}
+
+func (h *phaseHarness) CompensateRuntime(
+	_ context.Context,
+	request RuntimeCompensationRequest,
+) (RuntimeCompensationReceipt, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.compensations++
+	if h.compensateErr != nil {
+		return RuntimeCompensationReceipt{}, h.compensateErr
+	}
+	runtimeDigest := runtimeinstall.Sum([]byte("preserved-runtime-state"))
+	return NewRuntimeCompensationReceipt(request, RuntimeCompensationReceiptInput{
+		RuntimeBeforeDigest:   runtimeDigest,
+		RuntimeAfterDigest:    runtimeDigest,
+		ArtifactCleanupDigest: runtimeinstall.Sum([]byte("released-owned-artifact-state")),
+		RemovedArtifactDigests: []runtimeinstall.Hash{
+			request.OwnershipRecord().ArtifactDigest(),
+		},
+		RuntimePreserved: true,
+	})
 }
 
 func (h *phaseHarness) ResolveRuntimeOwnershipAuthority(

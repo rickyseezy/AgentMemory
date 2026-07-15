@@ -510,6 +510,14 @@ func (p *capturingRuntimePort) EnsureContainerRuntime(
 	return p.delegate.execute(install.PhaseEnsureContainerRuntime)
 }
 
+func (p *capturingRuntimePort) CancelContainerRuntime(
+	ctx context.Context,
+	request PhaseRequest,
+) error {
+	p.request = request
+	return p.delegate.CancelContainerRuntime(ctx, request)
+}
+
 func (l finalizationContextLock) Release(ctx context.Context) error {
 	*l.observation = observeContext(ctx)
 	return nil

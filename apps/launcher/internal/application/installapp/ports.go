@@ -90,6 +90,7 @@ type HostVerificationPort interface {
 // ContainerRuntimePort reuses or provisions a compatible container runtime.
 type ContainerRuntimePort interface {
 	EnsureContainerRuntime(context.Context, PhaseRequest) (PhaseOutput, error)
+	CancelContainerRuntime(context.Context, PhaseRequest) error
 }
 
 // ReleaseVerificationPort verifies release signatures, digests, and policy.

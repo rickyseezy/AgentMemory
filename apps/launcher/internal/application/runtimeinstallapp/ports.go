@@ -45,6 +45,12 @@ type RuntimeOwnershipRepository interface {
 	SaveRuntimeOwnership(context.Context, runtimeinstall.RuntimeOwnershipRecord) error
 }
 
+// RuntimeCompensator releases only ownership-record-authorized acquisition
+// state and proves the local runtime itself was preserved byte-for-byte/inventory-wise.
+type RuntimeCompensator interface {
+	CompensateRuntime(context.Context, RuntimeCompensationRequest) (RuntimeCompensationReceipt, error)
+}
+
 // HostCapabilityProbe performs only read-only platform/resource discovery.
 type HostCapabilityProbe interface {
 	DetectHost(context.Context, Request) (Output, error)

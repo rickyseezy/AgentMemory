@@ -37,7 +37,8 @@ func TestLinuxProvisionerCompletesCertifiedRootlessInstallThroughExactTypedEffec
 	repository := &memoryRuntimeRepository{}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: repository, OwnershipAuthorities: discardOwnership{}, OwnershipRecords: discardOwnership{},
-		Host: provisioner, Detector: provisioner,
+		Compensation: discardOwnership{},
+		Host:         provisioner, Detector: provisioner,
 		Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 		Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 		Controller: provisioner, Capabilities: provisioner,
@@ -113,7 +114,8 @@ func TestLinuxProvisionerMapsPrivilegeAndAuthorityFailuresWithoutRootfulFallback
 			}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, OwnershipAuthorities: discardOwnership{}, OwnershipRecords: discardOwnership{},
-				Host: provisioner, Detector: provisioner,
+				Compensation: discardOwnership{},
+				Host:         provisioner, Detector: provisioner,
 				Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,
@@ -167,7 +169,8 @@ func TestLinuxProvisionerRejectsForgedExpiredAndReplayedPrivilegeReceipts(t *tes
 			}
 			application, _ := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 				Operations: &memoryRuntimeRepository{}, OwnershipAuthorities: discardOwnership{}, OwnershipRecords: discardOwnership{},
-				Host: provisioner, Detector: provisioner,
+				Compensation: discardOwnership{},
+				Host:         provisioner, Detector: provisioner,
 				Catalog: provisioner, Consent: provisioner, Fetcher: provisioner, Verifier: provisioner,
 				Prerequisites: provisioner, Installer: provisioner, Terms: provisioner,
 				Controller: provisioner, Capabilities: provisioner,

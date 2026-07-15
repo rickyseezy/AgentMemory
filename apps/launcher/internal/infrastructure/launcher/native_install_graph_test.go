@@ -220,6 +220,9 @@ type nativeGraphRuntime struct{}
 func (*nativeGraphRuntime) Ensure(context.Context, runtimeinstallapp.Command) (runtimeinstallapp.Result, error) {
 	return runtimeinstallapp.Result{}, nil
 }
+func (*nativeGraphRuntime) Cancel(context.Context, runtimeinstallapp.Command) (runtimeinstallapp.Result, error) {
+	return runtimeinstallapp.Result{}, nil
+}
 
 type nativeGraphRelease struct{}
 

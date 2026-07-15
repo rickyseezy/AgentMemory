@@ -388,6 +388,7 @@ func newDesktopRuntimeApplication(t testing.TB, provisioner *DesktopProvisioner)
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: &memoryRuntimeRepository{}, OwnershipAuthorities: ownershipAuthorities,
 		OwnershipRecords: &memoryRuntimeOwnershipRepository{},
+		Compensation:     discardOwnership{},
 		Host:             provisioner, Detector: provisioner, Catalog: provisioner,
 		Consent: provisioner, Fetcher: provisioner, Verifier: provisioner, Prerequisites: provisioner,
 		Installer: provisioner, Terms: provisioner, Controller: provisioner, Capabilities: provisioner,

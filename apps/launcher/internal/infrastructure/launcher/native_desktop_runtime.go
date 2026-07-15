@@ -117,10 +117,16 @@ func (f *nativePlatformRuntimeFactory) buildDesktopRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
+	compensation, err := runtimeprovision.NewDesktopRuntimeCompensator(
+		verified.catalog, authoritySet.resolver, inspector, f.artifacts,
+	)
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
 		Operations: f.composition.runtimeState, OwnershipAuthorities: ownershipAuthorities,
-		OwnershipRecords: f.composition.runtimeOwnership,
-		Host:             provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
+		OwnershipRecords: f.composition.runtimeOwnership, Compensation: compensation,
+		Host: provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
 		Fetcher: provisioner, Verifier: provisioner, Prerequisites: provisioner,
 		Installer: provisioner, Terms: provisioner, Controller: provisioner, Capabilities: provisioner,
 	})
@@ -212,6 +218,21 @@ func (a *managedNativeRuntimeApplication) Ensure(
 		return result, errors.Join(ensureError, errNativeInstallerUnavailable)
 	}
 	return result, ensureError
+}
+
+func (a *managedNativeRuntimeApplication) Cancel(
+	ctx context.Context,
+	command runtimeinstallapp.Command,
+) (runtimeinstallapp.Result, error) {
+	if a == nil || nilAny(a.application) {
+		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+	}
+	result, cancellationError := a.application.Cancel(ctx, command)
+	closeError := a.Close(context.WithoutCancel(ctx))
+	if closeError != nil {
+		return result, errors.Join(cancellationError, errNativeInstallerUnavailable)
+	}
+	return result, cancellationError
 }
 
 func (a *managedNativeRuntimeApplication) Close(ctx context.Context) error {

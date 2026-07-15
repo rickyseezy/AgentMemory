@@ -189,6 +189,9 @@ func (p *ContainerRuntimePhase) EnsureContainerRuntime(
 			runtimeinstallapp.ErrorCodeAdministratorRequired, installapp.PhaseOutcomeAdministratorRequired,
 			"installation.runtime_administrator_required")
 	case runtimeinstallapp.OutcomeCancelled:
+		if !result.CompensationSettled {
+			return installapp.PhaseOutput{}, phaseError(ErrorCodeInvalidBinding)
+		}
 		return expectedRuntimeOutcome(runtimeError, result, runtimeinstall.OperationStateCancelled,
 			runtimeinstallapp.ErrorCodeCancelled, installapp.PhaseOutcomeCancelled,
 			"installation.runtime_cancelled")
@@ -203,6 +206,58 @@ func (p *ContainerRuntimePhase) EnsureContainerRuntime(
 	case runtimeinstallapp.OutcomeUnknown:
 	}
 	return installapp.PhaseOutput{}, phaseError(ErrorCodeRuntimeUnavailable)
+}
+
+// CancelContainerRuntime durably settles only the exact PF-006 child bound to
+// this parent operation. A missing child is an authenticated no-op, while a
+// concurrently completed child is preserved.
+func (p *ContainerRuntimePhase) CancelContainerRuntime(
+	ctx context.Context,
+	request installapp.PhaseRequest,
+) error {
+	if !validRequest(request) {
+		return phaseError(ErrorCodeInvalidBinding)
+	}
+	plan, err := p.plans.ResolveRuntimePlan(ctx, request.PlanDigest(), request.OperationID())
+	if err != nil {
+		return phaseError(ErrorCodePlanUnavailable)
+	}
+	if !plan.validFor(request.PlanDigest()) {
+		return phaseError(ErrorCodeInvalidBinding)
+	}
+	result, runtimeError := p.runtime.Cancel(ctx, runtimeinstallapp.Command{
+		OperationID: request.OperationID().String(), CanonicalPlan: plan.CanonicalPlan(),
+	})
+	if runtimeError != nil {
+		return phaseError(ErrorCodeRuntimeUnavailable)
+	}
+	if result.OperationID != request.OperationID().String() || result.PlanDigest() != plan.PlanDigest() ||
+		!result.CompensationSettled {
+		return phaseError(ErrorCodeInvalidBinding)
+	}
+	switch result.State {
+	case runtimeinstall.OperationStateCancelled:
+		if result.Outcome != runtimeinstallapp.OutcomeCancelled ||
+			result.ErrorCode != runtimeinstallapp.ErrorCodeCancelled {
+			return phaseError(ErrorCodeInvalidBinding)
+		}
+		return nil
+	case runtimeinstall.OperationStateReady:
+		if result.Outcome != runtimeinstallapp.OutcomeCompleted ||
+			result.ErrorCode != runtimeinstallapp.ErrorCodeNone || result.Attempt == 0 {
+			return phaseError(ErrorCodeInvalidBinding)
+		}
+		return nil
+	case runtimeinstall.OperationStateUnknown,
+		runtimeinstall.OperationStateRunning,
+		runtimeinstall.OperationStateRebootPending,
+		runtimeinstall.OperationStatePausedForAdministrator,
+		runtimeinstall.OperationStateUnsupportedHost,
+		runtimeinstall.OperationStateRuntimeConflict,
+		runtimeinstall.OperationStateFailedRecoverable:
+		return phaseError(ErrorCodeInvalidBinding)
+	}
+	return phaseError(ErrorCodeInvalidBinding)
 }
 
 func (p *ContainerRuntimePhase) completedOutput(

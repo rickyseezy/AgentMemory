@@ -145,6 +145,33 @@ func (s OperationState) String() string {
 	return "Unknown"
 }
 
+// CompensationStatus is the durable cancellation-cleanup lifecycle.
+type CompensationStatus uint8
+
+const (
+	// CompensationStatusUnknown is valid only while the operation is not cancelled.
+	CompensationStatusUnknown CompensationStatus = iota
+	// CompensationStatusNotRequired proves cancellation happened before runtime ownership began.
+	CompensationStatusNotRequired
+	// CompensationStatusPending proves cancellation is durable but owned cleanup is unfinished.
+	CompensationStatusPending
+	// CompensationStatusCompleted binds the authenticated owned-cleanup receipt.
+	CompensationStatusCompleted
+)
+
+func (s CompensationStatus) String() string {
+	switch s {
+	case CompensationStatusNotRequired:
+		return "NotRequired"
+	case CompensationStatusPending:
+		return "Pending"
+	case CompensationStatusCompleted:
+		return "Completed"
+	case CompensationStatusUnknown:
+	}
+	return "Unknown"
+}
+
 // TransitionEvidence binds one verified transition to the exact parent plan.
 type TransitionEvidence struct {
 	Phase          Phase
@@ -188,27 +215,31 @@ func NewTransitionEvidence(
 
 // OperationSnapshot is the persistence DTO for one runtime sub-saga.
 type OperationSnapshot struct {
-	SchemaVersion uint16
-	OperationID   string
-	PlanDigest    Hash
-	State         OperationState
-	CurrentPhase  Phase
-	Attempt       uint32
-	Version       uint64
-	Evidence      []TransitionEvidence
-	RebootReceipt Hash
+	SchemaVersion       uint16
+	OperationID         string
+	PlanDigest          Hash
+	State               OperationState
+	CurrentPhase        Phase
+	Attempt             uint32
+	Version             uint64
+	Evidence            []TransitionEvidence
+	RebootReceipt       Hash
+	CompensationStatus  CompensationStatus
+	CompensationReceipt Hash
 }
 
 // Operation owns runtime provisioning transition invariants.
 type Operation struct {
-	id            string
-	planDigest    Hash
-	state         OperationState
-	currentPhase  Phase
-	attempt       uint32
-	version       uint64
-	evidence      []TransitionEvidence
-	rebootReceipt Hash
+	id                  string
+	planDigest          Hash
+	state               OperationState
+	currentPhase        Phase
+	attempt             uint32
+	version             uint64
+	evidence            []TransitionEvidence
+	rebootReceipt       Hash
+	compensationStatus  CompensationStatus
+	compensationReceipt Hash
 }
 
 const operationSnapshotSchemaVersion = uint16(1)
@@ -267,6 +298,19 @@ func (o *Operation) Attempt() uint32 { return o.attempt }
 // Version returns the optimistic-concurrency aggregate revision.
 func (o *Operation) Version() uint64 { return o.version }
 
+// CompensationStatus returns the durable cancellation cleanup state.
+func (o *Operation) CompensationStatus() CompensationStatus { return o.compensationStatus }
+
+// CompensationReceipt returns the authenticated cleanup receipt after completion.
+func (o *Operation) CompensationReceipt() Hash { return o.compensationReceipt }
+
+// CompensationSettled reports whether cancellation may be acknowledged.
+func (o *Operation) CompensationSettled() bool {
+	return o.state == OperationStateCancelled &&
+		(o.compensationStatus == CompensationStatusNotRequired ||
+			o.compensationStatus == CompensationStatusCompleted)
+}
+
 // Complete advances exactly the current phase after validating its evidence.
 func (o *Operation) Complete(phase Phase, evidence TransitionEvidence) error {
 	if o.state != OperationStateRunning || phase != o.currentPhase {
@@ -320,8 +364,9 @@ func (o *Operation) Pause(state OperationState) error {
 		return errors.New("runtime operation is not running")
 	}
 	switch state {
-	case OperationStateCancelled,
-		OperationStatePausedForAdministrator,
+	case OperationStateCancelled:
+		return o.Cancel()
+	case OperationStatePausedForAdministrator,
 		OperationStateUnsupportedHost,
 		OperationStateRuntimeConflict,
 		OperationStateFailedRecoverable:
@@ -332,6 +377,59 @@ func (o *Operation) Pause(state OperationState) error {
 		return errors.New("runtime pause state is invalid")
 	}
 	o.state = state
+	o.version++
+	return nil
+}
+
+// Cancel durably stops any non-success resumable runtime state. Once runtime
+// ownership has begun, cancellation remains unsettled until an authenticated
+// compensation receipt is recorded.
+func (o *Operation) Cancel() error {
+	if o.state == OperationStateCancelled {
+		return nil
+	}
+	switch o.state {
+	case OperationStateRunning, OperationStateRebootPending,
+		OperationStatePausedForAdministrator, OperationStateFailedRecoverable:
+	case OperationStateCancelled:
+		return nil
+	case OperationStateUnknown, OperationStateReady,
+		OperationStateUnsupportedHost, OperationStateRuntimeConflict:
+		return errors.New("runtime operation state cannot be cancelled")
+	}
+	o.state = OperationStateCancelled
+	o.rebootReceipt = Hash{}
+	o.compensationReceipt = Hash{}
+	if o.runtimeOwnershipStarted() {
+		o.compensationStatus = CompensationStatusPending
+	} else {
+		o.compensationStatus = CompensationStatusNotRequired
+	}
+	o.version++
+	return nil
+}
+
+func (o *Operation) runtimeOwnershipStarted() bool {
+	if phaseIndex(o.currentPhase) >= phaseIndex(PhaseAcquireRuntime) {
+		return true
+	}
+	for _, evidence := range o.evidence {
+		if phaseIndex(evidence.Phase) >= phaseIndex(PhaseAcquireRuntime) {
+			return true
+		}
+	}
+	return false
+}
+
+// CompleteCompensation records the exact authenticated cleanup receipt after
+// the external cleanup transaction has succeeded.
+func (o *Operation) CompleteCompensation(receipt Hash) error {
+	if o.state != OperationStateCancelled || o.compensationStatus != CompensationStatusPending ||
+		receipt.IsZero() || !o.compensationReceipt.IsZero() {
+		return errors.New("runtime compensation completion is invalid")
+	}
+	o.compensationStatus = CompensationStatusCompleted
+	o.compensationReceipt = receipt
 	o.version++
 	return nil
 }
@@ -363,15 +461,17 @@ func (o *Operation) ResumeAfterReboot(receipt Hash) error {
 // Snapshot returns an immutable-by-copy persistence representation.
 func (o *Operation) Snapshot() OperationSnapshot {
 	return OperationSnapshot{
-		SchemaVersion: operationSnapshotSchemaVersion,
-		OperationID:   o.id,
-		PlanDigest:    o.planDigest,
-		State:         o.state,
-		CurrentPhase:  o.currentPhase,
-		Attempt:       o.attempt,
-		Version:       o.version,
-		Evidence:      append([]TransitionEvidence(nil), o.evidence...),
-		RebootReceipt: o.rebootReceipt,
+		SchemaVersion:       operationSnapshotSchemaVersion,
+		OperationID:         o.id,
+		PlanDigest:          o.planDigest,
+		State:               o.state,
+		CurrentPhase:        o.currentPhase,
+		Attempt:             o.attempt,
+		Version:             o.version,
+		Evidence:            append([]TransitionEvidence(nil), o.evidence...),
+		RebootReceipt:       o.rebootReceipt,
+		CompensationStatus:  o.compensationStatus,
+		CompensationReceipt: o.compensationReceipt,
 	}
 }
 
@@ -398,26 +498,37 @@ func RestoreOperation(snapshot OperationSnapshot) (*Operation, error) {
 
 	switch snapshot.State {
 	case OperationStateRunning:
-		if snapshot.RebootReceipt != (Hash{}) {
+		if snapshot.RebootReceipt != (Hash{}) || snapshot.CompensationStatus != CompensationStatusUnknown ||
+			!snapshot.CompensationReceipt.IsZero() {
 			return nil, errors.New("running runtime snapshot contains a reboot receipt")
 		}
 	case OperationStateRebootPending:
 		if snapshot.RebootReceipt.IsZero() ||
-			(operation.currentPhase != PhaseInstallPrerequisites && operation.currentPhase != PhaseInstallRuntime) {
+			(operation.currentPhase != PhaseInstallPrerequisites && operation.currentPhase != PhaseInstallRuntime) ||
+			snapshot.CompensationStatus != CompensationStatusUnknown || !snapshot.CompensationReceipt.IsZero() {
 			return nil, errors.New("runtime reboot snapshot is invalid")
 		}
 		operation.state = snapshot.State
 		operation.rebootReceipt = snapshot.RebootReceipt
 	case OperationStateReady:
-		if operation.state != OperationStateReady || snapshot.RebootReceipt != (Hash{}) {
+		if operation.state != OperationStateReady || snapshot.RebootReceipt != (Hash{}) ||
+			snapshot.CompensationStatus != CompensationStatusUnknown || !snapshot.CompensationReceipt.IsZero() {
 			return nil, errors.New("runtime Ready snapshot is incomplete")
 		}
-	case OperationStateCancelled,
-		OperationStatePausedForAdministrator,
+	case OperationStateCancelled:
+		if operation.state != OperationStateRunning || snapshot.RebootReceipt != (Hash{}) ||
+			!validCompensationSnapshot(snapshot, operation) {
+			return nil, errors.New("runtime cancelled snapshot is inconsistent")
+		}
+		operation.state = snapshot.State
+		operation.compensationStatus = snapshot.CompensationStatus
+		operation.compensationReceipt = snapshot.CompensationReceipt
+	case OperationStatePausedForAdministrator,
 		OperationStateUnsupportedHost,
 		OperationStateRuntimeConflict,
 		OperationStateFailedRecoverable:
-		if operation.state != OperationStateRunning || snapshot.RebootReceipt != (Hash{}) {
+		if operation.state != OperationStateRunning || snapshot.RebootReceipt != (Hash{}) ||
+			snapshot.CompensationStatus != CompensationStatusUnknown || !snapshot.CompensationReceipt.IsZero() {
 			return nil, errors.New("runtime paused snapshot is inconsistent")
 		}
 		operation.state = snapshot.State
@@ -427,6 +538,9 @@ func RestoreOperation(snapshot OperationSnapshot) (*Operation, error) {
 
 	minimumVersion := uint64(len(snapshot.Evidence))
 	if snapshot.State != OperationStateRunning && snapshot.State != OperationStateReady {
+		minimumVersion++
+	}
+	if snapshot.State == OperationStateCancelled && snapshot.CompensationStatus == CompensationStatusCompleted {
 		minimumVersion++
 	}
 	if snapshot.Version < minimumVersion || snapshot.Attempt == 0 ||
@@ -439,4 +553,18 @@ func RestoreOperation(snapshot OperationSnapshot) (*Operation, error) {
 		return nil, errors.New("runtime snapshot cursor or version is inconsistent with history")
 	}
 	return operation, nil
+}
+
+func validCompensationSnapshot(snapshot OperationSnapshot, operation *Operation) bool {
+	switch snapshot.CompensationStatus {
+	case CompensationStatusNotRequired:
+		return !operation.runtimeOwnershipStarted() && snapshot.CompensationReceipt.IsZero()
+	case CompensationStatusPending:
+		return operation.runtimeOwnershipStarted() && snapshot.CompensationReceipt.IsZero()
+	case CompensationStatusCompleted:
+		return operation.runtimeOwnershipStarted() && !snapshot.CompensationReceipt.IsZero()
+	case CompensationStatusUnknown:
+		return false
+	}
+	return false
 }

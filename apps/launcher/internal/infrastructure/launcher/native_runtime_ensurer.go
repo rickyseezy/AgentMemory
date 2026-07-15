@@ -63,35 +63,57 @@ func (e *nativeRuntimeEnsurer) Ensure(
 	ctx context.Context,
 	command runtimeinstallapp.Command,
 ) (runtimeinstallapp.Result, error) {
+	application, err := e.runtimeApplication(ctx, command)
+	if err != nil {
+		return runtimeinstallapp.Result{}, err
+	}
+	return application.Ensure(ctx, command)
+}
+
+func (e *nativeRuntimeEnsurer) Cancel(
+	ctx context.Context,
+	command runtimeinstallapp.Command,
+) (runtimeinstallapp.Result, error) {
+	application, err := e.runtimeApplication(ctx, command)
+	if err != nil {
+		return runtimeinstallapp.Result{}, err
+	}
+	return application.Cancel(ctx, command)
+}
+
+func (e *nativeRuntimeEnsurer) runtimeApplication(
+	ctx context.Context,
+	command runtimeinstallapp.Command,
+) (installphase.RuntimeEnsurer, error) {
 	operationID, operationError := install.NewOperationID(command.OperationID)
 	commandPlan, planError := runtimeinstall.DecodePlanV1(command.CanonicalPlan)
 	if e == nil || ctx == nil || operationError != nil || planError != nil ||
 		operationID != e.operation || e.parent.IsZero() || nilAny(e.query) || nilAny(e.verify) || nilAny(e.platform) {
-		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+		return nil, errNativeInstallerIntegrity
 	}
 	if err := ctx.Err(); err != nil {
-		return runtimeinstallapp.Result{}, err
+		return nil, err
 	}
 	execution, err := e.query.ResolveRuntimeExecutionAuthority(ctx, e.parent, e.operation)
 	if err != nil {
-		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+		return nil, errNativeInstallerIntegrity
 	}
 	authority := execution.RuntimeAuthority()
 	if authority.OperationID() != e.operation || !authority.ParentPlanDigest().Equal(e.parent) ||
 		authority.Plan().Digest() != commandPlan.Digest() ||
 		!bytes.Equal(authority.Plan().CanonicalBytes(), command.CanonicalPlan) {
-		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+		return nil, errNativeInstallerIntegrity
 	}
 	verified, err := e.verify.VerifyRuntimeExecution(ctx, execution)
 	if err != nil || !verified.authority.Equal(authority) ||
 		!runtimeSelectionMatches(commandPlan, verified.runtime) {
-		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+		return nil, errNativeInstallerIntegrity
 	}
 	application, err := e.platform.BuildRuntimeApplication(ctx, verified)
 	if err != nil || nilAny(application) {
-		return runtimeinstallapp.Result{}, errNativeInstallerIntegrity
+		return nil, errNativeInstallerIntegrity
 	}
-	return application.Ensure(ctx, command)
+	return application, nil
 }
 
 var _ installphase.RuntimeEnsurer = (*nativeRuntimeEnsurer)(nil)

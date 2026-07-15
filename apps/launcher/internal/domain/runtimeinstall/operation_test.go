@@ -141,6 +141,84 @@ func TestPF001RuntimeOperationSnapshotRoundTripFailsClosed(t *testing.T) {
 	}
 }
 
+func TestPF006RuntimeCancellationRequiresDurableCompensationAfterOwnershipBoundary(t *testing.T) {
+	t.Parallel()
+
+	operation := newRuntimeOperationForTest(t)
+	completeUntil(t, operation, PhaseAcquireRuntime)
+	if err := operation.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	if operation.State() != OperationStateCancelled ||
+		operation.CompensationStatus() != CompensationStatusPending {
+		t.Fatalf("cancelled state/status = %s/%s", operation.State(), operation.CompensationStatus())
+	}
+	if err := operation.CompleteCompensation(Hash{}); err == nil {
+		t.Fatal("zero compensation receipt was accepted")
+	}
+	receipt := mustHash(t, "runtime-compensation")
+	if err := operation.CompleteCompensation(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if operation.CompensationStatus() != CompensationStatusCompleted ||
+		operation.CompensationReceipt() != receipt {
+		t.Fatal("compensation completion was not retained")
+	}
+	restored, err := RestoreOperation(operation.Snapshot())
+	if err != nil || restored.CompensationStatus() != CompensationStatusCompleted ||
+		restored.CompensationReceipt() != receipt {
+		t.Fatalf("restored compensation = %#v, %v", restored, err)
+	}
+	if err := restored.CompleteCompensation(receipt); err == nil {
+		t.Fatal("completed compensation was replayed as a mutation")
+	}
+}
+
+func TestPF006RuntimeCancellationBeforeOwnershipNeedsNoCompensation(t *testing.T) {
+	t.Parallel()
+
+	operation := newRuntimeOperationForTest(t)
+	completeUntil(t, operation, PhaseAwaitRuntimeConsent)
+	if err := operation.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	if operation.CompensationStatus() != CompensationStatusNotRequired ||
+		!operation.CompensationSettled() {
+		t.Fatalf("pre-ownership cancellation status = %s", operation.CompensationStatus())
+	}
+	if err := operation.CompleteCompensation(mustHash(t, "unexpected")); err == nil {
+		t.Fatal("unneeded compensation was accepted")
+	}
+}
+
+func TestPF006RuntimeCancellationCanSettleRebootAndRecoverableStates(t *testing.T) {
+	t.Parallel()
+
+	for _, state := range []OperationState{OperationStateRebootPending, OperationStateFailedRecoverable} {
+		state := state
+		t.Run(state.String(), func(t *testing.T) {
+			t.Parallel()
+			operation := newRuntimeOperationForTest(t)
+			completeUntil(t, operation, PhaseInstallPrerequisites)
+			if state == OperationStateRebootPending {
+				if err := operation.RequireReboot(mustHash(t, "reboot")); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := operation.Pause(OperationStateFailedRecoverable); err != nil {
+				t.Fatal(err)
+			}
+			if err := operation.Cancel(); err != nil {
+				t.Fatal(err)
+			}
+			if operation.State() != OperationStateCancelled ||
+				operation.CompensationStatus() != CompensationStatusPending ||
+				!operation.Snapshot().RebootReceipt.IsZero() {
+				t.Fatalf("cancelled aggregate = %#v", operation.Snapshot())
+			}
+		})
+	}
+}
+
 func newRuntimeOperationForTest(t *testing.T) *Operation {
 	t.Helper()
 	operation, err := NewOperation("019f5f20-1234-7abc-8123-0123456789ab", mustHash(t, "parent-plan"))

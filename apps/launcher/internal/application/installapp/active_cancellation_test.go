@@ -216,6 +216,49 @@ func TestPF001PendingRebootCancellationSettlesWithoutResumeReceipt(t *testing.T)
 	if len(capabilities.calls) != 0 {
 		t.Fatalf("phase ran while settling reboot cancellation: %v", capabilities.calls)
 	}
+	if capabilities.runtimeCancelCalls != 1 {
+		t.Fatalf("runtime cancellation calls = %d, want 1", capabilities.runtimeCancelCalls)
+	}
+}
+
+func TestPF001RuntimeCancellationFailureBlocksAcknowledgementAndRetries(t *testing.T) {
+	t.Parallel()
+
+	operationID, _ := install.NewOperationID("cancel-runtime-cleanup-retry")
+	canonicalPlan := []byte("plan-a")
+	plan, _ := install.BindPlan(canonicalPlan)
+	operation, _ := install.NewOperation(operationID, plan)
+	if err := operation.CompleteStep(testEvidenceForCancellation(t, operation, plan)); err != nil {
+		t.Fatal(err)
+	}
+	repository := newMemoryOperationRepository()
+	if err := repository.Save(context.Background(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	capabilities := newPhaseCapabilities()
+	capabilities.runtimeCancelError = errors.New("private runtime cleanup failure")
+	application := mustApplication(t, repository, capabilities)
+	if _, err := application.Cancel(context.Background(), CancelCommand{
+		OperationID: operationID.String(), CanonicalPlan: canonicalPlan,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, firstErr := application.Install(context.Background(), InstallCommand{
+		OperationID: operationID.String(), CanonicalPlan: canonicalPlan,
+	})
+	assertApplicationErrorCode(t, firstErr, ErrorCodeDependencyUnavailable)
+	if first.State != install.StateCancelled || first.CancellationSettled ||
+		capabilities.runtimeCancelCalls != 1 {
+		t.Fatalf("first settlement = (%+v, %v), runtime calls=%d", first, firstErr, capabilities.runtimeCancelCalls)
+	}
+	capabilities.runtimeCancelError = nil
+	second, secondErr := application.Install(context.Background(), InstallCommand{
+		OperationID: operationID.String(), CanonicalPlan: canonicalPlan,
+	})
+	if secondErr != nil || !second.CancellationSettled || capabilities.runtimeCancelCalls != 2 {
+		t.Fatalf("retried settlement = (%+v, %v), runtime calls=%d", second, secondErr, capabilities.runtimeCancelCalls)
+	}
 }
 
 func TestPF001CancellationWinningPreSideEffectSaveConflictSettlesInActiveInstall(t *testing.T) {

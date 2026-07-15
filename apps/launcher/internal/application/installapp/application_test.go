@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
@@ -341,6 +342,9 @@ func TestPF001InstallApplicationPersistsAndVerifiesRebootResume(t *testing.T) {
 	if first.State != install.StateRebootPending || first.ErrorCode != ErrorCodeRebootRequired {
 		t.Fatalf("first result = state %s code %s, want RebootPending/%s", first.State, first.ErrorCode, ErrorCodeRebootRequired)
 	}
+	if len(capabilities.rebootRegistrations) != 1 {
+		t.Fatal("reboot continuation was not registered after the pending journal became durable")
+	}
 	assertPhasesEqual(t, capabilities.calls, []install.Phase{install.PhaseVerifyHost, install.PhaseEnsureContainerRuntime})
 
 	// A repeated request without a receipt reports the checkpoint without
@@ -360,9 +364,12 @@ func TestPF001InstallApplicationPersistsAndVerifiesRebootResume(t *testing.T) {
 	if len(capabilities.calls) != callsBefore || repository.saves != savesBefore {
 		t.Fatal("receipt-free replay performed work")
 	}
+	if len(capabilities.rebootRegistrations) != 2 {
+		t.Fatal("pending replay did not reconcile the native login registration")
+	}
 
 	delete(capabilities.outputs, install.PhaseEnsureContainerRuntime)
-	installCommand.ResumeReceipt = &receipt
+	installCommand.ResumeContinuation = true
 	resumed, err := application.Install(context.Background(), installCommand)
 	if err != nil {
 		t.Fatalf("resumed Install() error = %v", err)
@@ -370,11 +377,51 @@ func TestPF001InstallApplicationPersistsAndVerifiesRebootResume(t *testing.T) {
 	if resumed.State != install.StateReady {
 		t.Fatalf("resumed state = %s, want Ready", resumed.State)
 	}
+	if len(capabilities.rebootConsumptions) != 1 || len(capabilities.rebootRemovals) == 0 {
+		t.Fatal("native continuation was not consumed once and removed after resume")
+	}
 
 	operation := repository.mustLoad(t, installCommand.OperationID)
 	evidence := operation.CompletedEvidence()
 	if evidence[1].Phase() != install.PhaseEnsureContainerRuntime || evidence[1].Attempt() != 2 {
 		t.Fatalf("runtime retry evidence = phase %s attempt %d", evidence[1].Phase(), evidence[1].Attempt())
+	}
+}
+
+func TestPF001InstallApplicationRecoversWhenResumeVerificationSaveIsInterrupted(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryOperationRepository()
+	capabilities := newPhaseCapabilities()
+	receipt := install.DigestBytes([]byte("trusted-resume-receipt"))
+	action := mustSafeAction(t, "restart.host.and.resume")
+	capabilities.outputs[install.PhaseEnsureContainerRuntime] = mustRebootOutput(t, receipt, action)
+	application := mustApplication(t, repository, capabilities)
+	installCommand := command("reboot-resume-save-interruption", "plan-a")
+	if _, err := application.Install(context.Background(), installCommand); err != nil {
+		t.Fatalf("initial Install() error = %v", err)
+	}
+
+	delete(capabilities.outputs, install.PhaseEnsureContainerRuntime)
+	installCommand.ResumeContinuation = true
+	repository.failSaveAt = repository.saves + 1
+	if _, err := application.Install(context.Background(), installCommand); err == nil {
+		t.Fatal("interrupted ResumeVerified save unexpectedly succeeded")
+	}
+	if durable := repository.mustLoad(t, installCommand.OperationID); durable.State() != install.StateRebootPending {
+		t.Fatalf("failed save changed durable state to %s", durable.State())
+	}
+	if len(capabilities.rebootConsumptions) != 1 || len(capabilities.rebootRemovals) != 0 {
+		t.Fatal("failed durable resume save removed the crash-recovery continuation")
+	}
+
+	repository.failSaveAt = 0
+	resumed, err := application.Install(context.Background(), installCommand)
+	if err != nil || resumed.State != install.StateReady {
+		t.Fatalf("recovered Install() = (%+v, %v)", resumed, err)
+	}
+	if len(capabilities.rebootConsumptions) != 2 || len(capabilities.rebootRemovals) == 0 {
+		t.Fatal("recovery did not idempotently re-claim and eventually remove the continuation")
 	}
 }
 
@@ -502,6 +549,7 @@ func TestPF001NewInstallApplicationRejectsEveryMissingProductionDependency(t *te
 		{name: "operation repository", remove: func(d *Dependencies) { d.Operations = nil }},
 		{name: "cancellation intents", remove: func(d *Dependencies) { d.CancellationIntents = nil }},
 		{name: "installation lock", remove: func(d *Dependencies) { d.InstallationLock = nil }},
+		{name: "reboot coordinator", remove: func(d *Dependencies) { d.RebootCoordinator = nil }},
 		{name: "verify host", remove: func(d *Dependencies) { d.HostVerification = nil }},
 		{name: "ensure container runtime", remove: func(d *Dependencies) { d.ContainerRuntime = nil }},
 		{name: "verify release", remove: func(d *Dependencies) { d.ReleaseVerification = nil }},
@@ -655,13 +703,17 @@ type noopInstallationLock struct{}
 func (noopInstallationLock) Release(context.Context) error { return nil }
 
 type phaseCapabilities struct {
-	calls          []install.Phase
-	outputs        map[install.Phase]PhaseOutput
-	errors         map[install.Phase]error
-	failOnceAt     install.Phase
-	failed         bool
-	releaseReasons []ReservationReleaseReason
-	releaseError   error
+	calls               []install.Phase
+	outputs             map[install.Phase]PhaseOutput
+	errors              map[install.Phase]error
+	failOnceAt          install.Phase
+	failed              bool
+	releaseReasons      []ReservationReleaseReason
+	releaseError        error
+	rebootRegistrations []rebootapp.Binding
+	rebootConsumptions  []rebootapp.Binding
+	rebootRemovals      []install.OperationID
+	rebootError         error
 }
 
 func newPhaseCapabilities() *phaseCapabilities {
@@ -737,6 +789,21 @@ func (p *phaseCapabilities) CommitActiveRelease(context.Context, PhaseRequest) (
 	return p.execute(install.PhaseCommitActiveRelease)
 }
 
+func (p *phaseCapabilities) Register(_ context.Context, binding rebootapp.Binding) error {
+	p.rebootRegistrations = append(p.rebootRegistrations, binding)
+	return p.rebootError
+}
+
+func (p *phaseCapabilities) Consume(_ context.Context, binding rebootapp.Binding) error {
+	p.rebootConsumptions = append(p.rebootConsumptions, binding)
+	return p.rebootError
+}
+
+func (p *phaseCapabilities) Remove(_ context.Context, operationID install.OperationID) error {
+	p.rebootRemovals = append(p.rebootRemovals, operationID)
+	return p.rebootError
+}
+
 func completedOutputForPhase(phase install.Phase) PhaseOutput {
 	boundary, _ := install.NewCompensationBoundary("rollback." + strings.ToLower(phase.String()))
 	action, _ := install.NewSafeAction("continue." + strings.ToLower(phase.String()))
@@ -774,6 +841,7 @@ func dependencies(repository OperationRepository, capabilities *phaseCapabilitie
 		Operations:          authority,
 		CancellationIntents: authority,
 		InstallationLock:    &memoryLockPort{},
+		RebootCoordinator:   capabilities,
 		HostVerification:    capabilities,
 		ContainerRuntime:    capabilities,
 		ReleaseVerification: capabilities,

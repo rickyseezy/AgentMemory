@@ -44,11 +44,22 @@ func (nativeDesktopMutationCommandRunner) RunDesktopMutationCommand(
 	if contextError := ctx.Err(); contextError != nil {
 		return 0, contextError
 	}
-	var exit interface{ ExitCode() int }
-	if errors.As(runError, &exit) && exit.ExitCode() >= 0 && uint64(exit.ExitCode()) <= math.MaxUint32 {
-		return uint32(exit.ExitCode()), nil // #nosec G115 -- exact range is proven above.
+	if exitCode, ok := nativeDesktopMutationExitCode(runError); ok {
+		return exitCode, nil
 	}
 	return 0, runtimeport.ErrDesktopMutationIntegrity
+}
+
+func nativeDesktopMutationExitCode(runError error) (uint32, bool) {
+	var exit interface{ ExitCode() int }
+	if !errors.As(runError, &exit) {
+		return 0, false
+	}
+	exitCode := int64(exit.ExitCode())
+	if exitCode < 0 || exitCode > math.MaxUint32 {
+		return 0, false
+	}
+	return uint32(exitCode), true // #nosec G115 -- exact non-negative uint32 range is proven above.
 }
 
 type nativeDesktopMutationBoundedWriter struct {

@@ -121,6 +121,7 @@ func validateDesktopMutationPrerequisiteResources(
 			return nil, nil, runtimeport.ErrDesktopMutationIntegrity
 		}
 		seen[resource.Kind()] = true
+		//nolint:exhaustive // Every resource kind outside the two prerequisite kinds is rejected by default.
 		switch resource.Kind() {
 		case releaseinventory.ResourceKindRuntimeInstaller:
 			certificate := certificates[resource.ID()]

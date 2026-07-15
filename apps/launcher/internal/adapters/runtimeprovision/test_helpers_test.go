@@ -1,12 +1,99 @@
 package runtimeprovision
 
 import (
+	"context"
+	"errors"
 	"strconv"
+	"sync"
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
+
+type discardOwnership struct{}
+
+type memoryRuntimeOwnershipRepository struct {
+	mu     sync.Mutex
+	exists bool
+	record runtimeinstall.RuntimeOwnershipRecord
+}
+
+func (r *memoryRuntimeOwnershipRepository) LoadRuntimeOwnership(
+	_ context.Context,
+	operationID string,
+) (runtimeinstall.RuntimeOwnershipRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.exists || r.record.OperationID() != operationID {
+		return runtimeinstall.RuntimeOwnershipRecord{}, runtimeinstallapp.ErrOwnershipNotFound
+	}
+	return runtimeinstall.RestoreRuntimeOwnershipRecord(r.record.Snapshot())
+}
+
+func (r *memoryRuntimeOwnershipRepository) SaveRuntimeOwnership(
+	_ context.Context,
+	record runtimeinstall.RuntimeOwnershipRecord,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	restored, err := runtimeinstall.RestoreRuntimeOwnershipRecord(record.Snapshot())
+	if err != nil {
+		return errors.Join(runtimeinstallapp.ErrOwnershipIntegrity, err)
+	}
+	if r.exists {
+		switch {
+		case restored.Revision() == r.record.Revision() && restored.Digest() == r.record.Digest():
+			return nil
+		case !restored.CanFollow(r.record):
+			return runtimeinstallapp.ErrOwnershipConflict
+		}
+	}
+	r.record = restored
+	r.exists = true
+	return nil
+}
+
+func (discardOwnership) ResolveRuntimeOwnershipAuthority(
+	_ context.Context,
+	canonical []byte,
+) (runtimeinstall.RuntimeOwnershipAuthority, error) {
+	plan, err := runtimeinstall.DecodePlanV1(canonical)
+	if err != nil {
+		return runtimeinstall.RuntimeOwnershipAuthority{}, err
+	}
+	endpoint := "unix:///run/user/1000/docker.sock"
+	publisher := "docker-release-key-2026"
+	if plan.Platform() == runtimeinstall.PlatformDarwin {
+		endpoint = "unix:///Users/agentmemory/.docker/run/docker.sock"
+		publisher = "developer-id-application-docker-inc-9bnsxjn65r"
+	} else if plan.Platform() == runtimeinstall.PlatformWindows {
+		endpoint = "npipe:////./pipe/docker_engine"
+		publisher = "microsoft-authenticode-docker-inc"
+	}
+	return runtimeinstall.NewRuntimeOwnershipAuthority(runtimeinstall.RuntimeOwnershipAuthoritySnapshot{
+		Vendor: plan.Product(), Version: plan.Version(), Channel: plan.Channel(),
+		Endpoint: endpoint, Context: explicitLocalEndpointContext, Publisher: publisher,
+		PublisherDigest: runtimeinstall.Sum([]byte("publisher")), ArtifactDigest: runtimeinstall.Sum([]byte("artifact")),
+		Components: []string{"compose@5.1.4", "engine@29.6.1"},
+		Settings:   []string{"endpoint:" + endpoint},
+	})
+}
+
+func (discardOwnership) LoadRuntimeOwnership(
+	context.Context,
+	string,
+) (runtimeinstall.RuntimeOwnershipRecord, error) {
+	return runtimeinstall.RuntimeOwnershipRecord{}, runtimeinstallapp.ErrOwnershipNotFound
+}
+
+func (discardOwnership) SaveRuntimeOwnership(
+	context.Context,
+	runtimeinstall.RuntimeOwnershipRecord,
+) error {
+	return nil
+}
 
 func adapterAuthority(t *testing.T) (runtimeinstall.Plan, runtimeport.LinuxAuthority) {
 	t.Helper()

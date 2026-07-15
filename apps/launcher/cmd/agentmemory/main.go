@@ -24,6 +24,8 @@ const (
 	exitBootstrapIntegrity   = 4
 	exitBootstrapUnavailable = 5
 	exitMCPUnavailable       = 6
+	exitResumeIntegrity      = 7
+	exitResumeUnavailable    = 8
 )
 
 func main() {
@@ -45,8 +47,23 @@ func run(
 	factory launcher.MCPFactory,
 	transport mcp.Transport,
 ) int {
+	if ctx == nil || nilCapability(stderr) || nilCapability(factory) {
+		writeCode(stderr, "AM_USAGE")
+		return exitUsage
+	}
+	if token, resume := parseResumeCommand(args); resume {
+		resumer, supported := factory.(launcher.InstallationResumeFactory)
+		if !supported || nilCapability(resumer) {
+			writeCode(stderr, "AM_RESUME_INTEGRITY")
+			return exitResumeIntegrity
+		}
+		if err := resumer.ResumeInstallation(ctx, token); err != nil {
+			return reportResumeError(stderr, err)
+		}
+		return exitSuccess
+	}
 	host, ok := parseMCPCommand(args)
-	if !ok || ctx == nil || nilCapability(stderr) || nilCapability(factory) || nilCapability(transport) {
+	if !ok || nilCapability(transport) {
 		writeCode(stderr, "AM_USAGE")
 		return exitUsage
 	}
@@ -70,6 +87,18 @@ func run(
 	// statement/return would substitute the same integer zero represented by exitSuccess.
 	// mutator-disable-next-line statement/return
 	return exitSuccess
+}
+
+func parseResumeCommand(args []string) (string, bool) {
+	if len(args) != 3 || args[0] != "resume" || args[1] != "--continuation" || len(args[2]) != 64 {
+		return "", false
+	}
+	for _, character := range args[2] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return "", false
+		}
+	}
+	return args[2], true
 }
 
 func gracefulSignalShutdown(ctx context.Context, runError error) bool {
@@ -100,6 +129,15 @@ func reportFactoryError(stderr io.Writer, err error) int {
 		writeCode(stderr, "AM_BOOTSTRAP_UNAVAILABLE")
 		return exitBootstrapUnavailable
 	}
+}
+
+func reportResumeError(stderr io.Writer, err error) int {
+	if errors.Is(err, launcher.ErrResumeIntegrity) {
+		writeCode(stderr, "AM_RESUME_INTEGRITY")
+		return exitResumeIntegrity
+	}
+	writeCode(stderr, "AM_RESUME_UNAVAILABLE")
+	return exitResumeUnavailable
 }
 
 func writeCode(stderr io.Writer, code string) {

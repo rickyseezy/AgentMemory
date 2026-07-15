@@ -75,6 +75,7 @@ func (a nativeDesktopReleaseAuthority) valid() bool {
 			return false
 		}
 		seen[resource.Kind()] = true
+		//nolint:exhaustive // Every resource kind outside the two Windows prerequisite kinds is rejected by default.
 		switch resource.Kind() {
 		case releaseinventory.ResourceKindRuntimeInstaller:
 			if resource.Purpose() != releaseinventory.ResourcePurposeRuntimeInstaller ||

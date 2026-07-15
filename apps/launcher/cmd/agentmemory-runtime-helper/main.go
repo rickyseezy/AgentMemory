@@ -1,3 +1,4 @@
+// Package main provides the signed runtime helper executable entry point.
 package main
 
 import (

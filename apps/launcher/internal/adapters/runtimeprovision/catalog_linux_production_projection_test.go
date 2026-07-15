@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -250,7 +251,12 @@ func (r *sizedVerifiedFinalReader) OpenFinal(
 	artifact artifactacquisition.Artifact,
 ) (io.ReadCloser, error) {
 	r.opens++
-	return io.NopCloser(io.LimitReader(zeroReader{}, int64(artifact.Size()))), nil
+	size := artifact.Size()
+	if size > math.MaxInt64 {
+		return nil, errors.New("fixture artifact is too large")
+	}
+	limit := int64(size) // #nosec G115 -- size is explicitly bounded to MaxInt64 above.
+	return io.NopCloser(io.LimitReader(zeroReader{}, limit)), nil
 }
 
 type zeroReader struct{}

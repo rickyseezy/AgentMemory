@@ -37,6 +37,69 @@ func TestPF001RuntimeApplicationExecutesEveryPhaseWithDurableBoundaries(t *testi
 	if repository.saveCalls != wantSaves {
 		t.Fatalf("save count = %d, want %d", repository.saveCalls, wantSaves)
 	}
+	ownership := harness.ownership.snapshot
+	if !harness.ownership.exists || ownership.Status() != runtimeinstall.OwnershipStatusFinalized ||
+		ownership.OperationState() != runtimeinstall.OperationStateReady ||
+		len(ownership.Mutations()) != 4 || ownership.CompatibilityDigest().IsZero() {
+		t.Fatal("runtime ownership record was not finalized before completion")
+	}
+	if harness.ownership.firstPhase != runtimeinstall.PhaseAcquireRuntime {
+		t.Fatalf("first ownership record phase = %s, want AcquireRuntime", harness.ownership.firstPhase)
+	}
+}
+
+func TestPF001RuntimeApplicationBlocksFirstMutationUntilOwnershipIsDurable(t *testing.T) {
+	t.Parallel()
+	repository := newMemoryRepository()
+	harness := &phaseHarness{repository: repository}
+	harness.ownership = &memoryOwnershipRepository{saveError: errors.New("private ownership disk failure")}
+	application := newTestApplication(t, repository, harness)
+	result, err := application.Ensure(context.Background(), testCommand())
+	if errorCode(err) != ErrorCodeInternal || result.CurrentPhase != runtimeinstall.PhaseAcquireRuntime ||
+		countPhase(harness.calls, runtimeinstall.PhaseAcquireRuntime) != 0 {
+		t.Fatalf("ownership failure result/error/calls = %+v/%v/%v", result, err, harness.calls)
+	}
+	harness.ownership.saveError = nil
+	ready, err := application.Ensure(context.Background(), testCommand())
+	if err != nil || ready.State != runtimeinstall.OperationStateReady ||
+		countPhase(harness.calls, runtimeinstall.PhaseAcquireRuntime) != 1 {
+		t.Fatalf("ownership retry result/error/calls = %+v/%v/%v", ready, err, harness.calls)
+	}
+}
+
+func TestPF001RuntimeOwnershipTestProjectionMatchesApplicationEvidence(t *testing.T) {
+	t.Parallel()
+	plan, err := runtimeinstall.DecodePlanV1(testCanonicalRuntimePlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := runtimeinstall.NewOperation(testCommand().OperationID, plan.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for operation.CurrentPhase() <= runtimeinstall.PhaseAwaitRuntimeConsent {
+		phase := operation.CurrentPhase()
+		evidence, evidenceError := runtimeinstall.NewTransitionEvidence(
+			phase, operation.Attempt(), plan.Digest(), runtimeinstall.Sum([]byte("input-"+phase.String())),
+			runtimeinstall.Sum([]byte("output-"+phase.String())), runtimeinstall.Hash{}, runtimeinstall.OwnershipUnknown,
+		)
+		if evidenceError != nil || operation.Complete(phase, evidence) != nil {
+			t.Fatalf("complete %s: %v", phase, evidenceError)
+		}
+	}
+	harness := &phaseHarness{}
+	authority, err := harness.ResolveRuntimeOwnershipAuthority(context.Background(), plan.CanonicalBytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := runtimeinstall.NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &memoryOwnershipRepository{}
+	if err := repository.SaveRuntimeOwnership(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPF001RuntimeApplicationResumesFirstUnverifiedPhaseAfterEveryFailure(t *testing.T) {
@@ -266,19 +329,24 @@ func newTestApplication(t *testing.T, repository *memoryRepository, harness *pha
 }
 
 func testDependencies(repository OperationRepository, harness *phaseHarness) Dependencies {
+	if harness.ownership == nil {
+		harness.ownership = &memoryOwnershipRepository{}
+	}
 	return Dependencies{
-		Operations:    repository,
-		Host:          harness,
-		Detector:      harness,
-		Catalog:       harness,
-		Consent:       harness,
-		Fetcher:       harness,
-		Verifier:      harness,
-		Prerequisites: harness,
-		Installer:     harness,
-		Terms:         harness,
-		Controller:    harness,
-		Capabilities:  harness,
+		Operations:           repository,
+		OwnershipAuthorities: harness,
+		OwnershipRecords:     harness.ownership,
+		Host:                 harness,
+		Detector:             harness,
+		Catalog:              harness,
+		Consent:              harness,
+		Fetcher:              harness,
+		Verifier:             harness,
+		Prerequisites:        harness,
+		Installer:            harness,
+		Terms:                harness,
+		Controller:           harness,
+		Capabilities:         harness,
 	}
 }
 
@@ -388,6 +456,73 @@ type phaseHarness struct {
 	outcomeAt     runtimeinstall.Phase
 	outcome       Outcome
 	invalidAt     runtimeinstall.Phase
+	ownership     *memoryOwnershipRepository
+}
+
+func (h *phaseHarness) ResolveRuntimeOwnershipAuthority(
+	_ context.Context,
+	canonical []byte,
+) (runtimeinstall.RuntimeOwnershipAuthority, error) {
+	plan, err := runtimeinstall.DecodePlanV1(canonical)
+	if err != nil {
+		return runtimeinstall.RuntimeOwnershipAuthority{}, err
+	}
+	return runtimeinstall.NewRuntimeOwnershipAuthority(runtimeinstall.RuntimeOwnershipAuthoritySnapshot{
+		Vendor: plan.Product(), Version: plan.Version(), Channel: plan.Channel(),
+		Endpoint: "unix:///run/user/1000/docker.sock", Context: "explicit-local-endpoint",
+		Publisher: "docker-release-key-2026", PublisherDigest: runtimeinstall.Sum([]byte("publisher")),
+		ArtifactDigest: runtimeinstall.Sum([]byte("verified-runtime-artifact")),
+		Components:     []string{"compose@2.39.1", "engine@28.0.0"},
+		Settings:       []string{"repository:docker-stable", "service:docker.service"},
+	})
+}
+
+type memoryOwnershipRepository struct {
+	mu         sync.Mutex
+	exists     bool
+	snapshot   runtimeinstall.RuntimeOwnershipRecord
+	firstPhase runtimeinstall.Phase
+	saveError  error
+}
+
+func (r *memoryOwnershipRepository) LoadRuntimeOwnership(
+	_ context.Context,
+	operationID string,
+) (runtimeinstall.RuntimeOwnershipRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.exists || r.snapshot.OperationID() != operationID {
+		return runtimeinstall.RuntimeOwnershipRecord{}, ErrOwnershipNotFound
+	}
+	return runtimeinstall.RestoreRuntimeOwnershipRecord(r.snapshot.Snapshot())
+}
+
+func (r *memoryOwnershipRepository) SaveRuntimeOwnership(
+	_ context.Context,
+	record runtimeinstall.RuntimeOwnershipRecord,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.saveError != nil {
+		return r.saveError
+	}
+	if r.exists {
+		if record.Revision() == r.snapshot.Revision() && record.Digest() == r.snapshot.Digest() {
+			return nil
+		}
+		if !record.CanFollow(r.snapshot) {
+			return ErrOwnershipConflict
+		}
+	} else {
+		r.firstPhase = runtimeinstall.PhaseAcquireRuntime
+	}
+	restored, err := runtimeinstall.RestoreRuntimeOwnershipRecord(record.Snapshot())
+	if err != nil {
+		return errors.Join(ErrOwnershipIntegrity, err)
+	}
+	r.snapshot = restored
+	r.exists = true
+	return nil
 }
 
 func (h *phaseHarness) run(request Request) (Output, error) {

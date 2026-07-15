@@ -53,7 +53,7 @@ func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 			return runtimeport.ErrDesktopMutationIntegrity
 		}
 	}
-	if darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size, 0o600) {
+	if darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 		return nil
 	}
 	sourceDescriptor, err := unix.Open(artifact.sourcePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
@@ -98,7 +98,7 @@ func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 	extraCount, extraError := source.Read(extra[:])
 	var actual runtimeinstall.Hash
 	copy(actual[:], hasher.Sum(nil))
-	if err != nil || uint64(written) != artifact.size || extraCount != 0 || !errors.Is(extraError, io.EOF) ||
+	if err != nil || written < 0 || uint64(written) != artifact.size || extraCount != 0 || !errors.Is(extraError, io.EOF) ||
 		actual != artifact.sha256 || ctx.Err() != nil || target.Sync() != nil || target.Chmod(0o600) != nil ||
 		target.Close() != nil {
 		return desktopMutationHelperContextOrIntegrity(ctx)
@@ -107,14 +107,14 @@ func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 		unix.AT_FDCWD, temporary, unix.AT_FDCWD, artifact.targetPath, unix.RENAME_EXCL,
 	); err != nil {
 		if errors.Is(err, unix.EEXIST) &&
-			darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size, 0o600) {
+			darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 			return nil
 		}
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	committed = true
 	if err := syncPrivilegeProtectedDirectory(requestRoot); err != nil ||
-		!darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size, 0o600) {
+		!darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	return nil
@@ -159,7 +159,6 @@ func darwinDesktopMutationArtifactMatches(
 	uid uint32,
 	digest runtimeinstall.Hash,
 	size uint64,
-	mode uint32,
 ) bool {
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -171,14 +170,14 @@ func darwinDesktopMutationArtifactMatches(
 		return false
 	}
 	defer func() { _ = file.Close() }()
-	if !darwinDesktopMutationDescriptorMatches(descriptor, uid, size, mode) {
+	if !darwinDesktopMutationDescriptorMatches(descriptor, uid, size, 0o600) {
 		return false
 	}
 	hasher := sha256.New()
 	written, err := io.Copy(hasher, io.LimitReader(file, int64(size)+1)) // #nosec G115 -- catalog size is JSON-safe.
 	var actual runtimeinstall.Hash
 	copy(actual[:], hasher.Sum(nil))
-	return err == nil && uint64(written) == size && actual == digest
+	return err == nil && written >= 0 && uint64(written) == size && actual == digest
 }
 
 func removeDarwinDesktopMutationTemporary(path string) error {

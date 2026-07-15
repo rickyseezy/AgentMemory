@@ -26,6 +26,11 @@ type MCPFactory interface {
 	BuildMCP(context.Context, agentconfigdomain.AgentHost) (MCPRunner, error)
 }
 
+// InstallationResumeFactory is the native per-user login continuation entry.
+type InstallationResumeFactory interface {
+	ResumeInstallation(context.Context, string) error
+}
+
 // BootstrapInitializer creates the durable first-start authority from the
 // verified packaged release. It is called only when no protected pointer exists.
 type BootstrapInitializer interface {

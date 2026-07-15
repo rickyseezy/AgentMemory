@@ -35,7 +35,7 @@ func TestPF001ContainerRuntimePhaseBindsCompleteNestedAggregate(t *testing.T) {
 			if !ok {
 				t.Fatal("fixture has no completion receipt")
 			}
-			wantOutput, _ := install.ParseDigest(receipt.EvidenceDigest().String())
+			wantOutput, _ := install.ParseDigest(receipt.ReceiptDigest().String())
 			wantArtifact, _ := install.ParseDigest(receipt.ArtifactDigest().String())
 			wantOwnership, _ := installOwnership(ownership)
 			if output.Outcome() != installapp.PhaseOutcomeCompleted ||
@@ -122,7 +122,8 @@ func TestPF001ContainerRuntimePhaseTranslatesTypedRuntimeApplicationRetry(t *tes
 	request, _, query, _ := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
 	capabilities := failingRuntimeCapabilities{}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
-		Operations: runtimeOperationRepositoryStub{}, Host: capabilities, Detector: capabilities,
+		Operations: runtimeOperationRepositoryStub{}, OwnershipAuthorities: unusedRuntimeOwnership{},
+		OwnershipRecords: unusedRuntimeOwnership{}, Host: capabilities, Detector: capabilities,
 		Catalog: capabilities, Consent: capabilities, Fetcher: capabilities, Verifier: capabilities,
 		Prerequisites: capabilities, Installer: capabilities, Terms: capabilities,
 		Controller: capabilities, Capabilities: capabilities,
@@ -139,6 +140,29 @@ func TestPF001ContainerRuntimePhaseTranslatesTypedRuntimeApplicationRetry(t *tes
 		output.NextSafeAction() != "installation.runtime_retry" {
 		t.Fatalf("EnsureContainerRuntime() = %#v, %v", output, err)
 	}
+}
+
+type unusedRuntimeOwnership struct{}
+
+func (unusedRuntimeOwnership) ResolveRuntimeOwnershipAuthority(
+	context.Context,
+	[]byte,
+) (runtimeinstall.RuntimeOwnershipAuthority, error) {
+	return runtimeinstall.RuntimeOwnershipAuthority{}, errors.New("unused runtime ownership authority")
+}
+
+func (unusedRuntimeOwnership) LoadRuntimeOwnership(
+	context.Context,
+	string,
+) (runtimeinstall.RuntimeOwnershipRecord, error) {
+	return runtimeinstall.RuntimeOwnershipRecord{}, runtimeinstallapp.ErrOwnershipNotFound
+}
+
+func (unusedRuntimeOwnership) SaveRuntimeOwnership(
+	context.Context,
+	runtimeinstall.RuntimeOwnershipRecord,
+) error {
+	return nil
 }
 
 func TestPF001ContainerRuntimePhaseFailsClosedOnInvalidAuthority(t *testing.T) {
@@ -165,7 +189,7 @@ func TestPF001ContainerRuntimePhaseFailsClosedOnInvalidAuthority(t *testing.T) {
 		{name: "foreign parent plan", want: ErrorCodeInvalidBinding, run: func(t *testing.T) error {
 			request, _, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
 			foreign, _ := install.BindPlan([]byte("foreign parent"))
-			query.plan, _ = NewRuntimePlan(foreign, runtimePhaseCanonicalPlan(t), install.DigestBytes([]byte("signed evidence")))
+			query.plan, _ = NewRuntimePlan(foreign, runtimePhaseCanonicalPlan(t, runtimeinstall.OwnershipReusedExternal), install.DigestBytes([]byte("signed evidence")))
 			phase, _ := NewContainerRuntimePhase(query, ensurer)
 			_, err := phase.EnsureContainerRuntime(context.Background(), request)
 			return err
@@ -188,14 +212,17 @@ func TestPF001ContainerRuntimePhaseFailsClosedOnInvalidAuthority(t *testing.T) {
 		}},
 		{name: "foreign nested result", want: ErrorCodeInvalidBinding, run: func(t *testing.T) error {
 			request, _, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
-			ensurer.result = runtimeReadyResult(t, request.OperationID().String(), runtimeinstall.Sum([]byte("foreign nested")), runtimeinstall.OwnershipReusedExternal)
+			ensurer.result = runtimeReadyResult(
+				t, request.OperationID().String(),
+				runtimePhaseCanonicalPlanWithCatalog(t, runtimeinstall.OwnershipReusedExternal, "foreign-catalog"),
+			)
 			phase, _ := NewContainerRuntimePhase(query, ensurer)
 			_, err := phase.EnsureContainerRuntime(context.Background(), request)
 			return err
 		}},
 		{name: "foreign operation result", want: ErrorCodeInvalidBinding, run: func(t *testing.T) error {
 			request, plan, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
-			ensurer.result = runtimeReadyResult(t, "foreign-operation", plan.PlanDigest(), runtimeinstall.OwnershipReusedExternal)
+			ensurer.result = runtimeReadyResult(t, "foreign-operation", plan.CanonicalPlan())
 			phase, _ := NewContainerRuntimePhase(query, ensurer)
 			_, err := phase.EnsureContainerRuntime(context.Background(), request)
 			return err
@@ -296,7 +323,7 @@ func TestPF001RuntimePlanAndPhaseConstructorsRejectIncompleteCapabilities(t *tes
 
 	parent, _ := install.BindPlan([]byte("parent"))
 	evidence := install.DigestBytes([]byte("signed evidence"))
-	source := runtimePhaseCanonicalPlan(t)
+	source := runtimePhaseCanonicalPlan(t, runtimeinstall.OwnershipProvisionedByAgentMemory)
 	plan, err := NewRuntimePlan(parent, source, evidence)
 	if err != nil {
 		t.Fatal(err)
@@ -310,13 +337,13 @@ func TestPF001RuntimePlanAndPhaseConstructorsRejectIncompleteCapabilities(t *tes
 	if !plan.ParentPlanDigest().Equal(parent) || !plan.SignedCatalogEvidenceDigest().Equal(evidence) {
 		t.Fatal("runtime plan lost an authenticated parent or signed-catalog binding")
 	}
-	if _, err := NewRuntimePlan(install.PlanDigest{}, runtimePhaseCanonicalPlan(t), evidence); err == nil {
+	if _, err := NewRuntimePlan(install.PlanDigest{}, runtimePhaseCanonicalPlan(t, runtimeinstall.OwnershipProvisionedByAgentMemory), evidence); err == nil {
 		t.Fatal("NewRuntimePlan() accepted a zero parent")
 	}
 	if _, err := NewRuntimePlan(parent, nil, evidence); err == nil {
 		t.Fatal("NewRuntimePlan() accepted an empty plan")
 	}
-	if _, err := NewRuntimePlan(parent, runtimePhaseCanonicalPlan(t), install.Digest{}); err == nil {
+	if _, err := NewRuntimePlan(parent, runtimePhaseCanonicalPlan(t, runtimeinstall.OwnershipProvisionedByAgentMemory), install.Digest{}); err == nil {
 		t.Fatal("NewRuntimePlan() accepted missing signed evidence")
 	}
 	_, _, query, ensurer := runtimePhaseFixture(t, runtimeinstall.OwnershipReusedExternal)
@@ -349,14 +376,25 @@ func TestPF001RuntimePlanAndPhaseConstructorsRejectIncompleteCapabilities(t *tes
 	if _, err := phase.completedOutput(request, plan, paused); err == nil {
 		t.Fatal("completedOutput() accepted a paused aggregate")
 	}
-	ready := runtimeReadyResult(t, request.OperationID().String(), plan.PlanDigest(), runtimeinstall.OwnershipReusedExternal)
+	ready := runtimeReadyResult(t, request.OperationID().String(), plan.CanonicalPlan())
 	ready.Version++
 	if _, err := phase.completedOutput(request, plan, ready); err == nil {
 		t.Fatal("completedOutput() accepted a mismatched aggregate version")
 	}
 }
 
-func runtimePhaseCanonicalPlan(t testing.TB) []byte {
+func runtimePhaseCanonicalPlan(
+	t testing.TB,
+	ownership runtimeinstall.OwnershipDisposition,
+) []byte {
+	return runtimePhaseCanonicalPlanWithCatalog(t, ownership, "catalog")
+}
+
+func runtimePhaseCanonicalPlanWithCatalog(
+	t testing.TB,
+	ownership runtimeinstall.OwnershipDisposition,
+	catalogBinding string,
+) []byte {
 	t.Helper()
 	host, err := runtimeinstall.NewHostCapabilities(
 		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "6.8.0", true, true, true, true,
@@ -367,7 +405,7 @@ func runtimePhaseCanonicalPlan(t testing.TB) []byte {
 	}
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		runtimeinstall.PlatformLinux, runtimeinstall.ArchitectureAMD64, "docker-engine", "28.0.0", "stable", 42,
-		runtimeinstall.Sum([]byte("catalog")), runtimeinstall.RuntimeTermsInput{
+		runtimeinstall.Sum([]byte(catalogBinding)), runtimeinstall.RuntimeTermsInput{
 			ID: runtimeinstall.DockerEngineTermsID, Version: "apache-2.0", URL: "https://docs.docker.com/engine/",
 			Digest: runtimeinstall.Sum([]byte("terms")), Presentation: runtimeinstall.TermsPresentationAgentMemory,
 		}, 1024, 4096,
@@ -375,7 +413,17 @@ func runtimePhaseCanonicalPlan(t testing.TB) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := runtimeinstall.NewPlanV1(host, runtimeinstall.NewAbsentRuntimeDiscovery(), catalog)
+	discovery := runtimeinstall.NewAbsentRuntimeDiscovery()
+	if ownership == runtimeinstall.OwnershipReusedExternal {
+		discovery, err = runtimeinstall.NewRuntimeDiscovery(
+			runtimeinstall.RuntimeConditionRunning, "docker-engine", "28.0.0",
+			"unix:///var/run/docker.sock", true, true, true, ownership, 1,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := runtimeinstall.NewPlanV1(host, discovery, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,11 +445,11 @@ func runtimePhaseFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewRuntimePlan(parent, runtimePhaseCanonicalPlan(t), install.DigestBytes([]byte("verified signed runtime catalog")))
+	plan, err := NewRuntimePlan(parent, runtimePhaseCanonicalPlan(t, ownership), install.DigestBytes([]byte("verified signed runtime catalog")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := runtimeReadyResult(t, operationID.String(), plan.PlanDigest(), ownership)
+	result := runtimeReadyResult(t, operationID.String(), plan.CanonicalPlan())
 	return request, plan, &runtimePlanQueryStub{plan: plan}, &runtimeEnsurerStub{result: result}
 }
 
@@ -500,16 +548,37 @@ func (s *runtimeEnsurerStub) Ensure(
 func runtimeReadyResult(
 	t *testing.T,
 	operationID string,
-	plan runtimeinstall.Hash,
-	ownership runtimeinstall.OwnershipDisposition,
+	canonicalPlan []byte,
 ) runtimeinstallapp.Result {
 	t.Helper()
-	operation, err := runtimeinstall.NewOperation(operationID, plan)
+	plan, err := runtimeinstall.DecodePlanV1(canonicalPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
+	operation, err := runtimeinstall.NewOperation(operationID, plan.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership := runtimeinstall.OwnershipProvisionedByAgentMemory
+	if plan.Action() == runtimeinstall.PlanActionAdoptCompatible || plan.Action() == runtimeinstall.PlanActionStartCompatible {
+		ownership = runtimeinstall.OwnershipReusedExternal
+	}
 	advanceRuntimeOperation(t, operation, runtimeinstall.PhaseUnknown, ownership)
-	result, err := runtimeinstallapp.NewResultFromSnapshot(operation.Snapshot())
+	authority, err := runtimeinstall.NewRuntimeOwnershipAuthority(runtimeinstall.RuntimeOwnershipAuthoritySnapshot{
+		Vendor: plan.Product(), Version: plan.Version(), Channel: plan.Channel(),
+		Endpoint: "unix:///var/run/docker.sock", Context: "explicit-local-endpoint",
+		Publisher: "Docker release publisher", PublisherDigest: runtimeinstall.Sum([]byte("publisher")),
+		ArtifactDigest: runtimeinstall.Sum([]byte("verified runtime artifact")),
+		Components:     []string{"docker-engine=28.0.0"}, Settings: []string{"endpoint=unix:///var/run/docker.sock"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownershipRecord, err := runtimeinstall.NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runtimeinstallapp.NewResultFromSnapshot(operation.Snapshot(), ownershipRecord)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,11 +16,33 @@ var ErrOperationConflict = errors.New("runtime installation operation conflict")
 // ErrOperationIntegrity means stored state cannot be authenticated/restored.
 var ErrOperationIntegrity = errors.New("runtime installation operation integrity violation")
 
+// ErrOwnershipNotFound means no durable runtime ownership record exists yet.
+var ErrOwnershipNotFound = errors.New("runtime ownership record not found")
+
+// ErrOwnershipConflict means a stale or divergent ownership record was supplied.
+var ErrOwnershipConflict = errors.New("runtime ownership record conflict")
+
+// ErrOwnershipIntegrity means persisted ownership state cannot be authenticated.
+var ErrOwnershipIntegrity = errors.New("runtime ownership record integrity violation")
+
 // OperationRepository durably stores the runtime sub-saga using optimistic
 // aggregate versions and authenticated restoration.
 type OperationRepository interface {
 	Load(context.Context, string) (*runtimeinstall.Operation, error)
 	Save(context.Context, runtimeinstall.OperationSnapshot) error
+}
+
+// RuntimeOwnershipAuthorityResolver projects only signed, platform-specific
+// vendor, endpoint, publisher, component, and setting facts.
+type RuntimeOwnershipAuthorityResolver interface {
+	ResolveRuntimeOwnershipAuthority(context.Context, []byte) (runtimeinstall.RuntimeOwnershipAuthority, error)
+}
+
+// RuntimeOwnershipRepository persists one monotonic record in a
+// purpose-separated authenticated journal namespace.
+type RuntimeOwnershipRepository interface {
+	LoadRuntimeOwnership(context.Context, string) (runtimeinstall.RuntimeOwnershipRecord, error)
+	SaveRuntimeOwnership(context.Context, runtimeinstall.RuntimeOwnershipRecord) error
 }
 
 // HostCapabilityProbe performs only read-only platform/resource discovery.

@@ -214,6 +214,9 @@ func readExactDarwinDesktopMutationKey(
 	uid uint32,
 	gid uint32,
 ) ([]byte, error) {
+	if size <= 0 {
+		return nil, ErrProvisionIntegrity
+	}
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
@@ -224,7 +227,9 @@ func readExactDarwinDesktopMutationKey(
 		return nil, ErrProvisionIntegrity
 	}
 	defer func() { _ = file.Close() }()
-	if !darwinDesktopMutationKeyDescriptorMatches(descriptor, uid, gid, uint64(size), mode) {
+	// #nosec G115 -- a positive int size always fits in uint64.
+	sizeBytes := uint64(size)
+	if !darwinDesktopMutationKeyDescriptorMatches(descriptor, uid, gid, sizeBytes, mode) {
 		return nil, ErrProvisionIntegrity
 	}
 	value := make([]byte, size)

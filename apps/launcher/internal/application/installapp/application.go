@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
@@ -18,6 +19,7 @@ type Dependencies struct {
 	Operations          OperationRepository
 	CancellationIntents CancellationIntentPort
 	InstallationLock    InstallationLockPort
+	RebootCoordinator   RebootCoordinator
 	HostVerification    HostVerificationPort
 	ContainerRuntime    ContainerRuntimePort
 	ReleaseVerification ReleaseVerificationPort
@@ -41,6 +43,7 @@ type InstallApplication struct {
 	operations          OperationRepository
 	cancellationIntents CancellationIntentPort
 	installationLock    InstallationLockPort
+	rebootCoordinator   RebootCoordinator
 	hostVerification    HostVerificationPort
 	containerRuntime    ContainerRuntimePort
 	releaseVerification ReleaseVerificationPort
@@ -67,6 +70,7 @@ func NewInstallApplication(dependencies Dependencies) (*InstallApplication, erro
 		{name: "operations", value: dependencies.Operations},
 		{name: "cancellation intents", value: dependencies.CancellationIntents},
 		{name: "installation lock", value: dependencies.InstallationLock},
+		{name: "reboot coordinator", value: dependencies.RebootCoordinator},
 		{name: "host verification", value: dependencies.HostVerification},
 		{name: "container runtime", value: dependencies.ContainerRuntime},
 		{name: "release verification", value: dependencies.ReleaseVerification},
@@ -95,6 +99,7 @@ func NewInstallApplication(dependencies Dependencies) (*InstallApplication, erro
 		operations:          dependencies.Operations,
 		cancellationIntents: dependencies.CancellationIntents,
 		installationLock:    dependencies.InstallationLock,
+		rebootCoordinator:   dependencies.RebootCoordinator,
 		hostVerification:    dependencies.HostVerification,
 		containerRuntime:    dependencies.ContainerRuntime,
 		releaseVerification: dependencies.ReleaseVerification,
@@ -225,6 +230,10 @@ func (a *InstallApplication) Install(
 			return resultFrom(operation, PhaseOutcomeUnknown, install.ResumeActionUnknown), mapDomainError(bindingError)
 		}
 		if terminalResult, releaseReason, terminal := replayableTerminalResult(operation); terminal {
+			if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+				terminalResult.ErrorCode = cleanupError.Code()
+				return terminalResult, cleanupError
+			}
 			intent, hasIntent, intentError := a.observeCancellation(ctx, operation)
 			if intentError != nil {
 				terminalResult.ErrorCode = intentError.Code()
@@ -259,13 +268,14 @@ func (a *InstallApplication) Install(
 		); handled || cancellationError != nil {
 			return cancellationResult, cancellationError
 		}
-		resumingRuntimeReboot := operation.State() == install.StateRebootPending && command.ResumeReceipt != nil
-		resumeAction, resumeError := a.prepareExisting(ctx, operation, planDigest, command.ResumeReceipt)
+		resumeAction, verifiedResumeReceipt, resumeError := a.prepareExisting(
+			ctx, operation, planDigest, command.ResumeReceipt, command.ResumeContinuation,
+		)
 		if resumeError != nil {
 			return resultFrom(operation, PhaseOutcomeUnknown, resumeAction), resumeError
 		}
-		if resumingRuntimeReboot {
-			receipt := *command.ResumeReceipt
+		if verifiedResumeReceipt != nil {
+			receipt := *verifiedResumeReceipt
 			runtimeResumeReceipt = &receipt
 		}
 		switch resumeAction {
@@ -349,6 +359,17 @@ func (a *InstallApplication) Install(
 			}
 			return resultFrom(operation, output.outcome, install.ResumeActionUnknown), saveError
 		}
+		if operation.State() == install.StateRebootPending {
+			if continuationError := a.registerRebootContinuation(ctx, operation); continuationError != nil {
+				outcomeResult.ErrorCode = continuationError.Code()
+				return outcomeResult, continuationError
+			}
+		} else if operation.State().Terminal() {
+			if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+				outcomeResult.ErrorCode = cleanupError.Code()
+				return outcomeResult, cleanupError
+			}
+		}
 		if !continueInstall {
 			if releaseReason, required := terminalReservationRelease(operation, output.outcome); required {
 				if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, releaseReason); releaseError != nil {
@@ -417,6 +438,11 @@ func (a *InstallApplication) Cancel(
 	}
 
 	if operation.State() == install.StateCancelled {
+		if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+			result := resultFrom(operation, PhaseOutcomeCancelled, install.ResumeActionUnknown)
+			result.ErrorCode = cleanupError.Code()
+			return result, cleanupError
+		}
 		intent, observeError := a.cancellationIntents.Observe(ctx, operationID, planDigest)
 		switch {
 		case observeError == nil:
@@ -531,7 +557,8 @@ func validateCommand(command InstallCommand) (install.OperationID, install.PlanD
 	if err != nil {
 		return install.OperationID{}, install.PlanDigest{}, mapDomainError(err)
 	}
-	if command.ResumeReceipt != nil && command.ResumeReceipt.IsZero() {
+	if (command.ResumeReceipt != nil && command.ResumeReceipt.IsZero()) ||
+		(command.ResumeContinuation && command.ResumeReceipt != nil) {
 		return install.OperationID{}, install.PlanDigest{}, applicationError(
 			ErrorCodeValidation, false, "installation request is invalid",
 		)
@@ -544,26 +571,53 @@ func (a *InstallApplication) prepareExisting(
 	operation *install.Operation,
 	planDigest install.PlanDigest,
 	resumeReceipt *install.Digest,
-) (install.ResumeAction, error) {
-	if operation.State() == install.StateRebootPending && resumeReceipt != nil {
-		if err := operation.VerifyResume(planDigest, *resumeReceipt); err != nil {
-			return install.ResumeActionUnknown, mapDomainError(err)
+	resumeContinuation bool,
+) (install.ResumeAction, *install.Digest, error) {
+	var verifiedReceipt *install.Digest
+	if operation.State() == install.StateRebootPending {
+		if resumeContinuation {
+			binding, bindingError := rebootBinding(operation)
+			if bindingError != nil {
+				return install.ResumeActionUnknown, nil, bindingError
+			}
+			if err := a.rebootCoordinator.Consume(ctx, binding); err != nil {
+				return install.ResumeActionUnknown, nil, mapRebootCoordinatorError(err)
+			}
+			checkpoint, _ := operation.Snapshot().RebootCheckpoint()
+			receipt := checkpoint.ReceiptDigest()
+			resumeReceipt = &receipt
 		}
-		if err := a.saveAfterTransition(ctx, operation); err != nil {
-			return install.ResumeActionUnknown, err
+		if resumeReceipt != nil {
+			if err := operation.VerifyResume(planDigest, *resumeReceipt); err != nil {
+				return install.ResumeActionUnknown, nil, mapDomainError(err)
+			}
+			receipt := *resumeReceipt
+			verifiedReceipt = &receipt
+			if err := a.saveAfterTransition(ctx, operation); err != nil {
+				return install.ResumeActionUnknown, nil, err
+			}
 		}
 	}
 
 	resumeAction, err := operation.Resume(planDigest)
 	if err != nil {
-		return resumeAction, mapDomainError(err)
+		return resumeAction, nil, mapDomainError(err)
 	}
 	if resumeAction == install.ResumeActionCurrentPhase {
 		if err := a.saveAfterTransition(ctx, operation); err != nil {
-			return resumeAction, err
+			return resumeAction, nil, err
 		}
 	}
-	return resumeAction, nil
+	if resumeAction == install.ResumeActionAwaitVerification {
+		if err := a.registerRebootContinuation(ctx, operation); err != nil {
+			return resumeAction, nil, err
+		}
+	} else if operation.State() != install.StateRebootPending {
+		if err := a.removeRebootContinuation(ctx, operation.ID()); err != nil {
+			return resumeAction, nil, err
+		}
+	}
+	return resumeAction, verifiedReceipt, nil
 }
 
 func (a *InstallApplication) dispatch(
@@ -756,6 +810,10 @@ func (a *InstallApplication) settleCancellation(
 		}
 		return result, err
 	}
+	if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+		result.ErrorCode = cleanupError.Code()
+		return result, cleanupError
+	}
 	if reservationMayExist(operation) {
 		if releaseError := a.releaseSpace(ctx, operation, canonicalPlan, ReservationReleaseCancelled); releaseError != nil {
 			result.ErrorCode = releaseError.Code()
@@ -934,6 +992,54 @@ func (a *InstallApplication) failUnexpected(
 	return a.failInternal(ctx, operation, planDigest)
 }
 
+func rebootBinding(operation *install.Operation) (rebootapp.Binding, *ApplicationError) {
+	if operation == nil || operation.State() != install.StateRebootPending {
+		return rebootapp.Binding{}, applicationError(
+			ErrorCodeIntegrityViolation, false, "installation continuation state could not be verified",
+		)
+	}
+	checkpoint, exists := operation.Snapshot().RebootCheckpoint()
+	if !exists || !checkpoint.PlanDigest().Equal(operation.PlanDigest()) ||
+		checkpoint.Phase() != operation.CurrentPhase() || checkpoint.Attempt() != operation.Attempt() ||
+		checkpoint.ReceiptDigest().IsZero() || operation.AggregateVersion() == 0 {
+		return rebootapp.Binding{}, applicationError(
+			ErrorCodeIntegrityViolation, false, "installation continuation state could not be verified",
+		)
+	}
+	return rebootapp.Binding{
+		OperationID: operation.ID(), PlanDigest: operation.PlanDigest(),
+		AggregateVersion: operation.AggregateVersion(), ResumeReceipt: checkpoint.ReceiptDigest(),
+	}, nil
+}
+
+func (a *InstallApplication) registerRebootContinuation(
+	ctx context.Context,
+	operation *install.Operation,
+) *ApplicationError {
+	binding, err := rebootBinding(operation)
+	if err != nil {
+		return err
+	}
+	finalizationContext, cancel := freshFinalizationContext(ctx)
+	defer cancel()
+	if coordinatorError := a.rebootCoordinator.Register(finalizationContext, binding); coordinatorError != nil {
+		return mapRebootCoordinatorError(coordinatorError)
+	}
+	return nil
+}
+
+func (a *InstallApplication) removeRebootContinuation(
+	ctx context.Context,
+	operationID install.OperationID,
+) *ApplicationError {
+	finalizationContext, cancel := freshFinalizationContext(ctx)
+	defer cancel()
+	if err := a.rebootCoordinator.Remove(finalizationContext, operationID); err != nil {
+		return mapRebootCoordinatorError(err)
+	}
+	return nil
+}
+
 func (a *InstallApplication) failDeadline(
 	ctx context.Context,
 	operation *install.Operation,
@@ -962,6 +1068,9 @@ func (a *InstallApplication) failRecoverable(
 	}
 	if err := a.saveAfterTransition(ctx, operation); err != nil {
 		return resultFrom(operation, outcome, install.ResumeActionUnknown), err
+	}
+	if cleanupError := a.removeRebootContinuation(ctx, operation.ID()); cleanupError != nil {
+		return resultFrom(operation, outcome, install.ResumeActionUnknown), cleanupError
 	}
 	return pausedResult(operation, outcome, publicError.Code()), publicError
 }

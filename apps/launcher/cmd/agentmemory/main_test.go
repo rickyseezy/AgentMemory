@@ -61,6 +61,53 @@ func TestPF001AgentMemoryCommandAcceptsOnlyClosedHostAndArgumentGrammar(t *testi
 	}
 }
 
+func TestPF001AgentMemoryCommandRunsOnlyTokenizedNativeContinuation(t *testing.T) {
+	t.Parallel()
+	token := strings.Repeat("a", 64)
+	factory := &factoryStub{}
+	transport, _ := mcp.NewInMemoryTransports()
+	var stderr strings.Builder
+	ctx := context.Background()
+	if code := run(ctx, []string{"resume", "--continuation", token}, &stderr, factory, transport); code != exitSuccess ||
+		stderr.Len() != 0 || factory.resumeCalls != 1 || factory.resumeToken != token || factory.calls != 0 {
+		t.Fatalf("resume code=%d stderr=%q factory=%+v", code, stderr.String(), factory)
+	}
+	if parsed, ok := parseResumeCommand([]string{"resume", "--continuation", token}); !ok || parsed != token {
+		t.Fatalf("parseResumeCommand() = (%q, %t)", parsed, ok)
+	}
+	for _, args := range [][]string{
+		{"resume"}, {"resume", "--continuation"}, {"resume", "--continuation", strings.Repeat("A", 64)},
+		{"resume", "--continuation", strings.Repeat("g", 64)}, {"resume", "--continuation", token, "extra"},
+	} {
+		if parsed, ok := parseResumeCommand(args); ok || parsed != "" {
+			t.Fatalf("invalid resume arguments accepted: %q", args)
+		}
+	}
+}
+
+func TestPF001AgentMemoryCommandMapsContinuationFailuresToStableCodes(t *testing.T) {
+	t.Parallel()
+	token := strings.Repeat("b", 64)
+	transport, _ := mcp.NewInMemoryTransports()
+	for _, test := range []struct {
+		err  error
+		code string
+		exit int
+	}{
+		{err: launcher.ErrResumeIntegrity, code: "AM_RESUME_INTEGRITY\n", exit: exitResumeIntegrity},
+		{err: launcher.ErrResumeUnavailable, code: "AM_RESUME_UNAVAILABLE\n", exit: exitResumeUnavailable},
+		{err: context.DeadlineExceeded, code: "AM_RESUME_UNAVAILABLE\n", exit: exitResumeUnavailable},
+		{err: errors.New("private path"), code: "AM_RESUME_UNAVAILABLE\n", exit: exitResumeUnavailable},
+	} {
+		var stderr strings.Builder
+		code := run(context.Background(), []string{"resume", "--continuation", token}, &stderr,
+			&factoryStub{resumeErr: test.err}, transport)
+		if code != test.exit || stderr.String() != test.code || strings.Contains(stderr.String(), "private") {
+			t.Fatalf("error=%v code=%d stderr=%q", test.err, code, stderr.String())
+		}
+	}
+}
+
 func TestPF001AgentMemoryCommandMapsProtectedFactoryFailuresToStableStderr(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -190,11 +237,20 @@ func TestPF001AgentMemoryCommandAcceptsGracefulShutdownOnlyForSignalCancellation
 }
 
 type factoryStub struct {
-	runner launcher.MCPRunner
-	err    error
-	ctx    context.Context
-	host   agentconfig.AgentHost
-	calls  int
+	runner      launcher.MCPRunner
+	err         error
+	ctx         context.Context
+	host        agentconfig.AgentHost
+	calls       int
+	resumeCalls int
+	resumeToken string
+	resumeErr   error
+}
+
+func (f *factoryStub) ResumeInstallation(_ context.Context, token string) error {
+	f.resumeCalls++
+	f.resumeToken = token
+	return f.resumeErr
 }
 
 func (f *factoryStub) BuildMCP(ctx context.Context, host agentconfig.AgentHost) (launcher.MCPRunner, error) {

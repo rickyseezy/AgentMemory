@@ -14,41 +14,47 @@ const persistenceTimeout = 5 * time.Second
 // Dependencies are explicit so no runtime phase can be accidentally omitted
 // from the production composition root.
 type Dependencies struct {
-	Operations    OperationRepository
-	Host          HostCapabilityProbe
-	Detector      ContainerRuntimeDetector
-	Catalog       RuntimeReleaseCatalog
-	Consent       RuntimeConsentPort
-	Fetcher       RuntimeArtifactFetcher
-	Verifier      RuntimeArtifactVerifier
-	Prerequisites RuntimePrerequisiteInstaller
-	Installer     ContainerRuntimeInstaller
-	Terms         ThirdPartyTermsPort
-	Controller    ContainerRuntimeController
-	Capabilities  RuntimeCapabilityProbe
+	Operations           OperationRepository
+	OwnershipAuthorities RuntimeOwnershipAuthorityResolver
+	OwnershipRecords     RuntimeOwnershipRepository
+	Host                 HostCapabilityProbe
+	Detector             ContainerRuntimeDetector
+	Catalog              RuntimeReleaseCatalog
+	Consent              RuntimeConsentPort
+	Fetcher              RuntimeArtifactFetcher
+	Verifier             RuntimeArtifactVerifier
+	Prerequisites        RuntimePrerequisiteInstaller
+	Installer            ContainerRuntimeInstaller
+	Terms                ThirdPartyTermsPort
+	Controller           ContainerRuntimeController
+	Capabilities         RuntimeCapabilityProbe
 }
 
 // Application is the resumable PF-006 runtime provisioning use case consumed
 // by PF-001's EnsureContainerRuntime adapter.
 type Application struct {
-	operations    OperationRepository
-	host          HostCapabilityProbe
-	detector      ContainerRuntimeDetector
-	catalog       RuntimeReleaseCatalog
-	consent       RuntimeConsentPort
-	fetcher       RuntimeArtifactFetcher
-	verifier      RuntimeArtifactVerifier
-	prerequisites RuntimePrerequisiteInstaller
-	installer     ContainerRuntimeInstaller
-	terms         ThirdPartyTermsPort
-	controller    ContainerRuntimeController
-	capabilities  RuntimeCapabilityProbe
+	operations           OperationRepository
+	ownershipAuthorities RuntimeOwnershipAuthorityResolver
+	ownershipRecords     RuntimeOwnershipRepository
+	host                 HostCapabilityProbe
+	detector             ContainerRuntimeDetector
+	catalog              RuntimeReleaseCatalog
+	consent              RuntimeConsentPort
+	fetcher              RuntimeArtifactFetcher
+	verifier             RuntimeArtifactVerifier
+	prerequisites        RuntimePrerequisiteInstaller
+	installer            ContainerRuntimeInstaller
+	terms                ThirdPartyTermsPort
+	controller           ContainerRuntimeController
+	capabilities         RuntimeCapabilityProbe
 }
 
 // New constructs a runtime installer only when every capability exists.
 func New(dependencies Dependencies) (*Application, error) {
 	values := []any{
 		dependencies.Operations,
+		dependencies.OwnershipAuthorities,
+		dependencies.OwnershipRecords,
 		dependencies.Host,
 		dependencies.Detector,
 		dependencies.Catalog,
@@ -67,18 +73,20 @@ func New(dependencies Dependencies) (*Application, error) {
 		}
 	}
 	return &Application{
-		operations:    dependencies.Operations,
-		host:          dependencies.Host,
-		detector:      dependencies.Detector,
-		catalog:       dependencies.Catalog,
-		consent:       dependencies.Consent,
-		fetcher:       dependencies.Fetcher,
-		verifier:      dependencies.Verifier,
-		prerequisites: dependencies.Prerequisites,
-		installer:     dependencies.Installer,
-		terms:         dependencies.Terms,
-		controller:    dependencies.Controller,
-		capabilities:  dependencies.Capabilities,
+		operations:           dependencies.Operations,
+		ownershipAuthorities: dependencies.OwnershipAuthorities,
+		ownershipRecords:     dependencies.OwnershipRecords,
+		host:                 dependencies.Host,
+		detector:             dependencies.Detector,
+		catalog:              dependencies.Catalog,
+		consent:              dependencies.Consent,
+		fetcher:              dependencies.Fetcher,
+		verifier:             dependencies.Verifier,
+		prerequisites:        dependencies.Prerequisites,
+		installer:            dependencies.Installer,
+		terms:                dependencies.Terms,
+		controller:           dependencies.Controller,
+		capabilities:         dependencies.Capabilities,
 	}, nil
 }
 
@@ -149,9 +157,20 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 	}
 
 	if operation.State() == runtimeinstall.OperationStateReady {
-		return completedResult(operation)
+		ownership, recorded, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan)
+		if ownershipError != nil {
+			return resultFrom(operation, OutcomeUnknown, errorCode(ownershipError)), ownershipError
+		}
+		if !recorded {
+			return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
+				applicationError(ErrorCodeIntegrityViolation, false)
+		}
+		return completedResult(operation, ownership)
 	}
 	if operation.State() == runtimeinstall.OperationStateRebootPending {
+		if _, _, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan); ownershipError != nil {
+			return resultFrom(operation, OutcomeUnknown, errorCode(ownershipError)), ownershipError
+		}
 		if command.ResumeReceipt == nil {
 			return resultFrom(operation, OutcomeRebootRequired, ErrorCodeRebootRequired), nil
 		}
@@ -160,6 +179,9 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 		}
 		if saveError := a.saveFresh(ctx, operation); saveError != nil {
 			return resultFrom(operation, OutcomeUnknown, errorCode(saveError)), saveError
+		}
+		if _, _, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan); ownershipError != nil {
+			return resultFrom(operation, OutcomeUnknown, errorCode(ownershipError)), ownershipError
 		}
 	}
 	if operation.State() == runtimeinstall.OperationStateFailedRecoverable ||
@@ -178,6 +200,9 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 	for operation.State() == runtimeinstall.OperationStateRunning {
 		if saveError := a.save(ctx, operation); saveError != nil {
 			return resultFrom(operation, OutcomeUnknown, errorCode(saveError)), saveError
+		}
+		if _, _, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan); ownershipError != nil {
+			return resultFrom(operation, OutcomeUnknown, errorCode(ownershipError)), ownershipError
 		}
 		phase := operation.CurrentPhase()
 		output, dispatchError := a.dispatch(ctx, phase, newRequest(operation, plan))
@@ -222,11 +247,73 @@ func (a *Application) Ensure(ctx context.Context, command Command) (Result, erro
 		if saveError := a.saveFresh(ctx, operation); saveError != nil {
 			return resultFrom(operation, output.outcome, errorCode(saveError)), saveError
 		}
+		ownership, recorded, ownershipError := a.recordRuntimeOwnership(ctx, operation, plan)
+		if ownershipError != nil {
+			return resultFrom(operation, output.outcome, errorCode(ownershipError)), ownershipError
+		}
+		if operation.State() == runtimeinstall.OperationStateReady {
+			if !recorded {
+				return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
+					applicationError(ErrorCodeIntegrityViolation, false)
+			}
+			return completedResult(operation, ownership)
+		}
 		if output.outcome != OutcomeCompleted {
 			return resultFrom(operation, output.outcome, codeForState(operation.State())), nil
 		}
 	}
-	return completedResult(operation)
+	return resultFrom(operation, OutcomeUnknown, ErrorCodeInternal), applicationError(ErrorCodeInternal, false)
+}
+
+func (a *Application) recordRuntimeOwnership(
+	ctx context.Context,
+	operation *runtimeinstall.Operation,
+	canonicalPlan []byte,
+) (runtimeinstall.RuntimeOwnershipRecord, bool, error) {
+	if operation == nil || !runtimeinstall.RuntimeOwnershipRequired(operation.Snapshot()) {
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, nil
+	}
+	plan, err := runtimeinstall.DecodePlanV1(canonicalPlan)
+	if err != nil || plan.Digest() != operation.PlanDigest() {
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	authority, err := a.ownershipAuthorities.ResolveRuntimeOwnershipAuthority(ctx, canonicalPlan)
+	if err != nil {
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, mapOwnershipError(err)
+	}
+	var previous *runtimeinstall.RuntimeOwnershipRecord
+	loaded, loadError := a.ownershipRecords.LoadRuntimeOwnership(ctx, operation.ID())
+	switch {
+	case loadError == nil:
+		previous = &loaded
+	case errors.Is(loadError, ErrOwnershipNotFound):
+	default:
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, mapOwnershipError(loadError)
+	}
+	record, err := runtimeinstall.NewRuntimeOwnershipRecord(plan, operation.Snapshot(), authority, previous)
+	if err != nil {
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, applicationError(ErrorCodeIntegrityViolation, false)
+	}
+	if err := mapOwnershipError(a.ownershipRecords.SaveRuntimeOwnership(ctx, record)); err != nil {
+		return runtimeinstall.RuntimeOwnershipRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+func mapOwnershipError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, ErrOwnershipConflict):
+		return applicationError(ErrorCodeConflict, true)
+	case errors.Is(err, ErrOwnershipIntegrity):
+		return applicationError(ErrorCodeIntegrityViolation, false)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return applicationError(ErrorCodeDeadlineExceeded, true)
+	default:
+		return applicationError(ErrorCodeInternal, true)
+	}
 }
 
 func (a *Application) dispatch(ctx context.Context, phase runtimeinstall.Phase, request Request) (Output, error) {

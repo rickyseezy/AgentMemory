@@ -30,7 +30,7 @@ func TestPF001DarwinDesktopHelperExchangeReadsAndAtomicallyPublishesForExactOwne
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- private directory fixture, not a regular file.
 		t.Fatal(err)
 	}
 	requestPath := filepath.Join(directory, "request-"+request.String()+".json")
@@ -55,7 +55,7 @@ func TestPF001DarwinDesktopHelperExchangeReadsAndAtomicallyPublishesForExactOwne
 	if err := exchange.WriteDesktopMutationReceipt(context.Background(), receiptPath, []byte(`{"replacement":true}`)); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("existing receipt replacement error=%v", err)
 	}
-	stored, err := os.ReadFile(receiptPath)
+	stored, err := os.ReadFile(receiptPath) // #nosec G304 -- receiptPath is digest-derived under the test's private root.
 	if err != nil || string(stored) != `{"receipt":true}` {
 		t.Fatalf("stored receipt=%q error=%v", stored, err)
 	}
@@ -82,7 +82,7 @@ func TestPF001DarwinDesktopHelperExchangeRejectsPathAndObjectSubstitution(t *tes
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- private directory fixture, not a regular file.
 		t.Fatal(err)
 	}
 	valid := filepath.Join(directory, "request-"+request.String()+".json")
@@ -102,7 +102,7 @@ func TestPF001DarwinDesktopHelperExchangeRejectsPathAndObjectSubstitution(t *tes
 			}
 		})
 	}
-	if err := os.Chmod(valid, 0o644); err != nil {
+	if err := os.Chmod(valid, 0o644); err != nil { // #nosec G302 -- deliberately unsafe request-mode rejection fixture.
 		t.Fatal(err)
 	}
 	if _, _, err := exchange.ReadDesktopMutationRequest(context.Background(), valid); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
@@ -136,7 +136,8 @@ func TestPF001DarwinDesktopHelperExchangeRejectsMissingAndCancelledAuthority(t *
 	receiptPath := filepath.Join(directory, "request-"+request.String()+".receipt.json")
 	exchange := darwinDesktopHelperExchange{uid: uid, gid: gid, home: home}
 
-	if _, _, err := exchange.ReadDesktopMutationRequest(nil, requestPath); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+	//lint:ignore SA1012 Deliberate nil-context privileged-exchange regression fixture.
+	if _, _, err := exchange.ReadDesktopMutationRequest(nil, requestPath); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) { //nolint:staticcheck // SA1012: owner=security expiry=2027-07-15.
 		t.Fatalf("nil-context read error=%v", err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -144,7 +145,8 @@ func TestPF001DarwinDesktopHelperExchangeRejectsMissingAndCancelledAuthority(t *
 	if _, _, err := exchange.ReadDesktopMutationRequest(cancelled, requestPath); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled read error=%v", err)
 	}
-	if err := exchange.WriteDesktopMutationReceipt(nil, receiptPath, []byte("receipt")); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+	//lint:ignore SA1012 Deliberate nil-context privileged-exchange regression fixture.
+	if err := exchange.WriteDesktopMutationReceipt(nil, receiptPath, []byte("receipt")); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) { //nolint:staticcheck // SA1012: owner=security expiry=2027-07-15.
 		t.Fatalf("nil-context write error=%v", err)
 	}
 	if err := exchange.WriteDesktopMutationReceipt(cancelled, receiptPath, []byte("receipt")); !errors.Is(err, context.Canceled) {
@@ -182,7 +184,7 @@ func TestPF001DarwinDesktopHelperExchangeRejectsInvalidExchangeDirectory(t *test
 		t.Fatalf("regular file opened=%v error=%v", opened, err)
 	}
 	wrongMode := filepath.Join(home, "wrong-mode")
-	if err := os.Mkdir(wrongMode, 0o755); err != nil {
+	if err := os.Mkdir(wrongMode, 0o755); err != nil { // #nosec G301 -- deliberately permissive directory rejection fixture.
 		t.Fatal(err)
 	}
 	if opened, err := exchange.openDirectory(wrongMode); opened != nil || !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {

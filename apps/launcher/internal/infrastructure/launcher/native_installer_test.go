@@ -12,6 +12,9 @@ import (
 func TestPF001NativeCommandInstallerBuildsOnlyFromAuthenticatedCommandAuthority(t *testing.T) {
 	t.Parallel()
 	command := nativeInstallerCommandFixture(t)
+	resumeReceipt := install.DigestBytes([]byte("resume receipt"))
+	command.ResumeReceipt = &resumeReceipt
+	command.ResumeContinuation = false
 	wantResult := installapp.InstallResult{OperationID: command.OperationID}
 	application := &nativeInstallApplicationStub{result: wantResult}
 	var built nativeInstallAuthority
@@ -35,9 +38,17 @@ func TestPF001NativeCommandInstallerBuildsOnlyFromAuthenticatedCommandAuthority(
 		string(built.CanonicalPlan) != string(command.CanonicalPlan) {
 		t.Fatalf("built authority=%+v", built)
 	}
+	if application.command.ResumeReceipt == nil || !application.command.ResumeReceipt.Equal(resumeReceipt) ||
+		application.command.ResumeContinuation {
+		t.Fatalf("resume command was not copied exactly: %+v", application.command)
+	}
 	command.CanonicalPlan[0] ^= 0xff
+	*command.ResumeReceipt = install.DigestBytes([]byte("mutated receipt"))
 	if string(application.command.CanonicalPlan) != string(built.CanonicalPlan) {
 		t.Fatal("application command aliases caller-owned plan bytes")
+	}
+	if application.command.ResumeReceipt.Equal(*command.ResumeReceipt) {
+		t.Fatal("application command aliases caller-owned resume receipt")
 	}
 }
 
@@ -141,6 +152,27 @@ func TestPF001NativeCommandInstallerClosesOperationScopedApplication(t *testing.
 		application.closed != 2 {
 		t.Fatalf("close failure error=%v closes=%d", err, application.closed)
 	}
+	unmanaged := nativeUnmanagedInstallApplication{}
+	unmanagedInstaller, err := newNativeCommandInstallerWithAuthenticator(
+		func(context.Context, nativeInstallAuthority) (nativeInstallApplication, error) {
+			return unmanaged, nil
+		}, nativeInstallerAuthenticatorFixture(t),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unmanagedInstaller.Install(t.Context(), command); err != nil {
+		t.Fatalf("unmanaged operation application error=%v", err)
+	}
+}
+
+type nativeUnmanagedInstallApplication struct{}
+
+func (nativeUnmanagedInstallApplication) Install(
+	context.Context,
+	installapp.InstallCommand,
+) (installapp.InstallResult, error) {
+	return installapp.InstallResult{}, nil
 }
 
 type nativeInstallApplicationStub struct {

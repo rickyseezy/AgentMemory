@@ -103,8 +103,9 @@ func (i *nativeCommandInstaller) Install(
 		return installapp.InstallResult{}, errNativeInstallerUnavailable
 	}
 	owned := installapp.InstallCommand{
-		OperationID:   authority.OperationID.String(),
-		CanonicalPlan: append([]byte(nil), authority.CanonicalPlan...),
+		OperationID:        authority.OperationID.String(),
+		CanonicalPlan:      append([]byte(nil), authority.CanonicalPlan...),
+		ResumeContinuation: command.ResumeContinuation,
 	}
 	if command.ResumeReceipt != nil {
 		receipt := *command.ResumeReceipt

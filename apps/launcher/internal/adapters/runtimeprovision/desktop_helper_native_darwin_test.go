@@ -101,13 +101,13 @@ func TestPF001DarwinDesktopHelperFilePrimitivesBindExactDescriptorBytes(t *testi
 	t.Parallel()
 	contents := []byte("signed helper fixture")
 	path := filepath.Join(t.TempDir(), "helper")
-	if err := os.WriteFile(path, contents, 0o700); err != nil {
+	if err := os.WriteFile(path, contents, 0o700); err != nil { // #nosec G306 -- executable-mode helper fixture.
 		t.Fatal(err)
 	}
 	if !safeDarwinDesktopMutationExecutable(path) {
 		t.Fatal("owner executable was rejected")
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is created under this test's private temporary root.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +185,8 @@ func TestPF001DarwinDesktopHelperArtifactPrimitivesRejectOwnerAndModeSubstitutio
 		t.Fatal("exact descriptor did not match")
 	}
 	_ = unix.Close(descriptor)
-	if !darwinDesktopMutationArtifactMatches(path, uid, digest, uint64(len(contents)), 0o600) ||
-		darwinDesktopMutationArtifactMatches(path, uid, runtimeinstall.Sum([]byte("foreign")), uint64(len(contents)), 0o600) {
+	if !darwinDesktopMutationArtifactMatches(path, uid, digest, uint64(len(contents))) ||
+		darwinDesktopMutationArtifactMatches(path, uid, runtimeinstall.Sum([]byte("foreign")), uint64(len(contents))) {
 		t.Fatal("artifact byte binding failed")
 	}
 	if parsed, ok := darwinDesktopMutationPrincipalUID("uid:501"); !ok || parsed != 501 {
@@ -210,7 +210,7 @@ func TestPF001DarwinDesktopHelperArtifactPrimitivesRejectOwnerAndModeSubstitutio
 func TestPF001DarwinDesktopHelperProductionConstructorsFailClosedWithoutElevationOrAuthority(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "helper")
-	if err := os.WriteFile(path, []byte("helper"), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte("helper"), 0o700); err != nil { // #nosec G306 -- executable-mode constructor fixture.
 		t.Fatal(err)
 	}
 	keys, err := NewProtectedDesktopMutationReceiptPublicKeySource(path)

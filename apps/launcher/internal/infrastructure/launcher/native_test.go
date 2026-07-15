@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
@@ -19,10 +20,12 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
 	journalport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installjournal"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	agentconfigdomain "github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/agentconfig"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/rebootcontinuation"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
@@ -41,6 +44,7 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		roots.RuntimeConsentReceiptState == roots.RuntimeConsentKeyState ||
 		roots.RuntimeReplayState == roots.RuntimeState ||
 		roots.RuntimeReplayState == roots.RuntimeConsentReceiptState ||
+		roots.RuntimeOwnershipState == roots.RuntimeState ||
 		roots.ReleaseAnchorState == roots.RuntimeState || roots.RuntimeCatalogAnchorState == roots.RuntimeState ||
 		roots.RuntimeCatalogAnchorState == roots.ReleaseAnchorState {
 		t.Fatalf("default roots are not purpose separated: %+v", roots)
@@ -56,6 +60,10 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 	missingConsentReceipts.RuntimeConsentReceiptState = ""
 	missingReplay := valid
 	missingReplay.RuntimeReplayState = ""
+	missingContinuation := valid
+	missingContinuation.RebootContinuationState = ""
+	missingOwnership := valid
+	missingOwnership.RuntimeOwnershipState = ""
 	for name, candidate := range map[string]NativeRoots{
 		"empty": {},
 		"relative": {OperationState: "relative", BootstrapPointer: valid.BootstrapPointer, SetupDecisions: valid.SetupDecisions,
@@ -68,9 +76,11 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 			SetupDecisions: valid.SetupDecisions, RuntimeState: valid.RuntimeState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
 			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, ReleaseAnchorState: valid.ReleaseAnchorState, CanonicalPlans: valid.CanonicalPlans},
+		"missing runtime ownership":        missingOwnership,
 		"missing runtime consent":          missingConsent,
 		"missing runtime consent receipts": missingConsentReceipts,
 		"missing runtime replay":           missingReplay,
+		"missing reboot continuation":      missingContinuation,
 		"missing release anchor": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
 			SetupDecisions: valid.SetupDecisions, PreparationState: valid.PreparationState, RuntimeState: valid.RuntimeState, CanonicalPlans: valid.CanonicalPlans},
 		"missing runtime catalog anchor": {OperationState: valid.OperationState, BootstrapPointer: valid.BootstrapPointer,
@@ -82,6 +92,15 @@ func TestPF001NativeRootsAreAbsolutePurposeSeparatedAndDeterministic(t *testing.
 		if candidate.valid() {
 			t.Fatalf("%s roots accepted: %+v", name, candidate)
 		}
+	}
+}
+
+func TestPF001NativeRootsFailClosedWithoutAnOSConfigurationAuthority(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("AppData", "")
+	if roots, err := defaultNativeRoots(); err == nil || roots != (NativeRoots{}) {
+		t.Fatalf("defaultNativeRoots() = (%+v, %v)", roots, err)
 	}
 }
 
@@ -99,6 +118,7 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	composition, err := composeNative(context.Background(), roots, journalFactory, pendingReadySurface{})
 	if err != nil || composition.factory == nil || composition.resources == nil || composition.preparations == nil ||
 		composition.plans == nil || composition.operations == nil || composition.runtimeState == nil ||
+		composition.runtimeOwnership == nil ||
 		composition.consentSigner == nil || composition.consentBroker == nil || composition.consentRepository == nil ||
 		composition.replayJournals == nil ||
 		composition.releaseAnchor == nil || composition.runtimeCatalogAnchor == nil || composition.artifacts == nil || composition.resourceState == nil ||
@@ -106,13 +126,13 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 		composition.hostPointers == nil || composition.installLock == nil {
 		t.Fatalf("composeNative()=%+v,%v", composition, err)
 	}
-	if len(observed) != 12 || observed[0] != roots.OperationState ||
+	if len(observed) != 13 || observed[0] != roots.OperationState ||
 		observed[1] != roots.BootstrapPointer || observed[2] != roots.SetupDecisions ||
 		observed[3] != roots.PreparationState || observed[4] != roots.RuntimeState ||
-		observed[5] != roots.RuntimeConsentReceiptState || observed[6] != roots.RuntimeReplayState ||
-		observed[7] != roots.ReleaseAnchorState || observed[8] != roots.RuntimeCatalogAnchorState ||
-		observed[9] != roots.ArtifactState || observed[10] != roots.ResourceState ||
-		observed[11] != roots.ActiveReleaseState {
+		observed[5] != roots.RuntimeOwnershipState || observed[6] != roots.RuntimeConsentReceiptState ||
+		observed[7] != roots.RuntimeReplayState || observed[8] != roots.ReleaseAnchorState ||
+		observed[9] != roots.RuntimeCatalogAnchorState || observed[10] != roots.ArtifactState ||
+		observed[11] != roots.ResourceState || observed[12] != roots.ActiveReleaseState {
 		t.Fatalf("journal roots=%q", observed)
 	}
 	if _, err := composition.factory.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) {
@@ -231,7 +251,7 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 			t.Fatalf("%s error=%v", name, err)
 		}
 	}
-	for failAt := 1; failAt <= 12; failAt++ {
+	for failAt := 1; failAt <= 13; failAt++ {
 		for _, returnNil := range []bool{false, true} {
 			calls := 0
 			_, err := composeNative(context.Background(), roots,
@@ -254,12 +274,12 @@ func TestPF001NativeCompositionRejectsIncompleteAuthoritiesAtEveryBoundary(t *te
 	_, err := composeNative(context.Background(), roots,
 		func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
 			calls++
-			if calls == 8 {
+			if calls == 9 {
 				return nativePlainJournalProvider{}, nil
 			}
 			return nativeMissingJournalProvider{}, nil
 		}, pendingReadySurface{})
-	if err == nil || calls != 12 {
+	if err == nil || calls != 13 {
 		t.Fatalf("ordinary release-anchor journal accepted: calls=%d error=%v", calls, err)
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -350,6 +370,197 @@ func TestPF001NativeFactoryBuildMapsOnlyRealProtectedStateFailures(t *testing.T)
 	}
 	if _, err := compositionFailure.BuildMCP(context.Background(), agentconfigdomain.AgentHostCodex); !errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) {
 		t.Fatalf("composition failure error=%v", err)
+	}
+}
+
+func TestPF001NativeFactoryResumeRejectsInvalidAndMissingContinuationAuthority(t *testing.T) {
+	t.Parallel()
+	var absent *NativeFactory
+	if err := absent.ResumeInstallation(t.Context(), strings.Repeat("a", 64)); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("nil resume factory error = %v", err)
+	}
+	factory := &NativeFactory{
+		roots: func() (NativeRoots, error) { return nativeTestRoots(t.TempDir()), nil },
+		journals: func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+			return nativeMissingJournalProvider{}, nil
+		},
+		ready: pendingReadySurface{},
+		production: func(context.Context, *nativeComposition) (nativeProductionFirstStart, error) {
+			return nativeProductionFirstStart{}, errors.New("must not reach missing-record production")
+		},
+	}
+	for _, token := range []string{"", strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("a", 63)} {
+		if err := factory.ResumeInstallation(t.Context(), token); !errors.Is(err, ErrResumeIntegrity) {
+			t.Fatalf("invalid token error = %v", err)
+		}
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := factory.ResumeInstallation(cancelled, strings.Repeat("a", 64)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled resume error = %v", err)
+	}
+	rootFailure := *factory
+	rootFailure.roots = func() (NativeRoots, error) { return NativeRoots{}, errors.New("private root failure") }
+	if err := rootFailure.ResumeInstallation(t.Context(), strings.Repeat("a", 64)); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("root failure error = %v", err)
+	}
+	compositionFailure := *factory
+	compositionFailure.journals = func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+		return nil, errors.New("private journal failure")
+	}
+	if err := compositionFailure.ResumeInstallation(t.Context(), strings.Repeat("a", 64)); !errors.Is(err, ErrResumeUnavailable) {
+		t.Fatalf("composition failure error = %v", err)
+	}
+	if err := factory.ResumeInstallation(t.Context(), strings.Repeat("a", 64)); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("missing continuation error = %v", err)
+	}
+}
+
+func TestPF001NativeFactoryResumeJoinsRecordAndPendingOperationBeforePlan(t *testing.T) {
+	t.Parallel()
+	roots := nativeTestRoots(t.TempDir())
+	journals := newNativeSharedJournalFactory()
+	composition, err := composeNative(t.Context(), roots, journals.provider, pendingReadySurface{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationID, _ := install.NewOperationID("019f5f23-5678-7def-9123-abcdef012347")
+	planDigest, _ := install.BindPlan([]byte("canonical plan absent from repository"))
+	operation, _ := install.NewOperation(operationID, planDigest)
+	if err := composition.operations.Save(t.Context(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	fact, _ := install.NewNonSecretFact("probe_status", "verified")
+	boundary, _ := install.NewCompensationBoundary("remove_agentmemory_owned_partial")
+	action, _ := install.NewSafeAction("setup.continue")
+	evidence, _ := install.NewStepEvidence(install.StepEvidenceInput{
+		Phase: install.PhaseVerifyHost, Attempt: 1, PlanDigest: planDigest,
+		InputDigest: install.DigestBytes([]byte("input")), OutputDigest: install.DigestBytes([]byte("output")),
+		Facts: []install.NonSecretFact{fact}, RuntimeOwnership: install.RuntimeOwnershipUndetermined,
+		CompensationBoundary: boundary, NextSafeAction: action,
+	})
+	_ = operation.CompleteStep(evidence)
+	if err := composition.operations.Save(t.Context(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	receipt := install.DigestBytes([]byte("resume"))
+	resumeAction, _ := install.NewSafeAction("setup.resume_after_restart")
+	checkpoint, _ := install.NewRebootCheckpoint(planDigest, install.PhaseEnsureContainerRuntime, 1, receipt, resumeAction)
+	_ = operation.MarkRebootPending(planDigest, checkpoint)
+	if err := composition.operations.Save(t.Context(), operation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	record, _ := rebootcontinuation.NewRecord(rebootcontinuation.RecordInput{
+		LauncherPath: "/opt/AgentMemory/bin/agentmemory", LauncherDigest: install.DigestBytes([]byte("launcher")),
+		OperationID: operationID, JournalPath: "/owner/install-operation.json",
+		JournalDigest: install.DigestBytes([]byte("journal")), ExpiresAt: now.Add(rebootcontinuation.MaximumLifetime),
+		Nonce: rebootcontinuation.NonceBytes([]byte("one use")),
+	}, now)
+	if err := composition.continuationRecords.Publish(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := rebootcontinuation.TokenFor(operationID)
+	if err := composition.resources.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	factory := &NativeFactory{
+		roots: func() (NativeRoots, error) { return roots, nil }, journals: journals.provider,
+		ready: pendingReadySurface{}, production: func(context.Context, *nativeComposition) (nativeProductionFirstStart, error) {
+			return nativeProductionFirstStart{}, errors.New("plan failure must precede production")
+		},
+	}
+	if err := factory.ResumeInstallation(t.Context(), token); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("missing canonical plan error = %v", err)
+	}
+
+	verifiedComposition, err := composeNative(t.Context(), roots, journals.provider, pendingReadySurface{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedOperation, err := verifiedComposition.operations.Load(t.Context(), operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifiedOperation.VerifyResume(planDigest, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifiedComposition.operations.Save(t.Context(), verifiedOperation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifiedComposition.resources.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := factory.ResumeInstallation(t.Context(), token); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("ResumeVerified missing canonical plan error = %v", err)
+	}
+
+	runningComposition, err := composeNative(t.Context(), roots, journals.provider, pendingReadySurface{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runningOperation, err := runningComposition.operations.Load(t.Context(), operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action, resumeError := runningOperation.Resume(planDigest); resumeError != nil || action != install.ResumeActionCurrentPhase {
+		t.Fatalf("Resume() = (%v, %v)", action, resumeError)
+	}
+	if err := runningComposition.operations.Save(t.Context(), runningOperation.Snapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runningComposition.resources.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := factory.ResumeInstallation(t.Context(), token); !errors.Is(err, ErrResumeIntegrity) {
+		t.Fatalf("stale running continuation error = %v", err)
+	}
+	cleanedComposition, err := composeNative(t.Context(), roots, journals.provider, pendingReadySurface{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cleanedComposition.resources.Close(context.Background()) }()
+	if _, err := cleanedComposition.continuationRecords.LoadByToken(t.Context(), token); !errors.Is(err, rebootapp.ErrRecordNotFound) {
+		t.Fatalf("stale continuation cleanup error = %v", err)
+	}
+}
+
+func TestPF001NativeContinuationResumesOnlyPendingOrDurablyVerifiedState(t *testing.T) {
+	t.Parallel()
+	for _, state := range []install.State{install.StateRebootPending, install.StateResumeVerified} {
+		if !nativeContinuationStateMayResume(state) {
+			t.Fatalf("state %s was rejected", state)
+		}
+	}
+	for _, state := range []install.State{
+		install.StateUnknown, install.StateRunning, install.StateFailedRecoverable,
+		install.StatePausedForAdministrator, install.StateCancelled, install.StateUnsupportedHost,
+		install.StateRuntimeConflict, install.StateReady,
+	} {
+		if nativeContinuationStateMayResume(state) {
+			t.Fatalf("state %s was accepted", state)
+		}
+	}
+}
+
+func TestPF001NativeResumeMapsOnlyClosedInstallerErrors(t *testing.T) {
+	t.Parallel()
+	if mapped := mapNativeResumeRunError(nil); mapped != nil {
+		t.Fatalf("nil run error mapped to %v", mapped)
+	}
+	_, validationError := (&installapp.InstallApplication{}).Install(t.Context(), installapp.InstallCommand{})
+	if mapped := mapNativeResumeRunError(validationError); !errors.Is(mapped, ErrResumeIntegrity) {
+		t.Fatalf("validation error mapped to %v", mapped)
+	}
+	for _, deadline := range []error{context.Canceled, context.DeadlineExceeded} {
+		if mapped := mapNativeResumeRunError(deadline); !errors.Is(mapped, deadline) {
+			t.Fatalf("deadline %v mapped to %v", deadline, mapped)
+		}
+	}
+	private := errors.New("private worker failure")
+	if mapped := mapNativeResumeRunError(private); !errors.Is(mapped, ErrResumeUnavailable) ||
+		errors.Is(mapped, private) {
+		t.Fatalf("private error mapped to %v", mapped)
 	}
 }
 
@@ -840,9 +1051,11 @@ func nativeTestRoots(root string) NativeRoots {
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),
 		RuntimeState:               filepath.Join(root, "runtime"),
+		RuntimeOwnershipState:      filepath.Join(root, "runtime-ownership"),
 		RuntimeConsentKeyState:     filepath.Join(root, "runtime-consent-key"),
 		RuntimeConsentReceiptState: filepath.Join(root, "runtime-consent-receipt"),
 		RuntimeReplayState:         filepath.Join(root, "runtime-replay"),
+		RebootContinuationState:    filepath.Join(root, "reboot-continuation"),
 		ReleaseAnchorState:         filepath.Join(root, "release-anchor"),
 		RuntimeCatalogAnchorState:  filepath.Join(root, "runtime-catalog-anchor"),
 		ArtifactState:              filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
@@ -894,6 +1107,164 @@ func (nativeMissingJournal) LoadLatest(context.Context) (journalport.Snapshot, e
 
 func (nativeMissingJournal) ConfirmDurable(context.Context, string, uint64) error {
 	return journalport.ErrNotFound
+}
+
+type nativeSharedJournalFactory struct {
+	mu        sync.Mutex
+	providers map[string]*nativeSharedJournalProvider
+}
+
+func newNativeSharedJournalFactory() *nativeSharedJournalFactory {
+	return &nativeSharedJournalFactory{providers: make(map[string]*nativeSharedJournalProvider)}
+}
+
+func (f *nativeSharedJournalFactory) provider(
+	locator *bootstrapadapter.OperationLocator,
+) (filesystem.OperationJournalProvider, error) {
+	if f == nil || locator == nil {
+		return nil, errors.New("shared journal locator is required")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	provider := f.providers[locator.Root()]
+	if provider == nil {
+		var err error
+		provider, err = newNativeSharedJournalProvider()
+		if err != nil {
+			return nil, err
+		}
+		f.providers[locator.Root()] = provider
+	}
+	return provider, nil
+}
+
+type nativeSharedJournalProvider struct {
+	mu       sync.Mutex
+	keys     *bootstrapadapter.MemoryOperationKeySource
+	anchors  *bootstrapadapter.MemoryRollbackAnchorStore
+	owner    install.OwnerBinding
+	journals map[string]*bootstrapadapter.AnchoredJournal
+}
+
+func newNativeSharedJournalProvider() (*nativeSharedJournalProvider, error) {
+	owner, err := install.BindOwner("native-test-machine", "native-test-principal")
+	if err != nil {
+		return nil, err
+	}
+	keys, err := bootstrapadapter.NewMemoryOperationKeySource(bytes.NewReader(bytes.Repeat([]byte{0x6b}, 4096)))
+	if err != nil {
+		return nil, err
+	}
+	anchors, err := bootstrapadapter.NewMemoryRollbackAnchorStore(keys)
+	if err != nil {
+		return nil, err
+	}
+	return &nativeSharedJournalProvider{
+		keys: keys, anchors: anchors, owner: owner,
+		journals: make(map[string]*bootstrapadapter.AnchoredJournal),
+	}, nil
+}
+
+func (p *nativeSharedJournalProvider) JournalFor(
+	ctx context.Context,
+	operationID install.OperationID,
+) (journalport.Journal, error) {
+	if p == nil || ctx == nil || operationID.IsZero() {
+		return nil, journalport.ErrInvalidSnapshot
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	journal := p.journals[operationID.String()]
+	if journal == nil {
+		keyRef, err := p.keys.Ensure(ctx, operationID, p.owner)
+		if err != nil {
+			return nil, err
+		}
+		journal, err = bootstrapadapter.NewAnchoredJournal(
+			&nativeSharedJournal{}, p.anchors, keyRef, operationID, p.owner,
+		)
+		if err != nil {
+			return nil, err
+		}
+		p.journals[operationID.String()] = journal
+	}
+	return journal, nil
+}
+
+type nativeSharedJournal struct {
+	mu     sync.Mutex
+	latest *journalport.Snapshot
+}
+
+func (j *nativeSharedJournal) Append(
+	ctx context.Context,
+	expectedPreviousRevision uint64,
+	snapshot journalport.Snapshot,
+) error {
+	if j == nil || ctx == nil {
+		return journalport.ErrInvalidSnapshot
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	currentRevision := uint64(0)
+	if j.latest != nil {
+		currentRevision = j.latest.Revision
+	}
+	if expectedPreviousRevision != currentRevision || snapshot.Revision != currentRevision+1 {
+		return journalport.ErrConflict
+	}
+	cloned := cloneNativeJournalSnapshot(snapshot)
+	j.latest = &cloned
+	return nil
+}
+
+func (j *nativeSharedJournal) LoadLatest(ctx context.Context) (journalport.Snapshot, error) {
+	if j == nil || ctx == nil {
+		return journalport.Snapshot{}, journalport.ErrInvalidSnapshot
+	}
+	if err := ctx.Err(); err != nil {
+		return journalport.Snapshot{}, err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.latest == nil {
+		return journalport.Snapshot{}, journalport.ErrNotFound
+	}
+	return cloneNativeJournalSnapshot(*j.latest), nil
+}
+
+func (j *nativeSharedJournal) ConfirmDurable(
+	ctx context.Context,
+	operationID string,
+	revision uint64,
+) error {
+	if j == nil || ctx == nil {
+		return journalport.ErrInvalidSnapshot
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.latest == nil {
+		return journalport.ErrNotFound
+	}
+	if j.latest.OperationID != operationID || j.latest.Revision != revision {
+		return journalport.ErrConflict
+	}
+	return nil
+}
+
+func cloneNativeJournalSnapshot(snapshot journalport.Snapshot) journalport.Snapshot {
+	cloned := snapshot
+	cloned.Payload = append([]byte(nil), snapshot.Payload...)
+	return cloned
 }
 
 func nativeCancellationFixture(t testing.TB) (setupprogressapp.Binding, *install.Operation) {

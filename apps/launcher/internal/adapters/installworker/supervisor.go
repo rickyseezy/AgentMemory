@@ -24,6 +24,7 @@ type installer interface {
 type worker struct {
 	cancel context.CancelFunc
 	done   chan struct{}
+	err    error
 }
 
 // Supervisor owns at most one worker for each operation/plan binding.
@@ -46,23 +47,46 @@ func New(installer installer) (*Supervisor, error) {
 // only after the worker is registered. Worker execution is deliberately not
 // bound to an MCP request deadline.
 func (s *Supervisor) EnsureRunning(ctx context.Context, command installapp.InstallCommand) error {
+	_, err := s.ensureWorker(ctx, command)
+	return err
+}
+
+// RunToPause starts or joins the exact worker and waits until it reaches Ready,
+// another durable pause, or a terminal outcome. It is used by the short-lived
+// native login continuation process so its resources remain alive until the
+// installer has durably settled.
+func (s *Supervisor) RunToPause(ctx context.Context, command installapp.InstallCommand) error {
+	current, err := s.ensureWorker(ctx, command)
+	if err != nil {
+		return err
+	}
+	select {
+	case <-current.done:
+		return current.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Supervisor) ensureWorker(ctx context.Context, command installapp.InstallCommand) (*worker, error) {
 	if s == nil || ctx == nil {
-		return ErrSupervisorUnavailable
+		return nil, ErrSupervisorUnavailable
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	operationID, err := install.NewOperationID(command.OperationID)
 	if err != nil || len(command.CanonicalPlan) == 0 {
-		return ErrSupervisorUnavailable
+		return nil, ErrSupervisorUnavailable
 	}
 	planDigest, err := install.BindPlan(command.CanonicalPlan)
 	if err != nil {
-		return ErrSupervisorUnavailable
+		return nil, ErrSupervisorUnavailable
 	}
 	key := operationID.String() + ":" + planDigest.String()
 	ownedCommand := installapp.InstallCommand{
 		OperationID: operationID.String(), CanonicalPlan: append([]byte(nil), command.CanonicalPlan...),
+		ResumeContinuation: command.ResumeContinuation,
 	}
 	if command.ResumeReceipt != nil {
 		receipt := *command.ResumeReceipt
@@ -71,16 +95,16 @@ func (s *Supervisor) EnsureRunning(ctx context.Context, command installapp.Insta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return ErrSupervisorUnavailable
+		return nil, ErrSupervisorUnavailable
 	}
-	if _, running := s.workers[key]; running {
-		return nil
+	if current, running := s.workers[key]; running {
+		return current, nil
 	}
 	workerContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	current := &worker{cancel: cancel, done: make(chan struct{})}
 	s.workers[key] = current
 	go s.run(workerContext, key, current, ownedCommand)
-	return nil
+	return current, nil
 }
 
 func (s *Supervisor) run(
@@ -90,7 +114,7 @@ func (s *Supervisor) run(
 	command installapp.InstallCommand,
 ) {
 	defer close(current.done)
-	_, _ = s.installer.Install(ctx, command)
+	_, current.err = s.installer.Install(ctx, command)
 	s.mu.Lock()
 	if s.workers[key] == current {
 		delete(s.workers, key)

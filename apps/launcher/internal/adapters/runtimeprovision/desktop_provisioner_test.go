@@ -381,8 +381,14 @@ func desktopDependenciesForTest(t testing.TB, input desktopTestDependencies) Des
 
 func newDesktopRuntimeApplication(t testing.TB, provisioner *DesktopProvisioner) *runtimeinstallapp.Application {
 	t.Helper()
+	ownershipAuthorities, err := NewDesktopOwnershipAuthorityResolver(provisioner.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
-		Operations: &memoryRuntimeRepository{}, Host: provisioner, Detector: provisioner, Catalog: provisioner,
+		Operations: &memoryRuntimeRepository{}, OwnershipAuthorities: ownershipAuthorities,
+		OwnershipRecords: &memoryRuntimeOwnershipRepository{},
+		Host:             provisioner, Detector: provisioner, Catalog: provisioner,
 		Consent: provisioner, Fetcher: provisioner, Verifier: provisioner, Prerequisites: provisioner,
 		Installer: provisioner, Terms: provisioner, Controller: provisioner, Capabilities: provisioner,
 	})

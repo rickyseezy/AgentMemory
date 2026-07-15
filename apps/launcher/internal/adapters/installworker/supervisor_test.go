@@ -49,7 +49,8 @@ func TestPF001SupervisorOwnsCommandAndOutlivesRequestCancellation(t *testing.T) 
 	supervisor, _ := New(installer)
 	canonical := []byte("canonical")
 	ctx, cancel := context.WithCancel(context.Background())
-	command := installapp.InstallCommand{OperationID: "019f5f1f-0000-7abc-8123-0123456789ab", CanonicalPlan: canonical}
+	command := installapp.InstallCommand{OperationID: "019f5f1f-0000-7abc-8123-0123456789ab", CanonicalPlan: canonical,
+		ResumeContinuation: true}
 	if err := supervisor.EnsureRunning(ctx, command); err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +61,39 @@ func TestPF001SupervisorOwnsCommandAndOutlivesRequestCancellation(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("worker remained request-bound")
 	}
-	if string(installer.command.CanonicalPlan) != "canonical" || installer.ctxErr != nil {
+	if string(installer.command.CanonicalPlan) != "canonical" || !installer.command.ResumeContinuation || installer.ctxErr != nil {
 		t.Fatalf("captured=%q ctx=%v", installer.command.CanonicalPlan, installer.ctxErr)
+	}
+	if err := supervisor.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPF001SupervisorRunToPauseWaitsForExactWorkerCompletion(t *testing.T) {
+	installer := &blockingInstaller{entered: make(chan struct{}), release: make(chan struct{})}
+	supervisor, _ := New(installer)
+	command := installapp.InstallCommand{OperationID: "019f5f1f-0000-7abc-8123-0123456789ab", CanonicalPlan: []byte("canonical"),
+		ResumeContinuation: true}
+	completed := make(chan error, 1)
+	go func() { completed <- supervisor.RunToPause(context.Background(), command) }()
+	select {
+	case <-installer.entered:
+	case <-time.After(time.Second):
+		t.Fatal("synchronous continuation worker did not start")
+	}
+	select {
+	case err := <-completed:
+		t.Fatalf("RunToPause returned before installer settled: %v", err)
+	default:
+	}
+	close(installer.release)
+	select {
+	case err := <-completed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunToPause did not observe worker settlement")
 	}
 	if err := supervisor.Close(context.Background()); err != nil {
 		t.Fatal(err)

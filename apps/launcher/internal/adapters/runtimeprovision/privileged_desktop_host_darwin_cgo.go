@@ -4,7 +4,6 @@ package runtimeprovision
 
 import (
 	"context"
-	"math"
 	"os"
 	"os/user"
 	"runtime"
@@ -44,6 +43,8 @@ type PrivilegedDesktopCatalogHostProvider struct {
 	bindings DesktopHostBindingProvider
 }
 
+// NewPrivilegedDesktopCatalogHostProvider binds catalog host probing to the
+// authenticated invoking-user desktop authority.
 func NewPrivilegedDesktopCatalogHostProvider(
 	bindings DesktopHostBindingProvider,
 ) (*PrivilegedDesktopCatalogHostProvider, error) {
@@ -53,6 +54,8 @@ func NewPrivilegedDesktopCatalogHostProvider(
 	return &PrivilegedDesktopCatalogHostProvider{bindings: bindings}, nil
 }
 
+// CurrentHost independently probes the privileged macOS host and returns only
+// catalog-admission facts joined to the real-user storage boundary.
 func (p *PrivilegedDesktopCatalogHostProvider) CurrentHost(
 	ctx context.Context,
 ) (runtimecatalog.Host, error) {
@@ -78,7 +81,7 @@ func (p *PrivilegedDesktopCatalogHostProvider) CurrentHost(
 	free, local, filesystemError := darwinDesktopFilesystem(binding.HomeDirectory())
 	if versionError != nil || cpuError != nil || memoryError != nil || hypervisorError != nil ||
 		buildError != nil || filesystemError != nil || !local || hypervisor != 1 || cpu == 0 ||
-		cpu > math.MaxUint32 || memory == 0 || free == 0 {
+		memory == 0 || free == 0 {
 		return runtimecatalog.Host{}, runtimecatalogapp.ErrDependencyUnavailable
 	}
 	architecture := runtimecatalog.ArchitectureARM64

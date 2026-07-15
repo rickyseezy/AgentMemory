@@ -257,7 +257,8 @@ func TestPF001NativeDesktopHelperCommandContainsEveryBoundaryFailure(t *testing.
 func TestPF001NativeDesktopMutationCommandRunnerRejectsUntrustedBoundaryInputs(t *testing.T) {
 	t.Parallel()
 	runner := nativeDesktopMutationCommandRunner{}
-	if code, err := runner.RunDesktopMutationCommand(nil, runtimeprovision.DesktopMutationCommand{}); code != 0 ||
+	//lint:ignore SA1012 Deliberate nil-context process-runner regression fixture.
+	if code, err := runner.RunDesktopMutationCommand(nil, runtimeprovision.DesktopMutationCommand{}); code != 0 || //nolint:staticcheck // SA1012: owner=security expiry=2027-07-15.
 		!errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("nil context code=%d error=%v", code, err)
 	}
@@ -286,6 +287,27 @@ func TestPF001NativeDesktopMutationCommandOutputIsStrictlyBounded(t *testing.T) 
 			written, writer.buffer.String(), writer.remaining, writer.exceeded, err)
 	}
 }
+
+func TestPF001NativeDesktopMutationExitCodeAcceptsOnlyUint32ProcessStatus(t *testing.T) {
+	t.Parallel()
+	for _, expected := range []int{0, 17} {
+		actual, ok := nativeDesktopMutationExitCode(nativeDesktopExitError(expected))
+		if !ok || actual != uint32(expected) { // #nosec G115 -- fixture values are fixed non-negative uint32 values.
+			t.Fatalf("exit code %d mapped to (%d, %t)", expected, actual, ok)
+		}
+	}
+	for _, failure := range []error{errors.New("not an exit status"), nativeDesktopExitError(-1)} {
+		if actual, ok := nativeDesktopMutationExitCode(failure); ok || actual != 0 {
+			t.Fatalf("invalid exit error %v mapped to (%d, %t)", failure, actual, ok)
+		}
+	}
+}
+
+type nativeDesktopExitError int
+
+func (e nativeDesktopExitError) Error() string { return "native desktop test exit" }
+
+func (e nativeDesktopExitError) ExitCode() int { return int(e) }
 
 type nativeDesktopHelperCommandExchangeStub struct {
 	raw         []byte

@@ -91,10 +91,12 @@ func attachDarwinDesktopMutationImage(
 func safeDarwinDesktopMutationExecutable(path string) bool {
 	info, err := os.Lstat(path)
 	status, ok := infoSyscallStat(info)
+	// #nosec G115 -- Darwin uid_t is uint32 and Getuid is non-negative.
+	currentUID := uint32(os.Getuid())
 	return err == nil && ok && filepath.IsAbs(path) && filepath.Clean(path) == path &&
 		info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o022 == 0 &&
 		info.Mode().Perm()&0o100 != 0 && status.Nlink == 1 &&
-		(status.Uid == 0 || status.Uid == uint32(os.Getuid()))
+		(status.Uid == 0 || status.Uid == currentUID)
 }
 
 var _ desktopMutationNativeBackend = nativeDesktopMutationBackend{}

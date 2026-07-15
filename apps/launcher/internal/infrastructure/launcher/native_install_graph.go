@@ -24,6 +24,7 @@ type nativeInstallGraphDependencies struct {
 	ReadinessReceipts installplanapp.ReadinessReceiptRepository
 	ResourceInventory installplanapp.ResourceInventoryRepository
 	InstallationLock  installapp.InstallationLockPort
+	RebootCoordinator installapp.RebootCoordinator
 
 	HostVerifier        installphase.HostVerifier
 	RuntimeEnsurer      nativeRuntimeEnsurerBuilder
@@ -66,6 +67,7 @@ func newNativeInstallApplicationFactory(
 		dependencies.Plans, dependencies.RuntimePlans, dependencies.RuntimeEvidence,
 		dependencies.Operations, dependencies.Cancellation, dependencies.ReadinessReceipts,
 		dependencies.ResourceInventory, dependencies.InstallationLock,
+		dependencies.RebootCoordinator,
 		dependencies.HostVerifier, dependencies.RuntimeEnsurer, dependencies.ProductApplications,
 		dependencies.ReleaseVerifier, dependencies.Artifacts, dependencies.Directories,
 		dependencies.Secrets,
@@ -164,7 +166,8 @@ func newNativeInstallApplicationFactory(
 		}
 		application, err := installapp.NewInstallApplication(installapp.Dependencies{
 			Operations: dependencies.Operations, CancellationIntents: dependencies.Cancellation,
-			InstallationLock: dependencies.InstallationLock, HostVerification: host,
+			InstallationLock: dependencies.InstallationLock, RebootCoordinator: dependencies.RebootCoordinator,
+			HostVerification: host,
 			ContainerRuntime: runtimePhase, ReleaseVerification: release, SpaceReservation: space,
 			Directories: directories, Keys: secrets, ComposeBundle: compose,
 			NetworkAndVolumes: resources, Migrations: migrations, CoreAndGraph: core,

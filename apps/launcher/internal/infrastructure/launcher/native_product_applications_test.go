@@ -154,6 +154,48 @@ func TestPF001NativeProductApplicationsFailClosedBeforeDelegation(t *testing.T) 
 	if _, _, err := applications.buildStackApplication(t.Context()); err == nil || resolver.calls != 3 {
 		t.Fatalf("stack build error=%v calls=%d", err, resolver.calls)
 	}
+	private := errors.New("private operation-scoped application failure")
+	failing := &nativeProductApplications{
+		capacityApplication: func(context.Context) (installphase.ArtifactCapacityApplication, nativeProductRuntime, error) {
+			return nil, nativeProductRuntime{}, private
+		},
+		resourceApplication: func(context.Context) (installphase.ManagedResourceEnsurer, nativeProductRuntime, error) {
+			return nil, nativeProductRuntime{}, private
+		},
+		stackApplication: func(context.Context) (productstack.Ensurer, nativeProductRuntime, error) {
+			return nil, nativeProductRuntime{}, private
+		},
+	}
+	for name, invoke := range map[string]func() error{
+		"expansion": func() error {
+			_, err := failing.ConsumeArtifactExpansion(t.Context(), artifactapp.CapacityCommand{}, "artifact")
+			return err
+		},
+		"secret projection": func() error {
+			_, err := failing.PrepareSecretProjectionCapacity(t.Context(), artifactapp.CapacityCommand{}, "generation")
+			return err
+		},
+		"activation transfer": func() error {
+			_, err := failing.TransferActivationCapacity(t.Context(), artifactapp.CapacityCommand{}, "generation", "installation")
+			return err
+		},
+		"operation release": func() error {
+			_, err := failing.ReleaseOperationCapacity(t.Context(), artifactapp.CapacityCommand{})
+			return err
+		},
+		"operation compensation": func() error {
+			_, err := failing.CompensateOperationCapacity(t.Context(), artifactapp.CapacityCommand{})
+			return err
+		},
+		"activated release": func() error {
+			_, err := failing.ReleaseActivatedCapacity(t.Context(), artifactapp.CapacityCommand{}, "generation", "installation")
+			return err
+		},
+	} {
+		if err := invoke(); !errors.Is(err, errNativeInstallerIntegrity) || !errors.Is(err, private) {
+			t.Fatalf("%s error=%v", name, err)
+		}
+	}
 	//lint:ignore SA1012 Deliberate nil-context product application boundary attack.
 	if _, err := applications.resolve(nil); !errors.Is(err, errNativeInstallerIntegrity) { //nolint:staticcheck // Security regression fixture; owner=security expiry=2027-07-14.
 		t.Fatalf("nil context error=%v", err)

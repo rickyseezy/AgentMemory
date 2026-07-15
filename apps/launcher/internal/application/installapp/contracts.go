@@ -8,12 +8,15 @@ import (
 
 // InstallCommand starts or idempotently resumes one plan-bound installation.
 // OperationID must remain stable across retries. CanonicalPlan must contain the
-// exact canonical bytes used by every retry. ResumeReceipt is supplied only
-// after a reboot requested by EnsureContainerRuntime.
+// exact canonical bytes used by every retry. ResumeContinuation is set only by
+// the native tokenized login command after RebootCoordinator verification.
+// ResumeReceipt remains an inward-only test/compatibility seam and cannot be
+// sourced from the native login payload.
 type InstallCommand struct {
-	OperationID   string
-	CanonicalPlan []byte
-	ResumeReceipt *install.Digest
+	OperationID        string
+	CanonicalPlan      []byte
+	ResumeContinuation bool
+	ResumeReceipt      *install.Digest
 }
 
 // CancelCommand terminates one exact plan-bound installation. The same

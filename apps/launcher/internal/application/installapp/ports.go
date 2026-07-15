@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
@@ -69,6 +70,16 @@ type InstallationLock interface {
 // machine-global runtime, network, volume, and agent configuration state.
 type InstallationLockPort interface {
 	Acquire(context.Context) (InstallationLock, error)
+}
+
+// RebootCoordinator writes and atomically claims the minimal owner-only native
+// login continuation after the authenticated aggregate is durable. Removal is
+// a separate call so the login trigger survives until resumed aggregate state
+// has itself become durable.
+type RebootCoordinator interface {
+	Register(context.Context, rebootapp.Binding) error
+	Consume(context.Context, rebootapp.Binding) error
+	Remove(context.Context, install.OperationID) error
 }
 
 // HostVerificationPort proves the host platform and resource prerequisites.

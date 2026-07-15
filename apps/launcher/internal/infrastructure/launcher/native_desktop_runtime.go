@@ -113,9 +113,14 @@ func (f *nativePlatformRuntimeFactory) buildDesktopRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
+	ownershipAuthorities, err := runtimeprovision.NewDesktopOwnershipAuthorityResolver(authoritySet.resolver)
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
 	application, err := runtimeinstallapp.New(runtimeinstallapp.Dependencies{
-		Operations: f.composition.runtimeState,
-		Host:       provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
+		Operations: f.composition.runtimeState, OwnershipAuthorities: ownershipAuthorities,
+		OwnershipRecords: f.composition.runtimeOwnership,
+		Host:             provisioner, Detector: provisioner, Catalog: provisioner, Consent: provisioner,
 		Fetcher: provisioner, Verifier: provisioner, Prerequisites: provisioner,
 		Installer: provisioner, Terms: provisioner, Controller: provisioner, Capabilities: provisioner,
 	})

@@ -15,6 +15,7 @@ func composeDefaultNativeProduction(
 ) (nativeProductionFirstStart, error) {
 	if ctx == nil || composition == nil || nilAny(composition.resolver) || composition.runtime == nil ||
 		composition.plans == nil || composition.operations == nil ||
+		composition.rebootCoordinator == nil ||
 		nilAny(composition.preparations) || nilAny(composition.binder) || composition.releaseAnchor == nil {
 		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
 	}

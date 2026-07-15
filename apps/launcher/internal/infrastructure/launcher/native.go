@@ -20,6 +20,9 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installplanfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installprogress"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/rebootevidence"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/rebootfs"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/rebootlogin"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/releaseanchor"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/resourcejournal"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimecataloganchor"
@@ -30,10 +33,19 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/mcpbootstrapapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/setupprogressapp"
 	agentconfigdomain "github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/agentconfig"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/installplan"
+)
+
+var (
+	// ErrResumeIntegrity means the token, record, aggregate, or canonical plan
+	// could not be joined exactly.
+	ErrResumeIntegrity = errors.New("native installation continuation integrity violation")
+	// ErrResumeUnavailable means a complete native continuation dependency was unavailable.
+	ErrResumeUnavailable = errors.New("native installation continuation unavailable")
 )
 
 // NativeRoots are purpose-separated owner-controlled launcher state roots.
@@ -45,9 +57,11 @@ type NativeRoots struct {
 	SetupDecisions             string
 	PreparationState           string
 	RuntimeState               string
+	RuntimeOwnershipState      string
 	RuntimeConsentKeyState     string
 	RuntimeConsentReceiptState string
 	RuntimeReplayState         string
+	RebootContinuationState    string
 	ReleaseAnchorState         string
 	RuntimeCatalogAnchorState  string
 	ArtifactState              string
@@ -128,6 +142,119 @@ func (f *NativeFactory) BuildMCP(
 	return runner, nil
 }
 
+// ResumeInstallation resolves an owner-only token back to its authenticated
+// operation and canonical plan, then keeps the production graph alive until
+// the installer reaches its next durable state.
+func (f *NativeFactory) ResumeInstallation(ctx context.Context, token string) error {
+	if f == nil || ctx == nil || !validNativeContinuationToken(token) || f.roots == nil ||
+		f.journals == nil || f.production == nil {
+		return ErrResumeIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	roots, err := f.roots()
+	if err != nil || !roots.valid() {
+		return ErrResumeIntegrity
+	}
+	composition, err := composeNative(ctx, roots, f.journals, f.ready)
+	if err != nil {
+		return ErrResumeUnavailable
+	}
+	closeComposition := func() error {
+		if closeError := composition.resources.Close(context.WithoutCancel(ctx)); closeError != nil {
+			return ErrResumeUnavailable
+		}
+		return nil
+	}
+	record, err := composition.continuationRecords.LoadByToken(ctx, token)
+	if err != nil {
+		cleanupError := composition.continuationRegistrar.RemoveToken(context.WithoutCancel(ctx), token)
+		closeError := closeComposition()
+		if cleanupError != nil || closeError != nil {
+			return ErrResumeUnavailable
+		}
+		return ErrResumeIntegrity
+	}
+	operation, err := composition.operations.Load(ctx, record.OperationID())
+	if err != nil || operation == nil {
+		if closeComposition() != nil {
+			return ErrResumeUnavailable
+		}
+		return ErrResumeIntegrity
+	}
+	if !nativeContinuationStateMayResume(operation.State()) {
+		cleanupError := composition.rebootCoordinator.Remove(context.WithoutCancel(ctx), operation.ID())
+		closeError := closeComposition()
+		if cleanupError != nil || closeError != nil {
+			return ErrResumeUnavailable
+		}
+		return ErrResumeIntegrity
+	}
+	plan, err := composition.plans.Load(ctx, operation.PlanDigest())
+	if err != nil || plan.OperationID() != operation.ID() || !plan.Digest().Equal(operation.PlanDigest()) {
+		if closeComposition() != nil {
+			return ErrResumeUnavailable
+		}
+		return ErrResumeIntegrity
+	}
+	production, err := f.production(ctx, &composition)
+	if err != nil || production.Factory == nil || production.Supervisor == nil || production.Release == nil {
+		_ = closeComposition()
+		return ErrResumeUnavailable
+	}
+	if err := composition.resources.addClosers(production.Release, production.Supervisor); err != nil {
+		_ = production.Supervisor.Close(context.WithoutCancel(ctx))
+		_ = production.Release.Close(context.WithoutCancel(ctx))
+		_ = closeComposition()
+		return ErrResumeUnavailable
+	}
+	runError := production.Supervisor.RunToPause(ctx, installapp.InstallCommand{
+		OperationID: operation.ID().String(), CanonicalPlan: plan.CanonicalBytes(), ResumeContinuation: true,
+	})
+	closeError := closeComposition()
+	if mappedError := mapNativeResumeRunError(runError); mappedError != nil {
+		return mappedError
+	}
+	return closeError
+}
+
+func mapNativeResumeRunError(runError error) error {
+	if runError == nil {
+		return nil
+	}
+	var applicationError *installapp.ApplicationError
+	if errors.As(runError, &applicationError) {
+		//nolint:exhaustive // The remaining stable application codes map to the sanitized unavailable result below.
+		switch applicationError.Code() {
+		case installapp.ErrorCodeIntegrityViolation, installapp.ErrorCodeConflict,
+			installapp.ErrorCodeValidation, installapp.ErrorCodeIdempotencyConflict:
+			return ErrResumeIntegrity
+		default:
+		}
+	}
+	if errors.Is(runError, context.Canceled) || errors.Is(runError, context.DeadlineExceeded) {
+		return runError
+	}
+	return ErrResumeUnavailable
+}
+
+func nativeContinuationStateMayResume(state install.State) bool {
+	return state == install.StateRebootPending || state == install.StateResumeVerified
+}
+
+func validNativeContinuationToken(token string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	for _, character := range token {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func defaultNativeRoots() (NativeRoots, error) {
 	configurationRoot, err := os.UserConfigDir()
 	if err != nil || configurationRoot == "" || !filepath.IsAbs(configurationRoot) {
@@ -140,9 +267,11 @@ func defaultNativeRoots() (NativeRoots, error) {
 		SetupDecisions:             filepath.Join(base, "setup-decisions"),
 		PreparationState:           filepath.Join(base, "preparation-state"),
 		RuntimeState:               filepath.Join(base, "runtime-state"),
+		RuntimeOwnershipState:      filepath.Join(base, "runtime-ownership-state"),
 		RuntimeConsentKeyState:     filepath.Join(base, "runtime-consent-key-state"),
 		RuntimeConsentReceiptState: filepath.Join(base, "runtime-consent-receipt-state"),
 		RuntimeReplayState:         filepath.Join(base, "runtime-replay-state"),
+		RebootContinuationState:    filepath.Join(base, "reboot-continuation-state"),
 		ReleaseAnchorState:         filepath.Join(base, "release-anchor-state"),
 		RuntimeCatalogAnchorState:  filepath.Join(base, "runtime-catalog-anchor-state"),
 		ArtifactState:              filepath.Join(base, "artifact-state"),
@@ -159,8 +288,9 @@ func defaultNativeRoots() (NativeRoots, error) {
 func (r NativeRoots) valid() bool {
 	values := []string{
 		r.OperationState, r.BootstrapPointer, r.SetupDecisions,
-		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
+		r.PreparationState, r.RuntimeState, r.RuntimeOwnershipState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
 		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState, r.RuntimeReplayState,
+		r.RebootContinuationState,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
 		r.ReadinessState, r.AgentConfigurationBackups,
 	}
@@ -189,10 +319,14 @@ type nativeComposition struct {
 	preparations              firststartapp.PreparationRepository
 	binder                    firststartapp.PreparationBinder
 	runtimeState              *filesystem.RuntimeOperationRepository
+	runtimeOwnership          *filesystem.RuntimeOwnershipRepository
 	consentSigner             *runtimeconsent.ProtectedSigner
 	consentBroker             *runtimeconsent.Broker
 	consentRepository         *runtimeconsentjournal.Repository
 	replayJournals            filesystem.OperationJournalProvider
+	rebootCoordinator         *rebootapp.Application
+	continuationRecords       *rebootfs.Repository
+	continuationRegistrar     rebootlogin.TokenRemover
 	releaseAnchor             *releaseanchor.Repository
 	runtimeCatalogAnchor      *runtimecataloganchor.Repository
 	artifacts                 *artifactjournal.Repository
@@ -253,6 +387,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	runtimeOwnershipLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeOwnershipState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	consentKeyLocator, err := bootstrapadapter.NewOperationLocator(roots.RuntimeConsentKeyState)
 	if err != nil {
 		return nativeComposition{}, err
@@ -305,6 +443,10 @@ func composeNative(
 	if err != nil || nilCapability(runtimeJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
+	runtimeOwnershipJournals, err := journalFactory(runtimeOwnershipLocator)
+	if err != nil || nilCapability(runtimeOwnershipJournals) {
+		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
 	consentReceiptJournals, err := journalFactory(consentReceiptLocator)
 	if err != nil || nilCapability(consentReceiptJournals) {
 		return nativeComposition{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -338,6 +480,10 @@ func composeNative(
 		return nativeComposition{}, err
 	}
 	runtimeFence, err := filesystem.NewNativeOperationStateFence(runtimeLocator)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	runtimeOwnershipFence, err := filesystem.NewNativeOperationStateFence(runtimeOwnershipLocator)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -400,7 +546,40 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	continuationRecords, err := rebootfs.NewRepository(roots.RebootContinuationState)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	continuationRegistrar, err := rebootlogin.NewNativeRegistrar()
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	tokenRemover, ok := continuationRegistrar.(rebootlogin.TokenRemover)
+	if !ok {
+		return nativeComposition{}, errNativeInstallerIntegrity
+	}
+	continuationVerifier, err := rebootevidence.NewNativeObjectVerifier()
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	continuationEvidence, err := rebootevidence.New(operations, operationLocator, continuationVerifier)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	rebootCoordinator, err := rebootapp.New(rebootapp.Dependencies{
+		Clock: clock, Entropy: rebootfs.Entropy{}, Evidence: continuationEvidence,
+		Records: continuationRecords, Registrar: continuationRegistrar,
+	})
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	runtimeState, err := filesystem.NewRuntimeOperationRepository(runtimeJournals, clock, runtimeFence)
+	if err != nil {
+		return nativeComposition{}, err
+	}
+	runtimeOwnership, err := filesystem.NewRuntimeOwnershipRepository(
+		runtimeOwnershipJournals, clock, runtimeOwnershipFence,
+	)
 	if err != nil {
 		return nativeComposition{}, err
 	}
@@ -459,13 +638,16 @@ func composeNative(
 		resolver: resolver, runtime: runtime,
 		readinessRoot: roots.ReadinessState, agentConfigurationBackups: roots.AgentConfigurationBackups,
 		preparations: preparations, binder: binder,
-		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
-		consentSigner:        consentSigner,
-		consentBroker:        consentBroker,
-		consentRepository:    consentRepository,
-		replayJournals:       replayJournals,
-		runtimeCatalogAnchor: runtimeCatalogAnchorRepository,
-		artifacts:            artifactRepository, capacityState: capacityRepository,
+		runtimeState: runtimeState, runtimeOwnership: runtimeOwnership, releaseAnchor: releaseAnchorRepository,
+		consentSigner:         consentSigner,
+		consentBroker:         consentBroker,
+		consentRepository:     consentRepository,
+		replayJournals:        replayJournals,
+		rebootCoordinator:     rebootCoordinator,
+		continuationRecords:   continuationRecords,
+		continuationRegistrar: tokenRemover,
+		runtimeCatalogAnchor:  runtimeCatalogAnchorRepository,
+		artifacts:             artifactRepository, capacityState: capacityRepository,
 		expandedTargets: expandedTargetRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,
 		activations:   activationRepository, hostPointers: hostPointerRepository, installLock: installationLock,

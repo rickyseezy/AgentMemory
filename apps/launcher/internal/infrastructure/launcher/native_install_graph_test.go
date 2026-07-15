@@ -16,6 +16,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productinstall"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productstack"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/readinessapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/resourceapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/artifactacquisition"
@@ -99,7 +100,8 @@ func nativeInstallGraphFixture() nativeInstallGraphDependencies {
 		RuntimeEvidence: &nativeGraphRuntimeEvidence{}, Operations: operations,
 		Cancellation: operations, ReadinessReceipts: &nativeGraphReadinessReceipts{},
 		ResourceInventory: &nativeGraphResourceInventory{}, InstallationLock: &nativeGraphLockPort{},
-		HostVerifier: &nativeGraphHost{}, RuntimeEnsurer: func(
+		RebootCoordinator: &nativeGraphReboot{},
+		HostVerifier:      &nativeGraphHost{}, RuntimeEnsurer: func(
 			context.Context, *installplanapp.Application, nativeInstallAuthority,
 		) (installphase.RuntimeEnsurer, error) {
 			return &nativeGraphRuntime{}, nil
@@ -196,6 +198,12 @@ func (*nativeGraphResourceInventory) Load(context.Context, string) (resourceinve
 }
 
 type nativeGraphLockPort struct{}
+
+type nativeGraphReboot struct{}
+
+func (*nativeGraphReboot) Register(context.Context, rebootapp.Binding) error { return nil }
+func (*nativeGraphReboot) Consume(context.Context, rebootapp.Binding) error  { return nil }
+func (*nativeGraphReboot) Remove(context.Context, install.OperationID) error { return nil }
 
 func (*nativeGraphLockPort) Acquire(context.Context) (installapp.InstallationLock, error) {
 	return nativeGraphLock{}, nil

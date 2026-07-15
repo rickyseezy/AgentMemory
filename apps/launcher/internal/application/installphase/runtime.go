@@ -213,10 +213,10 @@ func (p *ContainerRuntimePhase) completedOutput(
 	receipt, ok := result.CompletionReceipt()
 	if !ok || receipt.OperationID() != request.OperationID().String() ||
 		receipt.PlanDigest() != plan.PlanDigest() || receipt.AggregateVersion() != result.Version ||
-		!receipt.Valid() {
+		receipt.OwnershipRecordDigest().IsZero() || !receipt.Valid() {
 		return installapp.PhaseOutput{}, phaseError(ErrorCodeInvalidBinding)
 	}
-	outputDigest, err := install.ParseDigest(receipt.EvidenceDigest().String())
+	outputDigest, err := install.ParseDigest(receipt.ReceiptDigest().String())
 	if err != nil {
 		return installapp.PhaseOutput{}, phaseError(ErrorCodeInvalidBinding)
 	}

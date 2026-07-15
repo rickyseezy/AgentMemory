@@ -24,12 +24,16 @@ type CompletionReceipt struct {
 	outputDigest     runtimeinstall.Hash
 	artifactDigest   runtimeinstall.Hash
 	ownership        runtimeinstall.OwnershipDisposition
+	ownershipRecord  runtimeinstall.Hash
 	seal             runtimeinstall.Hash
 }
 
 // NewCompletionReceipt validates and replays the complete aggregate before
 // projecting final runtime authority for the parent installation saga.
-func NewCompletionReceipt(snapshot runtimeinstall.OperationSnapshot) (CompletionReceipt, error) {
+func NewCompletionReceipt(
+	snapshot runtimeinstall.OperationSnapshot,
+	ownershipRecord runtimeinstall.RuntimeOwnershipRecord,
+) (CompletionReceipt, error) {
 	operation, err := runtimeinstall.RestoreOperation(snapshot)
 	if err != nil {
 		return CompletionReceipt{}, errors.New("runtime completion aggregate is invalid")
@@ -47,6 +51,14 @@ func NewCompletionReceipt(snapshot runtimeinstall.OperationSnapshot) (Completion
 		finalEvidence.ArtifactDigest.IsZero() || !resolvedOwnership(finalEvidence.Ownership) {
 		return CompletionReceipt{}, errors.New("runtime completion evidence is incomplete")
 	}
+	if ownershipRecord.Status() != runtimeinstall.OwnershipStatusFinalized ||
+		ownershipRecord.OperationState() != runtimeinstall.OperationStateReady ||
+		ownershipRecord.OperationID() != snapshot.OperationID || ownershipRecord.PlanDigest() != snapshot.PlanDigest ||
+		ownershipRecord.Revision() != snapshot.Version || ownershipRecord.Disposition() != finalEvidence.Ownership ||
+		ownershipRecord.ArtifactDigest() != finalEvidence.ArtifactDigest ||
+		ownershipRecord.CompatibilityDigest() != finalEvidence.OutputDigest || ownershipRecord.Digest().IsZero() {
+		return CompletionReceipt{}, errors.New("runtime ownership completion evidence is incomplete")
+	}
 
 	receipt := CompletionReceipt{
 		operationID:      snapshot.OperationID,
@@ -57,6 +69,7 @@ func NewCompletionReceipt(snapshot runtimeinstall.OperationSnapshot) (Completion
 		outputDigest:     finalEvidence.OutputDigest,
 		artifactDigest:   finalEvidence.ArtifactDigest,
 		ownership:        finalEvidence.Ownership,
+		ownershipRecord:  ownershipRecord.Digest(),
 	}
 	receipt.seal = receipt.computeSeal()
 	if !receipt.Valid() {
@@ -89,29 +102,49 @@ func (r CompletionReceipt) ArtifactDigest() runtimeinstall.Hash { return r.artif
 // Ownership returns the verified runtime ownership disposition.
 func (r CompletionReceipt) Ownership() runtimeinstall.OwnershipDisposition { return r.ownership }
 
+// OwnershipRecordDigest binds the finalized protected RuntimeOwnershipRecord.
+func (r CompletionReceipt) OwnershipRecordDigest() runtimeinstall.Hash { return r.ownershipRecord }
+
+// ReceiptDigest binds the full completion projection, including the finalized
+// protected ownership record, for the parent PF-001 installation audit trail.
+func (r CompletionReceipt) ReceiptDigest() runtimeinstall.Hash { return r.seal }
+
 // Valid verifies both required fields and the immutable projection seal.
 func (r CompletionReceipt) Valid() bool {
 	return r.operationID != "" && !r.planDigest.IsZero() && r.aggregateVersion > 0 &&
 		!r.evidenceDigest.IsZero() && !r.inputDigest.IsZero() && !r.outputDigest.IsZero() &&
 		!r.artifactDigest.IsZero() && resolvedOwnership(r.ownership) &&
+		!r.ownershipRecord.IsZero() &&
 		!r.seal.IsZero() && r.seal == r.computeSeal()
 }
 
 // NewResultFromSnapshot is the validated projection used by persistence and
 // adapter boundaries. Invalid snapshots cannot manufacture public outcomes.
-func NewResultFromSnapshot(snapshot runtimeinstall.OperationSnapshot) (Result, error) {
+func NewResultFromSnapshot(
+	snapshot runtimeinstall.OperationSnapshot,
+	ownershipRecords ...runtimeinstall.RuntimeOwnershipRecord,
+) (Result, error) {
 	operation, err := runtimeinstall.RestoreOperation(snapshot)
 	if err != nil {
 		return Result{}, errors.New("runtime operation snapshot is invalid")
 	}
 	if operation.State() == runtimeinstall.OperationStateReady {
-		return completedResult(operation)
+		if len(ownershipRecords) != 1 {
+			return Result{}, errors.New("ready runtime result requires one finalized ownership record")
+		}
+		return completedResult(operation, ownershipRecords[0])
+	}
+	if len(ownershipRecords) != 0 {
+		return Result{}, errors.New("non-ready runtime result cannot carry ownership completion")
 	}
 	return resultFrom(operation, outcomeForState(operation.State()), codeForState(operation.State())), nil
 }
 
-func completedResult(operation *runtimeinstall.Operation) (Result, error) {
-	receipt, err := NewCompletionReceipt(operation.Snapshot())
+func completedResult(
+	operation *runtimeinstall.Operation,
+	ownershipRecord runtimeinstall.RuntimeOwnershipRecord,
+) (Result, error) {
+	receipt, err := NewCompletionReceipt(operation.Snapshot(), ownershipRecord)
 	if err != nil {
 		return resultFrom(operation, OutcomeUnknown, ErrorCodeIntegrityViolation),
 			applicationError(ErrorCodeIntegrityViolation, false)
@@ -155,6 +188,7 @@ func (r CompletionReceipt) computeSeal() runtimeinstall.Hash {
 	payload = append(payload, r.outputDigest[:]...)
 	payload = append(payload, r.artifactDigest[:]...)
 	payload = append(payload, byte(r.ownership))
+	payload = append(payload, r.ownershipRecord[:]...)
 	return sha256.Sum256(payload)
 }
 

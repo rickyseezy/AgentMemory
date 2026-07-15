@@ -50,6 +50,8 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		composition.artifacts == nil || composition.artifactStore == nil ||
 		composition.capacityState == nil || composition.expandedTargets == nil ||
 		composition.resourceState == nil || composition.installLock == nil ||
+		composition.rebootCoordinator == nil ||
+		composition.runtimeOwnership == nil ||
 		composition.runtimeCatalogAnchor == nil ||
 		composition.activations == nil || composition.hostPointers == nil ||
 		composition.readinessRoot == "" || composition.agentConfigurationBackups == "" ||
@@ -191,8 +193,9 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 				RuntimeEvidence: runtimeEvidence,
 				Operations:      composition.operations, Cancellation: composition.operations,
 				ReadinessReceipts: receipts, ResourceInventory: composition.resourceState,
-				InstallationLock: composition.installLock,
-				HostVerifier:     release.hostVerification(), RuntimeEnsurer: runtimeBuilder,
+				InstallationLock:  composition.installLock,
+				RebootCoordinator: composition.rebootCoordinator,
+				HostVerifier:      release.hostVerification(), RuntimeEnsurer: runtimeBuilder,
 				ProductApplications: productBuilder,
 				ReleaseVerifier:     release.releaseVerification(), Artifacts: artifacts,
 				Directories: productFiles, Secrets: productFiles, BrainBootstrap: brain,

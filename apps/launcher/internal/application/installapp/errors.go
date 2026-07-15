@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/rebootapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 )
 
@@ -94,6 +95,17 @@ func mapCancellationIntentError(err error) *ApplicationError {
 		return applicationError(ErrorCodeConflict, true, "installation cancellation intent changed concurrently")
 	default:
 		return mapExternalBoundaryError(err, "installation cancellation intent could not be persisted")
+	}
+}
+
+func mapRebootCoordinatorError(err error) *ApplicationError {
+	switch {
+	case errors.Is(err, rebootapp.ErrIntegrity):
+		return applicationError(ErrorCodeIntegrityViolation, false, "installation continuation could not be verified")
+	case errors.Is(err, rebootapp.ErrConflict):
+		return applicationError(ErrorCodeConflict, true, "installation continuation changed concurrently")
+	default:
+		return mapExternalBoundaryError(err, "installation continuation is unavailable")
 	}
 }
 

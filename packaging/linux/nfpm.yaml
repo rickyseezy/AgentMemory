@@ -1,0 +1,74 @@
+name: agentmemory
+arch: ${AGENTMEMORY_PACKAGE_ARCH}
+platform: linux
+version: ${AGENTMEMORY_PACKAGE_VERSION}
+version_schema: semver
+release: ${AGENTMEMORY_PACKAGE_RELEASE}
+section: utils
+priority: optional
+maintainer: AgentMemory Authors <rickyseezy@users.noreply.github.com>
+description: >-
+  Local persistent memory for AI agents. This package installs the signed
+  launcher, its closed Linux privilege helper, the retained offline release
+  bundle, and the fixed Polkit action used by automatic first-run setup.
+vendor: AgentMemory
+homepage: https://github.com/rickyseezy/AgentMemory
+license: Proprietary
+umask: 0o022
+scripts:
+  postinstall: packaging/linux/scripts/postinstall.sh
+  preremove: packaging/linux/scripts/preremove.sh
+contents:
+  - src: ${AGENTMEMORY_PACKAGE_STAGE}/agentmemory
+    dst: /usr/libexec/agentmemory/agentmemory
+    expand: true
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: ${AGENTMEMORY_PACKAGE_STAGE}/agentmemory-runtime-helper
+    dst: /usr/libexec/agentmemory/agentmemory-runtime-helper
+    expand: true
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: ${AGENTMEMORY_PACKAGE_STAGE}/bundle/
+    dst: /usr/libexec/agentmemory/resources/bundle
+    type: tree
+    expand: true
+  - src: /usr/libexec/agentmemory/agentmemory
+    dst: /usr/bin/agentmemory
+    type: symlink
+  - src: packaging/linux/polkit/com.rickyseezy.agentmemory.runtime-helper.policy
+    dst: /usr/share/polkit-1/actions/com.rickyseezy.agentmemory.runtime-helper.policy
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: packaging/linux/tmpfiles/agentmemory-runtime-helper.conf
+    dst: /usr/lib/tmpfiles.d/agentmemory-runtime-helper.conf
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: README.md
+    dst: /usr/share/doc/agentmemory/README.md
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+overrides:
+  deb:
+    depends:
+      - pkexec
+      - systemd
+  rpm:
+    depends:
+      - polkit
+      - systemd
+rpm:
+  compression: zstd:19
+  group: Applications/System
+deb:
+  compression: xz

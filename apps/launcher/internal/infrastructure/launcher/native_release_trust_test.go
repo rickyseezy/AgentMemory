@@ -37,6 +37,17 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	}
 }
 
+func TestPF001ReleaseAssemblerUsesTheProductionTrustDecoder(t *testing.T) {
+	t.Parallel()
+	valid := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture())
+	if err := ValidateNativeReleaseTrustBase64(valid); err != nil {
+		t.Fatalf("ValidateNativeReleaseTrustBase64(valid) error = %v", err)
+	}
+	if err := ValidateNativeReleaseTrustBase64(""); !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("ValidateNativeReleaseTrustBase64(empty) error = %v", err)
+	}
+}
+
 func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*nativeReleaseTrustDocument){

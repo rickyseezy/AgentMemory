@@ -12,6 +12,7 @@ on:
       - "go.sum"
       - "apps/launcher/**"
       - "contracts/**"
+      - "packaging/linux/**"
       - "tools/**"
   push:
     branches:
@@ -24,6 +25,7 @@ on:
       - "go.sum"
       - "apps/launcher/**"
       - "contracts/**"
+      - "packaging/linux/**"
       - "tools/**"
 
 permissions:
@@ -59,6 +61,9 @@ jobs:
 
       - name: Verify Clean Architecture
         run: go run ./tools/check_launcher_architecture
+
+      - name: Verify closed Linux package contract
+        run: go run ./tools/check_linux_package
 
       - name: Vet launcher and quality tools
         run: go vet ./apps/launcher/... ./tools/...

@@ -9,6 +9,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/sigstore/sigstore-go v1.2.2
 	github.com/ulikunitz/xz v0.5.15
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sys v0.47.0
 )
 
@@ -77,7 +78,6 @@ require (
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect

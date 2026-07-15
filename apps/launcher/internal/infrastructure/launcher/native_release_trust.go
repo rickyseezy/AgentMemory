@@ -60,6 +60,14 @@ func loadEmbeddedNativeReleaseTrust() (nativeReleaseTrustMaterial, error) {
 	return decodeNativeReleaseTrust(embeddedNativeReleaseTrustBase64)
 }
 
+// ValidateNativeReleaseTrustBase64 lets the release assembler apply the exact
+// production decoder before embedding public authority into native binaries.
+// The material is deliberately not returned across this boundary.
+func ValidateNativeReleaseTrustBase64(encoded string) error {
+	_, err := decodeNativeReleaseTrust(encoded)
+	return err
+}
+
 func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error) {
 	if encoded == "" || len(encoded) > base64.StdEncoding.EncodedLen(maximumNativeReleaseTrustBytes) {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity

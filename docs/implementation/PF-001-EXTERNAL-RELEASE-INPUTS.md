@@ -79,15 +79,20 @@ SBOM associations, native publisher statements, and offline trust bundle.
 Private signing material must never be stored in the repository or embedded in
 the launcher.
 
-The release owner must also provide the public Ed25519 receipt-verification key
-embedded in the signed launcher trust document and a corresponding private-key
-operation available only to the exact signed runtime helper. The helper key is
-distinct from manifest, host-policy, catalog, and qualification keys. Its
-private material must be provisioned into a platform-protected helper signing
-boundary and must never appear in source, build arguments, a release bundle,
-an installer log, or launcher memory. Linux privilege receipts and macOS/
-Windows mutation receipts use different domain-separated statements even when
-one platform release authorizes the same helper key.
+The release owner must also provide the public Ed25519 Desktop
+receipt-verification key embedded in the signed launcher trust document and a
+corresponding private-key operation available only to the exact signed macOS or
+Windows runtime helper. The helper key is distinct from manifest, host-policy,
+catalog, and qualification keys. Its private material must be provisioned into
+a platform-protected helper signing boundary and must never appear in source,
+build arguments, a release bundle, an installer log, or launcher memory.
+
+Linux does not take that private key as a release input. The installed,
+release-verified root helper creates a distinct per-machine Ed25519 receipt key
+under `/var/lib/agentmemory/runtime-helper`; the private half is root-only and
+the unprivileged launcher reloads the root-owned public half only after helper
+execution. Linux privilege receipts and Desktop mutation receipts remain
+domain-separated and cannot be replayed across those boundaries.
 
 The release owner must also provide the SHA-256 digest of the native signing
 certificate for every helper resource ID. The reproducible release build writes

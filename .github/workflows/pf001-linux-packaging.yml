@@ -1,0 +1,99 @@
+name: PF-001 Linux packaging
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/pf001-linux-packaging.yml"
+      - "apps/launcher/**"
+      - "go.mod"
+      - "go.sum"
+      - "packaging/linux/**"
+      - "tools/check_linux_package/**"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - ".github/workflows/pf001-linux-packaging.yml"
+      - "apps/launcher/**"
+      - "go.mod"
+      - "go.sum"
+      - "packaging/linux/**"
+      - "tools/check_linux_package/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pf001-linux-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-contract:
+    name: nFPM ${{ matrix.packager }} linux/${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        packager: [deb, rpm]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Verify package authority files
+        run: go run ./tools/check_linux_package
+
+      - name: Cross-build the exact package entry points
+        env:
+          GOARCH: ${{ matrix.arch }}
+          GOOS: linux
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p build/package-stage/bundle/bootstrap build/packages
+          go build -buildvcs=true -trimpath -ldflags="-buildid=" \
+            -o build/package-stage/agentmemory \
+            ./apps/launcher/cmd/agentmemory
+          go build -buildvcs=true -trimpath -ldflags="-buildid=" \
+            -o build/package-stage/agentmemory-runtime-helper \
+            ./apps/launcher/cmd/agentmemory-runtime-helper
+          install -m 0644 README.md \
+            build/package-stage/bundle/bootstrap/distribution-manifest.json
+          find build/package-stage -exec touch --date=@946684800 {} +
+
+      - name: Exercise pinned nFPM schema and packager
+        env:
+          AGENTMEMORY_PACKAGE_ARCH: ${{ matrix.arch }}
+          AGENTMEMORY_PACKAGE_RELEASE: "1"
+          AGENTMEMORY_PACKAGE_STAGE: ${{ github.workspace }}/build/package-stage
+          AGENTMEMORY_PACKAGE_VERSION: "0.0.0"
+          SOURCE_DATE_EPOCH: "946684800"
+        run: |
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0 package \
+            --config packaging/linux/nfpm.yaml \
+            --packager "${{ matrix.packager }}" \
+            --target "build/packages/agentmemory.${{ matrix.packager }}"
+          test -s "build/packages/agentmemory.${{ matrix.packager }}"
+
+      - name: Inspect Debian payload paths and modes
+        if: matrix.packager == 'deb'
+        run: |
+          dpkg-deb --field build/packages/agentmemory.deb Package Version Architecture Depends
+          dpkg-deb --contents build/packages/agentmemory.deb | tee build/debian-contents.txt
+          grep -Fq './usr/libexec/agentmemory/agentmemory' build/debian-contents.txt
+          grep -Fq './usr/libexec/agentmemory/agentmemory-runtime-helper' build/debian-contents.txt
+          grep -Fq './usr/share/polkit-1/actions/com.rickyseezy.agentmemory.runtime-helper.policy' build/debian-contents.txt
+          grep -Fq './usr/lib/tmpfiles.d/agentmemory-runtime-helper.conf' build/debian-contents.txt
+
+      # These are deliberately non-release fixture packages: they contain no
+      # embedded production trust and are never uploaded or published.

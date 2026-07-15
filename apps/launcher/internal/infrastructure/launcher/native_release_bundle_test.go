@@ -12,10 +12,8 @@ func TestPF001DefaultNativeReleaseBundleRootUsesOnlyTheRunningExecutable(t *test
 	t.Parallel()
 	root, err := defaultNativeReleaseBundleRoot()
 	if runtime.GOOS == "darwin" {
-		// A Go test binary is not packaged under a signed .app/Contents/MacOS
-		// boundary, so production resolution must fail closed on this host.
-		if root != "" || !errors.Is(err, errNativeInstallerIntegrity) {
-			t.Fatalf("unbundled macOS test executable resolved to (%q,%v)", root, err)
+		if err != nil || root != "/Library/Application Support/AgentMemory/resources/bundle" {
+			t.Fatalf("macOS installed bundle root=(%q,%v)", root, err)
 		}
 		return
 	}
@@ -66,12 +64,8 @@ func TestPF001NativeReleaseBundleRootIsFixedToTheResolvedSignedExecutable(t *tes
 	if err := os.WriteFile(macExecutable, []byte("signed app fixture"), 0o700); err != nil { // #nosec G306 -- executable fixture.
 		t.Fatal(err)
 	}
-	canonicalMacExecutable, err := filepath.EvalSymlinks(macExecutable)
-	if err != nil {
-		t.Fatal(err)
-	}
 	macRoot, err := resolveNativeReleaseBundleRoot(func() (string, error) { return macExecutable, nil }, "darwin")
-	if err != nil || macRoot != filepath.Join(filepath.Dir(filepath.Dir(canonicalMacExecutable)), "Resources", "bundle") {
+	if err != nil || macRoot != "/Library/Application Support/AgentMemory/resources/bundle" {
 		t.Fatalf("macOS root=%q error=%v", macRoot, err)
 	}
 }
@@ -103,9 +97,6 @@ func TestPF001NativeReleaseBundleRootRejectsAmbientAndMalformedAuthority(t *test
 		"missing":        {resolver: func() (string, error) { return missing, nil }, os: "linux"},
 		"directory":      {resolver: func() (string, error) { return directory, nil }, os: "linux"},
 		"unsupported OS": {resolver: func() (string, error) { return executable, nil }, os: "plan9"},
-		"unbundled macOS": {
-			resolver: func() (string, error) { return executable, nil }, os: "darwin",
-		},
 	} {
 		if resolved, err := resolveNativeReleaseBundleRoot(test.resolver, test.os); resolved != "" ||
 			!errors.Is(err, errNativeInstallerIntegrity) {

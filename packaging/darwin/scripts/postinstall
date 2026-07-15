@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+/usr/bin/install -d -m 0755 -o root -g wheel "/Library/Application Support/AgentMemory"
+/usr/bin/install -d -m 0755 -o root -g wheel "/Library/Application Support/AgentMemory/runtime-helper"
+
+exit 0

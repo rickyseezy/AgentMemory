@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="AgentMemory"
+           Manufacturer="AgentMemory"
+           Version="$(AgentMemoryVersion)"
+           UpgradeCode="B5D383C8-F8FB-4B15-99E4-314681B44FB1"
+           Language="1033"
+           InstallerVersion="500"
+           Scope="perMachine"
+           Compressed="yes">
+    <SummaryInformation Description="Local persistent memory for AI agents"
+                        Manufacturer="AgentMemory"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer version of AgentMemory is already installed."
+                  Schedule="afterInstallInitialize"/>
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="AgentMemory"/>
+    </StandardDirectory>
+    <Files Directory="INSTALLFOLDER" Include="!(bindpath.Payload)\**"/>
+  </Package>
+</Wix>

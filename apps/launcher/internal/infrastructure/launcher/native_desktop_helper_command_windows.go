@@ -45,7 +45,11 @@ func nativeDesktopHelperPlatformBoundaries(_ string) (string, nativeDesktopHelpe
 func (e windowsDesktopHelperExchange) PrincipalID() string { return "sid:" + e.ownerSID }
 
 func nativeDesktopHelperReleaseBundleRoot() (string, error) {
-	return defaultNativeReleaseBundleRoot()
+	root := `C:\Program Files\AgentMemory\resources\bundle`
+	if filepath.Clean(root) != root || windowssecurity.ValidateLocalPath(root) != nil {
+		return "", errNativeInstallerIntegrity
+	}
+	return root, nil
 }
 
 func (e windowsDesktopHelperExchange) ReadDesktopMutationRequest(

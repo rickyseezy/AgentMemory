@@ -14,8 +14,10 @@ func defaultNativeReleaseBundleRoot() (string, error) {
 }
 
 // resolveNativeReleaseBundleRoot accepts no environment variable, current
-// directory, MCP argument, or mutable configuration. Native packaging places
-// the retained bundle at one fixed location relative to the launched binary.
+// directory, MCP argument, or mutable configuration. Linux and Windows native
+// packaging place the retained bundle at one fixed location relative to the
+// launcher. macOS uses the same fixed root-owned Application Support bundle as
+// its separately installed privilege helper, avoiding a code-signing cycle.
 func resolveNativeReleaseBundleRoot(
 	executable nativeExecutablePathResolver,
 	operatingSystem string,
@@ -40,10 +42,7 @@ func resolveNativeReleaseBundleRoot(
 	var root string
 	switch operatingSystem {
 	case "darwin":
-		if filepath.Base(directory) != "MacOS" || filepath.Base(filepath.Dir(directory)) != "Contents" {
-			return "", errNativeInstallerIntegrity
-		}
-		root = filepath.Join(filepath.Dir(directory), "Resources", "bundle")
+		root = "/Library/Application Support/AgentMemory/resources/bundle"
 	case "linux", "windows":
 		root = filepath.Join(directory, "resources", "bundle")
 	default:

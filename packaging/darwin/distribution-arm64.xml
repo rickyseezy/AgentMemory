@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>AgentMemory</title>
+  <organization>com.rickyseezy.agentmemory</organization>
+  <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+  <domains enable_localSystem="true" enable_currentUserHome="false" enable_anywhere="false"/>
+  <choices-outline>
+    <line choice="agentmemory"/>
+  </choices-outline>
+  <choice id="agentmemory" visible="false" title="AgentMemory">
+    <pkg-ref id="com.rickyseezy.agentmemory"/>
+  </choice>
+  <pkg-ref id="com.rickyseezy.agentmemory">agentmemory-component.pkg</pkg-ref>
+</installer-gui-script>

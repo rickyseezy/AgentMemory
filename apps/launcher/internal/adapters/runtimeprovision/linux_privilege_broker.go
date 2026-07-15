@@ -12,7 +12,7 @@ const nativeLinuxRuntimeHelperPath = "/usr/libexec/agentmemory/agentmemory-runti
 // PrivilegeTransportCodec owns the canonical authenticated helper wire
 // format. The broker never decodes or broadens the typed operation itself.
 type PrivilegeTransportCodec interface {
-	EncodePrivilegeRequest(runtimeport.PrivilegeRequest) ([]byte, error)
+	EncodePrivilegeRequest(context.Context, runtimeport.PrivilegeRequest) ([]byte, error)
 	DecodePrivilegeReceipt([]byte) (runtimeport.PrivilegeReceipt, error)
 }
 
@@ -56,7 +56,7 @@ func (b *PolkitPrivilegeBroker) Execute(
 		request.Digest().IsZero() || !request.Authority().Valid() {
 		return runtimeport.PrivilegeReceipt{}, runtimeport.ErrPrivilegeIntegrity
 	}
-	raw, err := b.codec.EncodePrivilegeRequest(request)
+	raw, err := b.codec.EncodePrivilegeRequest(ctx, request)
 	if err != nil {
 		return runtimeport.PrivilegeReceipt{}, runtimeport.ErrPrivilegeIntegrity
 	}

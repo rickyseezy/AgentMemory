@@ -135,6 +135,7 @@ func buildNativeLinuxPrivilegeCodecWithEncoders(
 	verified nativeVerifiedRuntimeExecution,
 	authority runtimeport.LinuxAuthority,
 	resolver *nativeLinuxHelperAuthorityResolver,
+	artifactStager runtimeprovision.PrivilegeArtifactStager,
 	releaseEncoder nativeReleaseManifestEncoder,
 	catalogEncoder nativeRuntimeCatalogEncoder,
 ) (*runtimeprovision.CanonicalPrivilegeTransportCodec, nativeLinuxHelperAuthority, error) {
@@ -142,6 +143,7 @@ func buildNativeLinuxPrivilegeCodecWithEncoders(
 	resource := verified.request.RuntimeCatalogResource
 	if ctx == nil || !authority.ValidFor(plan) || verified.authority.BindingDigest().IsZero() ||
 		resolver == nil || releaseEncoder == nil || catalogEncoder == nil ||
+		artifactStager == nil ||
 		verified.request.RuntimeCatalogID == "" || resource.ID() != verified.request.RuntimeCatalogID ||
 		resource.Kind() != releaseinventory.ResourceKindRuntimeCatalog ||
 		resource.Purpose() != releaseinventory.ResourcePurposeRuntimeCatalog ||
@@ -165,6 +167,7 @@ func buildNativeLinuxPrivilegeCodecWithEncoders(
 	codec, err := runtimeprovision.NewCanonicalPrivilegeTransportCodec(runtimeprovision.PrivilegeEnvelopeInput{
 		SignedRelease: releaseRaw, SignedRuntimeCatalog: catalogRaw, CanonicalPlan: plan.CanonicalBytes(),
 		RuntimeCatalogResourceID: resource.ID(), HelperResourceID: helper.ResourceID(),
+		ArtifactStager: artifactStager,
 	})
 	if err != nil {
 		return nil, nativeLinuxHelperAuthority{}, errNativeInstallerIntegrity

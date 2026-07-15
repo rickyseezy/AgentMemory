@@ -2,7 +2,10 @@ package runtimeprovision
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,12 +22,13 @@ func TestPF006CanonicalPrivilegeCodecRoundTripsAuthenticatedRequestEnvelope(t *t
 		CanonicalPlan:            plan.CanonicalBytes(),
 		RuntimeCatalogResourceID: "runtime-catalog-linux-amd64",
 		HelperResourceID:         "runtime-helper-linux-amd64",
+		ArtifactStager:           privilegeCodecArtifactStager(authority),
 	}
 	codec, err := NewCanonicalPrivilegeTransportCodec(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := codec.EncodePrivilegeRequest(request)
+	raw, err := codec.EncodePrivilegeRequest(t.Context(), request)
 	if err != nil || len(raw) == 0 || raw[len(raw)-1] == '\n' || !json.Valid(raw) {
 		t.Fatalf("EncodePrivilegeRequest() bytes=%d error=%v", len(raw), err)
 	}
@@ -38,7 +42,10 @@ func TestPF006CanonicalPrivilegeCodecRoundTripsAuthenticatedRequestEnvelope(t *t
 		decoded.HelperResourceID() != input.HelperResourceID ||
 		!bytes.Equal(decoded.SignedRelease(), input.SignedRelease) ||
 		!bytes.Equal(decoded.SignedRuntimeCatalog(), input.SignedRuntimeCatalog) ||
-		!bytes.Equal(decoded.CanonicalPlan(), input.CanonicalPlan) {
+		!bytes.Equal(decoded.CanonicalPlan(), input.CanonicalPlan) || len(decoded.Artifacts()) != 7 ||
+		decoded.Artifacts()[2].ArtifactID() != "docker-ce" ||
+		decoded.Artifacts()[2].Path() != "/home/agentmemory/.cache/agentmemory/"+authority.Digest().String()+"/"+
+			"docker-ce-"+decoded.Artifacts()[2].SHA256().String()+".deb" {
 		t.Fatalf("decoded request mismatch: request=%+v error=%v", bound, err)
 	}
 	reencoded, err := decoded.CanonicalBytes()
@@ -58,6 +65,34 @@ func TestPF006CanonicalPrivilegeCodecRoundTripsAuthenticatedRequestEnvelope(t *t
 	}
 }
 
+type privilegeArtifactStagerStub struct {
+	bindings []PrivilegeArtifactBinding
+	err      error
+}
+
+func (s *privilegeArtifactStagerStub) StagePrivilegeArtifacts(
+	context.Context,
+	runtimeport.LinuxAuthority,
+) ([]PrivilegeArtifactBinding, error) {
+	return append([]PrivilegeArtifactBinding(nil), s.bindings...), s.err
+}
+
+func privilegeCodecArtifactStager(authority runtimeport.LinuxAuthority) *privilegeArtifactStagerStub {
+	bindings := make([]PrivilegeArtifactBinding, 0, len(authority.Packages()))
+	for _, pkg := range authority.Packages() {
+		digest := runtimeinstall.Sum([]byte(pkg.Name()))
+		bindings = append(bindings, PrivilegeArtifactBinding{
+			artifactID: pkg.Name(),
+			path: filepath.Join(
+				"/home/agentmemory/.cache/agentmemory", authority.Digest().String(),
+				pkg.Name()+"-"+digest.String()+".deb",
+			),
+			sha256: digest, size: 1024,
+		})
+	}
+	return &privilegeArtifactStagerStub{bindings: bindings}
+}
+
 func TestPF006CanonicalPrivilegeCodecRejectsAmbiguityAndSubstitution(t *testing.T) {
 	t.Parallel()
 	plan, authority, request, _ := privilegeCodecFixture(t)
@@ -65,11 +100,12 @@ func TestPF006CanonicalPrivilegeCodecRejectsAmbiguityAndSubstitution(t *testing.
 		SignedRelease:        []byte(`{"fixture":"signed-release"}`),
 		SignedRuntimeCatalog: []byte(`{"fixture":"signed-runtime-catalog"}`), CanonicalPlan: plan.CanonicalBytes(),
 		RuntimeCatalogResourceID: "runtime-catalog-linux-amd64", HelperResourceID: "runtime-helper-linux-amd64",
+		ArtifactStager: privilegeCodecArtifactStager(authority),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := valid.EncodePrivilegeRequest(request)
+	raw, err := valid.EncodePrivilegeRequest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,22 +133,130 @@ func TestPF006CanonicalPrivilegeCodecRejectsAmbiguityAndSubstitution(t *testing.
 	if codec, constructError := NewCanonicalPrivilegeTransportCodec(PrivilegeEnvelopeInput{
 		SignedRelease: []byte(`{"fixture":"signed-release"}`), SignedRuntimeCatalog: []byte(`{"fixture":"catalog"}`),
 		CanonicalPlan: foreignPlan.CanonicalBytes(), RuntimeCatalogResourceID: "runtime-catalog-linux-amd64",
-		HelperResourceID: "runtime-helper-linux-amd64",
+		HelperResourceID: "runtime-helper-linux-amd64", ArtifactStager: privilegeCodecArtifactStager(authority),
 	}); constructError != nil {
 		t.Fatal(constructError)
-	} else if _, encodeError := codec.EncodePrivilegeRequest(request); encodeError == nil {
+	} else if _, encodeError := codec.EncodePrivilegeRequest(t.Context(), request); encodeError == nil {
 		t.Fatal("request was encoded under a substituted plan")
 	}
 	for name, input := range map[string]PrivilegeEnvelopeInput{
-		"empty release":        {SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper"},
-		"noncanonical release": {SignedRelease: []byte(`{ "x": 1 }`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper"},
-		"bad catalog":          {SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`x`), CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper"},
-		"bad plan":             {SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: []byte(`{}`), RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper"},
-		"unsafe resource":      {SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "../catalog", HelperResourceID: "helper"},
+		"empty release": {
+			SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(),
+			RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+			ArtifactStager: privilegeCodecArtifactStager(authority),
+		},
+		"noncanonical release": {
+			SignedRelease: []byte(`{ "x": 1 }`), SignedRuntimeCatalog: []byte(`{}`),
+			CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "catalog",
+			HelperResourceID: "helper", ArtifactStager: privilegeCodecArtifactStager(authority),
+		},
+		"bad catalog": {
+			SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`x`), CanonicalPlan: plan.CanonicalBytes(),
+			RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+			ArtifactStager: privilegeCodecArtifactStager(authority),
+		},
+		"bad plan": {
+			SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: []byte(`{}`),
+			RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+			ArtifactStager: privilegeCodecArtifactStager(authority),
+		},
+		"unsafe resource": {
+			SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(),
+			RuntimeCatalogResourceID: "../catalog", HelperResourceID: "helper",
+			ArtifactStager: privilegeCodecArtifactStager(authority),
+		},
+		"missing stager": {
+			SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(),
+			RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+		},
 	} {
 		if codec, constructError := NewCanonicalPrivilegeTransportCodec(input); codec != nil || constructError == nil {
 			t.Fatalf("%s input accepted", name)
 		}
+	}
+}
+
+func TestPF006CanonicalPrivilegeCodecRejectsArtifactHandoffSubstitution(t *testing.T) {
+	t.Parallel()
+	plan, authority, request, _ := privilegeCodecFixture(t)
+	codec, err := NewCanonicalPrivilegeTransportCodec(PrivilegeEnvelopeInput{
+		SignedRelease:        []byte(`{"fixture":"signed-release"}`),
+		SignedRuntimeCatalog: []byte(`{"fixture":"signed-runtime-catalog"}`),
+		CanonicalPlan:        plan.CanonicalBytes(), RuntimeCatalogResourceID: "runtime-catalog-linux-amd64",
+		HelperResourceID: "runtime-helper-linux-amd64", ArtifactStager: privilegeCodecArtifactStager(authority),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := codec.EncodePrivilegeRequest(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalPrivilegeRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*canonicalPrivilegeEnvelope){
+		"missing signed package": func(document *canonicalPrivilegeEnvelope) {
+			document.Artifacts = document.Artifacts[1:]
+		},
+		"duplicate artifact id": func(document *canonicalPrivilegeEnvelope) {
+			document.Artifacts[1].ArtifactID = document.Artifacts[0].ArtifactID
+		},
+		"substituted parent": func(document *canonicalPrivilegeEnvelope) {
+			document.Artifacts[0].Path = filepath.Join(
+				filepath.Dir(filepath.Dir(document.Artifacts[0].Path)),
+				runtimeinstall.Sum([]byte("foreign-authority")).String(),
+				filepath.Base(document.Artifacts[0].Path),
+			)
+		},
+		"digest filename mismatch": func(document *canonicalPrivilegeEnvelope) {
+			document.Artifacts[0].SHA256 = runtimeinstall.Sum([]byte("foreign-artifact")).String()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			document := copyPrivilegeEnvelope(decoded.document)
+			mutate(&document)
+			candidate, encodeError := encodeCanonicalPrivilegeEnvelope(document)
+			if encodeError != nil {
+				t.Fatal(encodeError)
+			}
+			untrusted, decodeError := DecodeCanonicalPrivilegeRequest(candidate)
+			if decodeError == nil {
+				if _, bindError := untrusted.BindAuthority(authority); bindError == nil {
+					t.Fatal("substituted artifact handoff accepted")
+				}
+			}
+		})
+	}
+}
+
+func TestPF006CanonicalPrivilegeCodecPropagatesContextAndContainsStagerFailure(t *testing.T) {
+	t.Parallel()
+	plan, _, request, _ := privilegeCodecFixture(t)
+	stagerFailure := errors.New("private staging failed")
+	codec, err := NewCanonicalPrivilegeTransportCodec(PrivilegeEnvelopeInput{
+		SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(),
+		RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+		ArtifactStager: &privilegeArtifactStagerStub{err: stagerFailure},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, encodeError := codec.EncodePrivilegeRequest(t.Context(), request); !errors.Is(encodeError, ErrProvisionIntegrity) ||
+		errors.Is(encodeError, stagerFailure) {
+		t.Fatalf("stager error escaped boundary: %v", encodeError)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, encodeError := codec.EncodePrivilegeRequest(cancelled, request); !errors.Is(encodeError, context.Canceled) {
+		t.Fatalf("cancelled error=%v", encodeError)
+	}
+	if _, encodeError := codec.EncodePrivilegeRequest(hostileNilContext(), request); !errors.Is(encodeError, ErrProvisionIntegrity) {
+		t.Fatalf("nil context error=%v", encodeError)
+	}
+	if _, constructError := NewPrivilegeArtifactBinding("bad/id", "/tmp/artifact", runtimeinstall.Sum([]byte("x")), 1); constructError == nil {
+		t.Fatal("unsafe public artifact binding accepted")
 	}
 }
 

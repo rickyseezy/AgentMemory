@@ -16,6 +16,7 @@ func buildNativeLinuxPrivilegeCodec(
 	release *nativeReleaseAuthority,
 	verified nativeVerifiedRuntimeExecution,
 	authority runtimeport.LinuxAuthority,
+	artifactStager runtimeprovision.PrivilegeArtifactStager,
 ) (*runtimeprovision.CanonicalPrivilegeTransportCodec, nativeLinuxHelperAuthority, error) {
 	if release == nil || release.verifier() == nil {
 		return nil, nativeLinuxHelperAuthority{}, errNativeInstallerIntegrity
@@ -28,7 +29,7 @@ func buildNativeLinuxPrivilegeCodec(
 		return nil, nativeLinuxHelperAuthority{}, errNativeInstallerIntegrity
 	}
 	return buildNativeLinuxPrivilegeCodecWithEncoders(
-		ctx, verified, authority, resolver,
+		ctx, verified, authority, resolver, artifactStager,
 		releaseinventory.EncodeSignedManifestV1, runtimecatalog.EncodeSignedManifestV1,
 	)
 }

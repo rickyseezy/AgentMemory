@@ -2,11 +2,14 @@ package runtimeprovision
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +34,7 @@ type PrivilegeEnvelopeInput struct {
 	CanonicalPlan            []byte
 	RuntimeCatalogResourceID string
 	HelperResourceID         string
+	ArtifactStager           PrivilegeArtifactStager
 }
 
 // CanonicalPrivilegeTransportCodec owns the fixed, stdin-only PF-006 helper
@@ -42,6 +46,7 @@ type CanonicalPrivilegeTransportCodec struct {
 	catalogResourceID    string
 	helperResourceID     string
 	plan                 runtimeinstall.Plan
+	artifactStager       PrivilegeArtifactStager
 }
 
 // NewCanonicalPrivilegeTransportCodec copies immutable transport authority and
@@ -53,6 +58,7 @@ func NewCanonicalPrivilegeTransportCodec(
 	if err != nil || !validCanonicalPrivilegeObject(input.SignedRelease) ||
 		!validCanonicalPrivilegeObject(input.SignedRuntimeCatalog) ||
 		!validPrivilegeWireID(input.RuntimeCatalogResourceID) || !validPrivilegeWireID(input.HelperResourceID) ||
+		nilArtifactDependency(input.ArtifactStager) ||
 		len(input.SignedRelease)+len(input.SignedRuntimeCatalog)+len(input.CanonicalPlan) > maximumPrivilegeWireBytes {
 		return nil, ErrProvisionIntegrity
 	}
@@ -61,25 +67,41 @@ func NewCanonicalPrivilegeTransportCodec(
 		signedRuntimeCatalog: append([]byte(nil), input.SignedRuntimeCatalog...),
 		canonicalPlan:        append([]byte(nil), input.CanonicalPlan...),
 		catalogResourceID:    input.RuntimeCatalogResourceID, helperResourceID: input.HelperResourceID,
-		plan: plan,
+		plan: plan, artifactStager: input.ArtifactStager,
 	}, nil
 }
 
 // EncodePrivilegeRequest binds the transient nonce/operation request to the
 // exact canonical plan. It never serializes a caller-selected command or path.
 func (c *CanonicalPrivilegeTransportCodec) EncodePrivilegeRequest(
+	ctx context.Context,
 	request runtimeport.PrivilegeRequest,
 ) ([]byte, error) {
-	if c == nil || !request.Authority().ValidFor(c.plan) || request.Digest().IsZero() ||
+	if c == nil || ctx == nil || nilArtifactDependency(c.artifactStager) ||
+		!request.Authority().ValidFor(c.plan) || request.Digest().IsZero() ||
 		request.Authority().PlanDigest() != c.plan.Digest() {
 		return nil, ErrProvisionIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	expected, err := runtimeport.ExpectedPrivilegeState(request.Authority(), request.Operation())
 	if err != nil || expected != request.ExpectedState() {
 		return nil, ErrProvisionIntegrity
 	}
+	bindings, err := c.artifactStager.StagePrivilegeArtifacts(ctx, request.Authority())
+	if err != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return nil, contextError
+		}
+		return nil, ErrProvisionIntegrity
+	}
+	artifacts, err := canonicalPrivilegeArtifacts(bindings, request.Authority())
+	if err != nil {
+		return nil, ErrProvisionIntegrity
+	}
 	document := canonicalPrivilegeEnvelope{
-		CanonicalPlan: json.RawMessage(c.canonicalPlan), HelperResourceID: c.helperResourceID,
+		Artifacts: artifacts, CanonicalPlan: json.RawMessage(c.canonicalPlan), HelperResourceID: c.helperResourceID,
 		Request: privilegeRequestDocument(request), RuntimeCatalogResourceID: c.catalogResourceID,
 		SchemaVersion: privilegeWireSchemaVersion, SignedRelease: json.RawMessage(c.signedRelease),
 		SignedRuntimeCatalog: json.RawMessage(c.signedRuntimeCatalog),
@@ -88,13 +110,21 @@ func (c *CanonicalPrivilegeTransportCodec) EncodePrivilegeRequest(
 }
 
 type canonicalPrivilegeEnvelope struct {
-	CanonicalPlan            json.RawMessage           `json:"canonical_plan"`
-	HelperResourceID         string                    `json:"helper_resource_id"`
-	Request                  canonicalPrivilegeRequest `json:"request"`
-	RuntimeCatalogResourceID string                    `json:"runtime_catalog_resource_id"`
-	SchemaVersion            uint16                    `json:"schema_version"`
-	SignedRelease            json.RawMessage           `json:"signed_release"`
-	SignedRuntimeCatalog     json.RawMessage           `json:"signed_runtime_catalog"`
+	Artifacts                []canonicalPrivilegeArtifact `json:"artifacts"`
+	CanonicalPlan            json.RawMessage              `json:"canonical_plan"`
+	HelperResourceID         string                       `json:"helper_resource_id"`
+	Request                  canonicalPrivilegeRequest    `json:"request"`
+	RuntimeCatalogResourceID string                       `json:"runtime_catalog_resource_id"`
+	SchemaVersion            uint16                       `json:"schema_version"`
+	SignedRelease            json.RawMessage              `json:"signed_release"`
+	SignedRuntimeCatalog     json.RawMessage              `json:"signed_runtime_catalog"`
+}
+
+type canonicalPrivilegeArtifact struct {
+	ArtifactID string `json:"artifact_id"`
+	Path       string `json:"path"`
+	SHA256     string `json:"sha256"`
+	Size       uint64 `json:"size"`
 }
 
 type canonicalPrivilegeRequest struct {
@@ -124,8 +154,9 @@ func privilegeRequestDocument(request runtimeport.PrivilegeRequest) canonicalPri
 // DecodedPrivilegeRequest is untrusted transport data until the helper has
 // independently verified its signed release/catalog and projected authority.
 type DecodedPrivilegeRequest struct {
-	document canonicalPrivilegeEnvelope
-	plan     runtimeinstall.Plan
+	document  canonicalPrivilegeEnvelope
+	plan      runtimeinstall.Plan
+	artifacts []PrivilegeArtifactBinding
 }
 
 // DecodeCanonicalPrivilegeRequest accepts only the exact schema-v1 canonical
@@ -145,11 +176,18 @@ func DecodeCanonicalPrivilegeRequest(raw []byte) (DecodedPrivilegeRequest, error
 	if err != nil {
 		return DecodedPrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
 	}
+	artifacts, err := privilegeArtifactsFromCanonical(document.Artifacts)
+	if err != nil {
+		return DecodedPrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
+	}
 	canonical, err := encodeCanonicalPrivilegeEnvelope(document)
 	if err != nil || !bytes.Equal(canonical, raw) {
 		return DecodedPrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
 	}
-	return DecodedPrivilegeRequest{document: copyPrivilegeEnvelope(document), plan: plan}, nil
+	return DecodedPrivilegeRequest{
+		document: copyPrivilegeEnvelope(document), plan: plan,
+		artifacts: append([]PrivilegeArtifactBinding(nil), artifacts...),
+	}, nil
 }
 
 // BindAuthority reconstructs the immutable request only after the caller has
@@ -165,6 +203,7 @@ func (d DecodedPrivilegeRequest) BindAuthority(
 	requestDigest, requestDigestError := runtimeinstall.ParseHash(claims.RequestDigest)
 	nonce, nonceError := parsePrivilegeNonce(claims.Nonce)
 	if !authority.ValidFor(d.plan) || authority.PlanDigest() != d.plan.Digest() ||
+		!validPrivilegeArtifactBindings(d.artifacts, authority) ||
 		authorityError != nil || authorityDigest != authority.Digest() || expectedError != nil ||
 		operationKeyError != nil || requestDigestError != nil || nonceError != nil {
 		return runtimeport.PrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
@@ -206,6 +245,13 @@ func (d DecodedPrivilegeRequest) CanonicalPlan() []byte {
 	return append([]byte(nil), d.document.CanonicalPlan...)
 }
 
+// Artifacts returns a defensive copy of the untrusted helper handoff paths and
+// their signed identities. BindAuthority and helper-side file verification are
+// both required before these paths may be consumed.
+func (d DecodedPrivilegeRequest) Artifacts() []PrivilegeArtifactBinding {
+	return append([]PrivilegeArtifactBinding(nil), d.artifacts...)
+}
+
 // RuntimeCatalogResourceID identifies the signed release resource to rejoin.
 func (d DecodedPrivilegeRequest) RuntimeCatalogResourceID() string {
 	return d.document.RuntimeCatalogResourceID
@@ -223,10 +269,97 @@ func encodeCanonicalPrivilegeEnvelope(document canonicalPrivilegeEnvelope) ([]by
 }
 
 func copyPrivilegeEnvelope(document canonicalPrivilegeEnvelope) canonicalPrivilegeEnvelope {
+	document.Artifacts = append([]canonicalPrivilegeArtifact(nil), document.Artifacts...)
 	document.CanonicalPlan = append(json.RawMessage(nil), document.CanonicalPlan...)
 	document.SignedRelease = append(json.RawMessage(nil), document.SignedRelease...)
 	document.SignedRuntimeCatalog = append(json.RawMessage(nil), document.SignedRuntimeCatalog...)
 	return document
+}
+
+func canonicalPrivilegeArtifacts(
+	bindings []PrivilegeArtifactBinding,
+	authority runtimeport.LinuxAuthority,
+) ([]canonicalPrivilegeArtifact, error) {
+	if !validPrivilegeArtifactBindings(bindings, authority) {
+		return nil, runtimeport.ErrPrivilegeIntegrity
+	}
+	result := make([]canonicalPrivilegeArtifact, 0, len(bindings))
+	for _, binding := range bindings {
+		result = append(result, canonicalPrivilegeArtifact{
+			ArtifactID: binding.artifactID, Path: binding.path,
+			SHA256: binding.sha256.String(), Size: binding.size,
+		})
+	}
+	return result, nil
+}
+
+func privilegeArtifactsFromCanonical(
+	documents []canonicalPrivilegeArtifact,
+) ([]PrivilegeArtifactBinding, error) {
+	if len(documents) == 0 || len(documents) > 4096 || !sort.SliceIsSorted(documents, func(left, right int) bool {
+		return documents[left].ArtifactID < documents[right].ArtifactID
+	}) {
+		return nil, runtimeport.ErrPrivilegeIntegrity
+	}
+	result := make([]PrivilegeArtifactBinding, 0, len(documents))
+	for index, document := range documents {
+		digest, err := runtimeinstall.ParseHash(document.SHA256)
+		if err != nil || digest.IsZero() || document.Size == 0 || document.Size > 1<<53-1 ||
+			!validPrivilegeWireID(document.ArtifactID) || !validPrivilegeArtifactPath(document.Path) ||
+			index > 0 && documents[index-1].ArtifactID == document.ArtifactID {
+			return nil, runtimeport.ErrPrivilegeIntegrity
+		}
+		result = append(result, PrivilegeArtifactBinding{
+			artifactID: document.ArtifactID, path: document.Path, sha256: digest, size: document.Size,
+		})
+	}
+	return result, nil
+}
+
+func validPrivilegeArtifactBindings(
+	bindings []PrivilegeArtifactBinding,
+	authority runtimeport.LinuxAuthority,
+) bool {
+	if !authority.Valid() || len(bindings) == 0 || len(bindings) > 4096 ||
+		!sort.SliceIsSorted(bindings, func(left, right int) bool { return bindings[left].artifactID < bindings[right].artifactID }) {
+		return false
+	}
+	packages := make(map[string]struct{}, len(authority.Packages()))
+	for _, pkg := range authority.Packages() {
+		packages[pkg.Name()] = struct{}{}
+	}
+	seenPackages := make(map[string]struct{}, len(packages))
+	for index, binding := range bindings {
+		if binding.sha256.IsZero() || binding.size == 0 || !validPrivilegeWireID(binding.artifactID) ||
+			!validPrivilegeArtifactPath(binding.path) ||
+			index > 0 && bindings[index-1].artifactID == binding.artifactID ||
+			filepath.Base(filepath.Dir(binding.path)) != authority.Digest().String() {
+			return false
+		}
+		extension := filepath.Ext(binding.path)
+		if _, packageArtifact := packages[binding.artifactID]; packageArtifact {
+			wanted := ".deb"
+			if authority.PackageManager() == runtimeport.PackageManagerDNF {
+				wanted = ".rpm"
+			}
+			if extension != wanted {
+				return false
+			}
+			seenPackages[binding.artifactID] = struct{}{}
+		} else if !strings.HasPrefix(binding.artifactID, "repo-") || extension != ".metadata" {
+			return false
+		}
+		if strings.TrimSuffix(filepath.Base(binding.path), extension) !=
+			binding.artifactID+"-"+binding.sha256.String() {
+			return false
+		}
+	}
+	return len(seenPackages) == len(packages)
+}
+
+func validPrivilegeArtifactPath(value string) bool {
+	return value != "" && len(value) <= 4096 && filepath.IsAbs(value) && filepath.Clean(value) == value &&
+		!strings.ContainsAny(value, "\x00\r\n")
 }
 
 type canonicalPrivilegeReceipt struct {

@@ -122,6 +122,57 @@ func TestCatalogLinuxArtifactAcquirerRejectsInvalidCallsAndDependencies(t *testi
 	}
 }
 
+func TestCatalogPrivilegeArtifactStagerMaterializesExactCASObjectsForHelper(t *testing.T) {
+	_, authority := adapterAuthority(t)
+	plan := adapterLinuxArtifactPlan(t, authority)
+	materializer := &desktopArtifactMaterializerFake{}
+	boundary := filepath.Join(t.TempDir(), "helper-staging")
+	stager, err := newCatalogPrivilegeArtifactStager(
+		&artifactPlanProjectorFake{plan: plan}, materializer, boundary,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := stager.StagePrivilegeArtifacts(t.Context(), authority)
+	artifact := plan.Artifacts()[0]
+	wantTarget := filepath.Join(
+		boundary, authority.Digest().String(), artifact.ID()+"-"+artifact.Digest().Hex()+".deb",
+	)
+	if err != nil || len(bindings) != 1 || bindings[0].ArtifactID() != artifact.ID() ||
+		bindings[0].SHA256() != runtimeinstall.Hash(artifact.Digest()) || bindings[0].Size() != artifact.Size() ||
+		bindings[0].Path() != wantTarget || materializer.calls != 1 || materializer.boundary != boundary ||
+		materializer.target != wantTarget || materializer.artifact.ID() != artifact.ID() {
+		t.Fatalf("bindings=%+v materializer=%+v error=%v", bindings, materializer, err)
+	}
+}
+
+func TestCatalogPrivilegeArtifactStagerRejectsInvalidAuthorityPlanAndMaterialization(t *testing.T) {
+	_, authority := adapterAuthority(t)
+	plan := adapterLinuxArtifactPlan(t, authority)
+	boundary := filepath.Join(t.TempDir(), "helper-staging")
+	tests := []struct {
+		name         string
+		projector    linuxArtifactPlanProjector
+		materializer artifactapp.VerifiedFinalMaterializer
+		boundary     string
+	}{
+		{name: "projector", projector: &artifactPlanProjectorFake{err: errors.New("failed")}, materializer: &desktopArtifactMaterializerFake{}, boundary: boundary},
+		{name: "plan", projector: &artifactPlanProjectorFake{plan: adapterLinuxArtifactPlanWithDigest(t, releaseinventory.DigestBytes([]byte("other")))}, materializer: &desktopArtifactMaterializerFake{}, boundary: boundary},
+		{name: "materializer", projector: &artifactPlanProjectorFake{plan: plan}, materializer: &desktopArtifactMaterializerFake{err: errors.New("failed")}, boundary: boundary},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stager, err := newCatalogPrivilegeArtifactStager(test.projector, test.materializer, test.boundary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stager.StagePrivilegeArtifacts(t.Context(), authority); !errors.Is(err, runtimeport.ErrLinuxArtifactIntegrity) {
+				t.Fatalf("StagePrivilegeArtifacts() error=%v", err)
+			}
+		})
+	}
+}
+
 func TestCatalogDesktopArtifactAcquirerMaterializesExactSignedInstaller(t *testing.T) {
 	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
 	plan := adapterDesktopArtifactPlan(t, authority)

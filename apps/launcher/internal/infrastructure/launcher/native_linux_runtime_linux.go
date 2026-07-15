@@ -4,6 +4,7 @@ package launcher
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
@@ -66,7 +67,14 @@ func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	codec, helper, err := buildNativeLinuxPrivilegeCodec(ctx, f.release, verified, authority)
+	artifactStager, err := runtimeprovision.NewCatalogPrivilegeArtifactStager(
+		verified.catalog, f.composition.artifactStore,
+		filepath.Join(authority.HomeDirectory(), ".agentmemory"),
+	)
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
+	codec, helper, err := buildNativeLinuxPrivilegeCodec(ctx, f.release, verified, authority, artifactStager)
 	if err != nil || codec == nil || !helper.ValidFor(authority) {
 		return nil, errNativeInstallerIntegrity
 	}

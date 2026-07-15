@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -116,7 +117,7 @@ func TestPF006NativeLinuxPrivilegeCodecCarriesExactReverifiedReleaseCatalogAndPl
 		t.Fatal(err)
 	}
 	codec, helper, err := buildNativeLinuxPrivilegeCodecWithEncoders(
-		t.Context(), verified, authority, resolver,
+		t.Context(), verified, authority, resolver, launcherPrivilegeArtifactStager{},
 		func(releaseinventory.SignedManifest) ([]byte, error) { return append([]byte(nil), releaseRaw...), nil },
 		func(runtimecatalog.SignedManifest) ([]byte, error) { return append([]byte(nil), catalogRaw...), nil },
 	)
@@ -136,7 +137,7 @@ func TestPF006NativeLinuxPrivilegeCodecCarriesExactReverifiedReleaseCatalogAndPl
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := codec.EncodePrivilegeRequest(request)
+	raw, err := codec.EncodePrivilegeRequest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,8 @@ func TestPF006NativeLinuxPrivilegeCodecRejectsCatalogAndHelperSubstitution(t *te
 		"helper missing": {verified: valid, authority: authority, resolver: &nativeLinuxHelperAuthorityResolver{}, catalog: catalogEncoder},
 	} {
 		codec, helper, buildError := buildNativeLinuxPrivilegeCodecWithEncoders(
-			t.Context(), test.verified, test.authority, test.resolver, releaseEncoder, test.catalog,
+			t.Context(), test.verified, test.authority, test.resolver, launcherPrivilegeArtifactStager{},
+			releaseEncoder, test.catalog,
 		)
 		if codec != nil || helper.ResourceID() != "" || buildError == nil {
 			t.Fatalf("%s codec=%+v helper=%+v error=%v", name, codec, helper, buildError)
@@ -247,6 +249,35 @@ func launcherLinuxVerifiedExecution(
 type nativeLinuxHelperReleaseStub struct {
 	calls int
 	err   error
+}
+
+type launcherPrivilegeArtifactStager struct{}
+
+func (launcherPrivilegeArtifactStager) StagePrivilegeArtifacts(
+	_ context.Context,
+	authority runtimeport.LinuxAuthority,
+) ([]runtimeprovision.PrivilegeArtifactBinding, error) {
+	bindings := make([]runtimeprovision.PrivilegeArtifactBinding, 0, len(authority.Packages()))
+	for _, pkg := range authority.Packages() {
+		digest := runtimeinstall.Sum([]byte(pkg.Name()))
+		extension := ".deb"
+		if authority.PackageManager() == runtimeport.PackageManagerDNF {
+			extension = ".rpm"
+		}
+		binding, err := runtimeprovision.NewPrivilegeArtifactBinding(
+			pkg.Name(),
+			filepath.Join(
+				"/home/agentmemory/.agentmemory", authority.Digest().String(),
+				pkg.Name()+"-"+digest.String()+extension,
+			),
+			digest, 1024,
+		)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
 }
 
 func (s *nativeLinuxHelperReleaseStub) VerifyReleaseResource(

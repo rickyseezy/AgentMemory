@@ -112,7 +112,7 @@ type privilegeCodecStub struct {
 	decodeCalls int
 }
 
-func (c *privilegeCodecStub) EncodePrivilegeRequest(runtimeport.PrivilegeRequest) ([]byte, error) {
+func (c *privilegeCodecStub) EncodePrivilegeRequest(context.Context, runtimeport.PrivilegeRequest) ([]byte, error) {
 	c.encodeCalls++
 	return append([]byte(nil), c.encoded...), c.encodeErr
 }

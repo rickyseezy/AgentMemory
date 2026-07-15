@@ -126,6 +126,11 @@ func (a *Application) Install(ctx context.Context, request Request) (Result, err
 	if err := a.dependencies.Candidate.VerifyCandidate(ctx, artifact); err != nil {
 		return Result{}, mapContext(ctx, ErrCandidateIntegrity)
 	}
+	if err := a.dependencies.Installed.VerifyInstalled(ctx, publication, artifact); err == nil {
+		return installationResult(publication, artifact), nil
+	} else if contextError := ctx.Err(); contextError != nil {
+		return Result{}, contextError
+	}
 	if err := a.dependencies.Installer.Install(ctx, artifact); err != nil {
 		return Result{}, mapContext(ctx, ErrInstallationFailed)
 	}
@@ -135,9 +140,16 @@ func (a *Application) Install(ctx context.Context, request Request) (Result, err
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	return installationResult(publication, artifact), nil
+}
+
+func installationResult(
+	publication releasepublication.Publication,
+	artifact releasepublication.Artifact,
+) Result {
 	return Result{
 		ReleaseID: publication.ReleaseID(), Version: publication.Version(), PackageID: artifact.ID(),
-	}, nil
+	}
 }
 
 func mapContext(ctx context.Context, fallback error) error {

@@ -128,12 +128,13 @@ func Build(
 		}
 	}
 	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
-	artifacts := make([]nativeBuildArtifact, 0, 2)
+	artifacts := make([]nativeBuildArtifact, 0, 3)
 	for _, specification := range []struct {
 		name        string
 		packagePath string
 	}{
 		{name: executableName("agentmemory", resolved.OperatingSystem), packagePath: "./apps/launcher/cmd/agentmemory"},
+		{name: executableName("agentmemory-bootstrap", resolved.OperatingSystem), packagePath: "./apps/launcher/cmd/agentmemory-bootstrap"},
 		{name: executableName("agentmemory-runtime-helper", resolved.OperatingSystem), packagePath: "./apps/launcher/cmd/agentmemory-runtime-helper"},
 	} {
 		artifact, err := buildReproducibleBinary(

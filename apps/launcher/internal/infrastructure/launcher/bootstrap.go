@@ -62,6 +62,19 @@ type BootstrapRuntimeFactory interface {
 	) (BootstrapRuntime, error)
 }
 
+// bootstrapSurface is the fully authenticated application/Ready/lifecycle
+// unit consumed by one MCP server. Keeping it transport-free lets the signed
+// portable package bridge adopt the native surface without proxying stdio.
+type bootstrapSurface struct {
+	application mcpbootstrap.BootstrapApplication
+	ready       mcpbootstrap.ReadySurfaceProvider
+	lifecycle   RuntimeLifecycle
+}
+
+func (s bootstrapSurface) valid() bool {
+	return !nilCapability(s.application) && !nilCapability(s.ready) && !nilCapability(s.lifecycle)
+}
+
 // Factory is the production PF-001 MCP composition root.
 type Factory struct {
 	resolver    mcpbootstrapapp.BootstrapResolver
@@ -104,49 +117,68 @@ func (f *Factory) BuildMCP(
 	ctx context.Context,
 	host agentconfigdomain.AgentHost,
 ) (MCPRunner, error) {
+	surface, err := f.buildBootstrapSurface(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return newManagedRunner(ctx, surface)
+}
+
+func (f *Factory) buildBootstrapSurface(
+	ctx context.Context,
+	host agentconfigdomain.AgentHost,
+) (bootstrapSurface, error) {
 	if f == nil || ctx == nil || !host.Valid() || nilCapability(f.resolver) || nilCapability(f.runtime) {
-		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return bootstrapSurface{}, err
 	}
 	resolved, err := f.resolver.ResolveBootstrap(ctx, host)
 	if errors.Is(err, mcpbootstrapapp.ErrBootstrapNotFound) && !nilCapability(f.initializer) {
 		if initializeError := f.initializer.EnsureBootstrap(ctx, host); initializeError != nil {
-			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+			return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
 		}
 		resolved, err = f.resolver.ResolveBootstrap(ctx, host)
 	}
 	if err != nil {
-		return nil, err
+		return bootstrapSurface{}, err
 	}
 	if !resolved.Valid() {
-		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	runtime, err := f.runtime.BuildBootstrapRuntime(ctx, host, resolved)
 	if err != nil {
-		return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
 	if runtime.Progress == nil || runtime.Progress.Binding().OperationID() != resolved.OperationID() ||
 		!runtime.Progress.Binding().PlanDigest().Equal(resolved.PlanDigest()) ||
 		nilCapability(runtime.Setup) || nilCapability(runtime.Cancellation) ||
 		nilCapability(runtime.Ready) || nilCapability(runtime.Lifecycle) {
 		_ = closeRuntime(ctx, runtime.Lifecycle)
-		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	application, err := mcpbootstrapapp.New(
 		resolved.InstallationID(), runtime.Progress, runtime.Setup, runtime.Cancellation,
 	)
 	if err != nil {
 		_ = closeRuntime(ctx, runtime.Lifecycle)
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	return bootstrapSurface{application: application, ready: runtime.Ready, lifecycle: runtime.Lifecycle}, nil
+}
+
+func newManagedRunner(ctx context.Context, surface bootstrapSurface) (MCPRunner, error) {
+	if ctx == nil || !surface.valid() {
+		_ = closeRuntime(context.Background(), surface.lifecycle) //nolint:contextcheck // No caller context exists at this rejected boundary; owner=launcher expiry=2027-07-15.
 		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
-	server, err := mcpbootstrap.NewServer(application, runtime.Ready)
+	server, err := mcpbootstrap.NewServer(surface.application, surface.ready)
 	if err != nil {
-		_ = closeRuntime(ctx, runtime.Lifecycle)
+		_ = closeRuntime(ctx, surface.lifecycle)
 		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
-	return &managedRunner{server: server, lifecycle: runtime.Lifecycle}, nil
+	return &managedRunner{server: server, lifecycle: surface.lifecycle}, nil
 }
 
 type managedRunner struct {

@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/nativepackage"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 )
 
@@ -13,10 +14,26 @@ func composeDefaultNativeProduction(
 	ctx context.Context,
 	composition *nativeComposition,
 ) (nativeProductionFirstStart, error) {
+	return composeNativeProduction(ctx, composition, defaultNativeReleaseBundleRoot)
+}
+
+func composeInstalledNativeProduction(
+	ctx context.Context,
+	composition *nativeComposition,
+) (nativeProductionFirstStart, error) {
+	return composeNativeProduction(ctx, composition, nativepackage.NativeInstalledReleaseBundleRoot)
+}
+
+func composeNativeProduction(
+	ctx context.Context,
+	composition *nativeComposition,
+	bundleRoot nativeReleaseBundleRootResolver,
+) (nativeProductionFirstStart, error) {
 	if ctx == nil || composition == nil || nilAny(composition.resolver) || composition.runtime == nil ||
 		composition.plans == nil || composition.operations == nil ||
 		composition.rebootCoordinator == nil ||
-		nilAny(composition.preparations) || nilAny(composition.binder) || composition.releaseAnchor == nil {
+		nilAny(composition.preparations) || nilAny(composition.binder) || composition.releaseAnchor == nil ||
+		bundleRoot == nil {
 		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
 	}
 	applications, err := newNativeInstallApplicationsBuilder(composition)
@@ -25,7 +42,7 @@ func composeDefaultNativeProduction(
 	}
 	production, err := composeNativeProductionFirstStart(ctx, nativeProductionFirstStartDependencies{
 		Release: nativeReleaseAuthorityDependencies{
-			BundleRoot:   defaultNativeReleaseBundleRoot,
+			BundleRoot:   bundleRoot,
 			Trust:        loadEmbeddedNativeReleaseTrust,
 			Clock:        setuphost.Clock{},
 			AntiRollback: composition.releaseAnchor,

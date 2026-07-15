@@ -61,9 +61,19 @@ type ReadySurfaceProvider interface {
 	ReadySurface(context.Context) (ReadySurface, error)
 }
 
+// BootstrapApplication is the transport-neutral setup use case consumed by
+// the MCP adapter. The native durable application and the signed portable
+// package bridge both implement this exact closed surface.
+type BootstrapApplication interface {
+	Status(context.Context) (mcpbootstrapapp.InstallationStatus, error)
+	WaitAfter(context.Context, uint64) (mcpbootstrapapp.InstallationStatus, error)
+	OpenSetup(context.Context) (mcpbootstrapapp.OpenSetupResult, error)
+	Cancel(context.Context) (mcpbootstrapapp.CancelResult, error)
+}
+
 // Server owns one MCP server and the atomic bootstrap-to-product handoff.
 type Server struct {
-	application *mcpbootstrapapp.Application
+	application BootstrapApplication
 	ready       ReadySurfaceProvider
 	server      *mcp.Server
 
@@ -76,10 +86,10 @@ type Server struct {
 // NewServer registers exactly the three PF-001 bootstrap tools. It rejects a
 // missing Ready provider so a Ready installation cannot strand the session.
 func NewServer(
-	application *mcpbootstrapapp.Application,
+	application BootstrapApplication,
 	ready ReadySurfaceProvider,
 ) (*Server, error) {
-	if application == nil || nilCapability(ready) {
+	if nilCapability(application) || nilCapability(ready) {
 		return nil, errors.New("MCP bootstrap dependencies are invalid")
 	}
 	server := mcp.NewServer(
@@ -103,7 +113,7 @@ func NewServer(
 // progress sequence for Ready. It writes no diagnostic data to MCP stdout.
 func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
 	if s == nil || ctx == nil || nilCapability(transport) || s.server == nil ||
-		s.application == nil || nilCapability(s.ready) {
+		nilCapability(s.application) || nilCapability(s.ready) {
 		return errors.New("MCP bootstrap server is unavailable")
 	}
 	if err := ctx.Err(); err != nil {

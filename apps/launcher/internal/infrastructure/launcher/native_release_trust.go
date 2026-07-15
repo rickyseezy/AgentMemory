@@ -36,6 +36,20 @@ type nativeReleaseTrustDocument struct {
 	Provenance                         nativeProvenanceDocument                       `json:"provenance"`
 	Qualification                      nativeQualificationDocument                    `json:"qualification"`
 	Publishers                         map[string][]string                            `json:"nativePublishers"`
+	Sigstore                           nativeSigstoreTrustDocument                    `json:"sigstore"`
+}
+
+type nativeSigstoreTrustDocument struct {
+	TrustedRootBase64 string                         `json:"trustedRootBase64"`
+	RekorLogID        string                         `json:"rekorLogId"`
+	Publication       nativeSigstoreIdentityDocument `json:"publication"`
+	ReleaseObject     nativeSigstoreIdentityDocument `json:"releaseObject"`
+}
+
+type nativeSigstoreIdentityDocument struct {
+	TrustRootID    string `json:"trustRootId"`
+	CertificateSAN string `json:"certificateSan"`
+	OIDCIssuer     string `json:"oidcIssuer"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -139,6 +153,10 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil || document.Offline.MaximumFutureSkewSeconds > 600 {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	publicationSigstore, objectSigstore, err := decodeNativeSigstoreTrust(document.Sigstore)
+	if err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
 		RuntimeCatalogKeys:                 runtimeCatalogKeys,
@@ -157,7 +175,9 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 			PublicKeys: qualificationKeys, LicensePolicySigners: license,
 			VulnerabilityPolicySigners: vulnerabilities,
 		},
-		Publishers: copyNativePublisherPolicy(document.Publishers),
+		Publishers:            copyNativePublisherPolicy(document.Publishers),
+		PublicationSigstore:   publicationSigstore,
+		ReleaseObjectSigstore: objectSigstore,
 	}
 	// Reuse every production policy constructor here. A syntactically valid
 	// document cannot become release authority unless all semantic allowlists
@@ -184,6 +204,41 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	return trust, nil
+}
+
+func decodeNativeSigstoreTrust(
+	document nativeSigstoreTrustDocument,
+) (releaseverifyadapter.SigstoreTrustPolicyInput, releaseverifyadapter.SigstoreTrustPolicyInput, error) {
+	if document.TrustedRootBase64 == "" || len(document.TrustedRootBase64) >
+		base64.StdEncoding.EncodedLen(maximumNativeReleaseTrustBytes) {
+		return releaseverifyadapter.SigstoreTrustPolicyInput{}, releaseverifyadapter.SigstoreTrustPolicyInput{},
+			errNativeInstallerIntegrity
+	}
+	trustedRoot, err := base64.StdEncoding.DecodeString(document.TrustedRootBase64)
+	if err != nil || base64.StdEncoding.EncodeToString(trustedRoot) != document.TrustedRootBase64 ||
+		len(trustedRoot) == 0 || len(trustedRoot) > maximumNativeReleaseTrustBytes {
+		return releaseverifyadapter.SigstoreTrustPolicyInput{}, releaseverifyadapter.SigstoreTrustPolicyInput{},
+			errNativeInstallerIntegrity
+	}
+	build := func(identity nativeSigstoreIdentityDocument) releaseverifyadapter.SigstoreTrustPolicyInput {
+		return releaseverifyadapter.SigstoreTrustPolicyInput{
+			TrustRootID: identity.TrustRootID, TrustedRootJSON: append([]byte(nil), trustedRoot...),
+			RekorLogID: document.RekorLogID, CertificateSAN: identity.CertificateSAN,
+			OIDCIssuer: identity.OIDCIssuer,
+		}
+	}
+	publication := build(document.Publication)
+	object := build(document.ReleaseObject)
+	if _, err := releaseverifyadapter.NewSigstoreCertificateTransparencyVerifier(publication); err != nil {
+		return releaseverifyadapter.SigstoreTrustPolicyInput{}, releaseverifyadapter.SigstoreTrustPolicyInput{},
+			errNativeInstallerIntegrity
+	}
+	if _, err := releaseverifyadapter.NewSigstoreCertificateTransparencyVerifier(object); err != nil ||
+		publication.CertificateSAN == object.CertificateSAN {
+		return releaseverifyadapter.SigstoreTrustPolicyInput{}, releaseverifyadapter.SigstoreTrustPolicyInput{},
+			errNativeInstallerIntegrity
+	}
+	return publication, object, nil
 }
 
 func decodeNativeReleaseDigestBindings(values map[string]string) (map[string]releaseinventory.Digest, error) {

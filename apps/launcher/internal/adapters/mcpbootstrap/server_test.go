@@ -166,8 +166,12 @@ func TestPF001MCPBootstrapConstructionRunAndReadySurfaceFailClosed(t *testing.T)
 	t.Parallel()
 	fixture := newServerFixture(t, setupprogressapp.StateRunning)
 	var nilReady *readyProviderStub
+	var nilApplication *mcpbootstrapapp.Application
 	if server, err := NewServer(nil, fixture.ready); server != nil || err == nil {
 		t.Fatalf("nil application server = %#v, %v", server, err)
+	}
+	if server, err := NewServer(nilApplication, fixture.ready); server != nil || err == nil {
+		t.Fatalf("typed nil application server = %#v, %v", server, err)
 	}
 	if server, err := NewServer(fixture.application, nilReady); server != nil || err == nil {
 		t.Fatalf("nil Ready provider server = %#v, %v", server, err)

@@ -20,7 +20,7 @@ func TestPF001NativePackageInstallVerifiesEveryAuthorityInOrder(t *testing.T) {
 	result, err := application.Install(context.Background(), request)
 	if err != nil || result.ReleaseID != publication.ReleaseID() || result.Version != publication.Version() ||
 		result.PackageID != "agentmemory-linux-amd64-deb" ||
-		strings.Join(ports.calls, ",") != "signature,candidate,install,installed" {
+		strings.Join(ports.calls, ",") != "signature,candidate,installed,install,installed" {
 		t.Fatalf("Install() = %+v, %v calls=%v", result, err, ports.calls)
 	}
 	request.PublicationJSON[0] ^= 0xff
@@ -52,10 +52,10 @@ func TestPF001NativePackageInstallFailsClosedAtEveryBoundary(t *testing.T) {
 		}, want: ErrCandidateIntegrity, calls: "signature,candidate"},
 		"installer": {mutate: func(_ *Request, ports *installationPorts) {
 			ports.installError = private
-		}, want: ErrInstallationFailed, calls: "signature,candidate,install"},
+		}, want: ErrInstallationFailed, calls: "signature,candidate,installed,install"},
 		"postcondition": {mutate: func(_ *Request, ports *installationPorts) {
 			ports.installedError = private
-		}, want: ErrPostconditionFailed, calls: "signature,candidate,install,installed"},
+		}, want: ErrPostconditionFailed, calls: "signature,candidate,installed,install,installed"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -68,6 +68,17 @@ func TestPF001NativePackageInstallFailsClosedAtEveryBoundary(t *testing.T) {
 				t.Fatalf("Install() = %+v, %v calls=%v want=%v/%q", result, err, ports.calls, test.want, test.calls)
 			}
 		})
+	}
+}
+
+func TestPF001NativePackageInstallIsIdempotentForExactInstalledProduct(t *testing.T) {
+	t.Parallel()
+	publication := publicationFixture(t)
+	ports := &installationPorts{initiallyInstalled: true}
+	result, err := newApplication(t, ports).Install(context.Background(), validRequest(t, publication))
+	if err != nil || result.PackageID != "agentmemory-linux-amd64-deb" ||
+		strings.Join(ports.calls, ",") != "signature,candidate,installed" {
+		t.Fatalf("Install() = %+v, %v calls=%v", result, err, ports.calls)
 	}
 }
 
@@ -112,13 +123,15 @@ func TestPF001NativePackageInstallRejectsPartialCompositionAndInvocation(t *test
 }
 
 type installationPorts struct {
-	calls          []string
-	signature      []byte
-	publication    releasepublication.Publication
-	signatureError error
-	candidateError error
-	installError   error
-	installedError error
+	calls              []string
+	signature          []byte
+	publication        releasepublication.Publication
+	signatureError     error
+	candidateError     error
+	installError       error
+	installedError     error
+	installedCalls     int
+	initiallyInstalled bool
 }
 
 func (p *installationPorts) VerifyArtifactSignature(
@@ -147,7 +160,11 @@ func (p *installationPorts) VerifyInstalled(
 	_ releasepublication.Artifact,
 ) error {
 	p.calls = append(p.calls, "installed")
+	p.installedCalls++
 	p.publication = publication
+	if p.installedCalls == 1 && !p.initiallyInstalled {
+		return errors.New("product is absent or requires repair")
+	}
 	return p.installedError
 }
 

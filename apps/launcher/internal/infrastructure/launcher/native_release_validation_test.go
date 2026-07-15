@@ -15,7 +15,7 @@ import (
 
 func TestPF001NativeReleaseBundleValidationRejectsUntrustedOrUnavailableInputs(t *testing.T) {
 	t.Parallel()
-	validTrust := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture())
+	validTrust := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture(t))
 	now := time.Date(2026, time.July, 15, 12, 0, 0, 0, time.UTC)
 	missing := filepath.Join(t.TempDir(), "missing")
 	empty := newNativeValidationBundleRoot(t)

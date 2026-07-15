@@ -92,6 +92,22 @@ func NewNativeInstalledProductVerifier() (*InstalledProductVerifier, error) {
 	return NewInstalledProductVerifier(layout, runtimeOS(), runtimeArchitecture(), decodeInstalledDistribution)
 }
 
+// NativeInstalledReleaseBundleRoot returns the package-manager-owned retained
+// release root for the compile-time platform. It derives the root from the
+// same installed postcondition layout instead of executable location, PATH,
+// environment variables, or the current working directory.
+func NativeInstalledReleaseBundleRoot() (string, error) {
+	layout, err := nativeInstalledLayout()
+	if err != nil || !validInstalledLayout(layout) {
+		return "", ErrInstalledProductIntegrity
+	}
+	root := filepath.Dir(filepath.Dir(layout.DistributionEnvelope))
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return "", ErrInstalledProductIntegrity
+	}
+	return root, nil
+}
+
 // VerifyInstalled proves the exact installed manifest and both executable
 // bytes, then cross-binds inner and outer release identity.
 func (v *InstalledProductVerifier) VerifyInstalled(

@@ -34,6 +34,8 @@ type nativeReleaseTrustMaterial struct {
 	Provenance                         releaseverifyadapter.ProvenanceTrustPolicyInput
 	Qualification                      releaseverifyadapter.QualificationTrustPolicyInput
 	Publishers                         releaseverifyadapter.NativePublisherPolicyInput
+	PublicationSigstore                releaseverifyadapter.SigstoreTrustPolicyInput
+	ReleaseObjectSigstore              releaseverifyadapter.SigstoreTrustPolicyInput
 }
 
 type nativeReleaseStackDependencies struct {

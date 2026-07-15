@@ -3,6 +3,7 @@ package launcher
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,11 +13,12 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
+	"github.com/sigstore/sigstore-go/pkg/testing/data"
 )
 
 func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *testing.T) {
 	t.Parallel()
-	document := nativeReleaseTrustFixture()
+	document := nativeReleaseTrustFixture(t)
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
 	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
 		len(trust.RuntimeCatalogKeys) != 1 ||
@@ -26,20 +28,24 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
 		len(trust.Provenance.BuildIdentities) != 1 || len(trust.Provenance.RecipeDigests) != 1 ||
 		len(trust.Qualification.PublicKeys) != 1 || len(trust.Qualification.LicensePolicySigners) != 1 ||
-		len(trust.Qualification.VulnerabilityPolicySigners) != 1 || len(trust.Publishers) != 1 {
+		len(trust.Qualification.VulnerabilityPolicySigners) != 1 || len(trust.Publishers) != 1 ||
+		len(trust.PublicationSigstore.TrustedRootJSON) == 0 || len(trust.ReleaseObjectSigstore.TrustedRootJSON) == 0 ||
+		trust.PublicationSigstore.CertificateSAN == trust.ReleaseObjectSigstore.CertificateSAN {
 		t.Fatalf("trust=%+v error=%v", trust, err)
 	}
 	manifest := trust.ManifestKeys["release-root"]
 	manifest[0] ^= 0xff
+	trust.PublicationSigstore.TrustedRootJSON[0] ^= 0xff
 	again, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
-	if err != nil || again.ManifestKeys["release-root"][0] != 1 {
+	if err != nil || again.ManifestKeys["release-root"][0] != 1 ||
+		again.PublicationSigstore.TrustedRootJSON[0] == trust.PublicationSigstore.TrustedRootJSON[0] {
 		t.Fatalf("decoded trust aliases prior output: key=%v error=%v", again.ManifestKeys, err)
 	}
 }
 
 func TestPF001ReleaseAssemblerUsesTheProductionTrustDecoder(t *testing.T) {
 	t.Parallel()
-	valid := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture())
+	valid := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture(t))
 	if err := ValidateNativeReleaseTrustBase64(valid); err != nil {
 		t.Fatalf("ValidateNativeReleaseTrustBase64(valid) error = %v", err)
 	}
@@ -98,12 +104,19 @@ func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testi
 		"duplicate publisher": func(document *nativeReleaseTrustDocument) {
 			document.Publishers["agentmemory-native-2026"] = []string{"agentmemory.publisher", "agentmemory.publisher"}
 		},
+		"sigstore root":        func(document *nativeReleaseTrustDocument) { document.Sigstore.TrustedRootBase64 = "" },
+		"sigstore log":         func(document *nativeReleaseTrustDocument) { document.Sigstore.RekorLogID = "invalid" },
+		"publication identity": func(document *nativeReleaseTrustDocument) { document.Sigstore.Publication.CertificateSAN = "" },
+		"object identity":      func(document *nativeReleaseTrustDocument) { document.Sigstore.ReleaseObject.CertificateSAN = "" },
+		"shared workflow identity": func(document *nativeReleaseTrustDocument) {
+			document.Sigstore.ReleaseObject.CertificateSAN = document.Sigstore.Publication.CertificateSAN
+		},
 	}
 	for name, mutate := range tests {
 		name, mutate := name, mutate
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			document := nativeReleaseTrustFixture()
+			document := nativeReleaseTrustFixture(t)
 			mutate(&document)
 			if trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document)); !errors.Is(err, errNativeInstallerIntegrity) || len(trust.ManifestKeys) != 0 {
 				t.Fatalf("decode=(%+v,%v)", trust, err)
@@ -114,7 +127,7 @@ func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testi
 
 func TestPF001NativeReleaseTrustRejectsAmbiguousOrNoncanonicalTransport(t *testing.T) {
 	t.Parallel()
-	valid := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture())
+	valid := encodeNativeReleaseTrust(t, nativeReleaseTrustFixture(t))
 	raw, err := base64.StdEncoding.DecodeString(valid)
 	if err != nil {
 		t.Fatal(err)
@@ -151,13 +164,23 @@ func TestPF001NativeReleaseBuildHasNoDevelopmentTrustFallback(t *testing.T) {
 	}
 }
 
-func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
+func nativeReleaseTrustFixture(t *testing.T) nativeReleaseTrustDocument {
+	t.Helper()
 	key := base64.StdEncoding.EncodeToString(ed25519.PublicKey{
 		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
 	})
 	license := releaseinventory.DigestBytes([]byte("license policy")).Hex()
 	vulnerability := releaseinventory.DigestBytes([]byte("vulnerability policy")).Hex()
+	entity := data.Bundle(t, "othername.sigstore.json")
+	entries, err := entity.TlogEntries()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("Sigstore test entry = %d, %v", len(entries), err)
+	}
+	trustedRoot, err := data.TrustedRoot(t, "scaffolding.json").MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return nativeReleaseTrustDocument{
 		SchemaVersion:           nativeReleaseTrustSchemaVersion,
 		ManifestKeys:            map[string]string{"release-root": key},
@@ -191,6 +214,18 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 			VulnerabilityPolicySigners: map[string]string{vulnerability: "qualification-root"},
 		},
 		Publishers: map[string][]string{"agentmemory-native-2026": {"agentmemory.publisher"}},
+		Sigstore: nativeSigstoreTrustDocument{
+			TrustedRootBase64: base64.StdEncoding.EncodeToString(trustedRoot),
+			RekorLogID:        hex.EncodeToString([]byte(entries[0].LogKeyID())),
+			Publication: nativeSigstoreIdentityDocument{
+				TrustRootID: "sigstore-publication-root", CertificateSAN: "publication!oidc.local",
+				OIDCIssuer: "http://oidc.local:8080",
+			},
+			ReleaseObject: nativeSigstoreIdentityDocument{
+				TrustRootID: "sigstore-object-root", CertificateSAN: "object!oidc.local",
+				OIDCIssuer: "http://oidc.local:8080",
+			},
+		},
 	}
 }
 

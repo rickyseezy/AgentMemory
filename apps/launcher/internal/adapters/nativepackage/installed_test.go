@@ -109,6 +109,10 @@ func TestPF001NativeInstalledLayoutUsesOnlyPlatformOwnedAbsoluteLocations(t *tes
 	if err != nil || verifier == nil {
 		t.Fatalf("NewNativeInstalledProductVerifier() = %T, %v", verifier, err)
 	}
+	root, err := NativeInstalledReleaseBundleRoot()
+	if err != nil || root != filepath.Dir(filepath.Dir(layout.DistributionEnvelope)) {
+		t.Fatalf("NativeInstalledReleaseBundleRoot() = %q, %v", root, err)
+	}
 }
 
 func TestPF001InstalledDistributionProjectionSelectsExactNativeResources(t *testing.T) {

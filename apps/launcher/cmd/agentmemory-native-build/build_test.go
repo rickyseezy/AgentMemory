@@ -25,7 +25,7 @@ func TestPF001NativeBuildPublishesOnlyReproducibleManifestInputs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Build() error=%v", err)
 	}
-	if validated == "" || len(runner.commands) != 7 {
+	if validated == "" || len(runner.commands) != 9 {
 		t.Fatalf("validated=%q commands=%+v", validated, runner.commands)
 	}
 	for _, command := range runner.commands[3:] {
@@ -40,6 +40,7 @@ func TestPF001NativeBuildPublishesOnlyReproducibleManifestInputs(t *testing.T) {
 	epoch := time.Unix(fixture.options.SourceEpoch, 0)
 	for name, want := range map[string]string{
 		"agentmemory":                "launcher deterministic bytes",
+		"agentmemory-bootstrap":      "bootstrap deterministic bytes",
 		"agentmemory-runtime-helper": "helper deterministic bytes",
 	} {
 		path := filepath.Join(fixture.output, name)
@@ -58,7 +59,7 @@ func TestPF001NativeBuildPublishesOnlyReproducibleManifestInputs(t *testing.T) {
 	if err := json.Unmarshal(raw, &metadata); err != nil || metadata.SchemaVersion != 1 ||
 		metadata.SourceCommit != testSourceCommit || metadata.GoVersion != requiredGoVersion ||
 		metadata.OperatingSystem != "linux" || metadata.Architecture != "arm64" ||
-		metadata.SourceEpoch != fixture.options.SourceEpoch || len(metadata.Artifacts) != 2 {
+		metadata.SourceEpoch != fixture.options.SourceEpoch || len(metadata.Artifacts) != 3 {
 		t.Fatalf("metadata=%+v error=%v", metadata, err)
 	}
 }
@@ -246,7 +247,9 @@ func (r *nativeBuildRunner) Run(_ context.Context, command Command) ([]byte, err
 	output := commandArgumentAfter(command.Args, "-o")
 	packagePath := command.Args[len(command.Args)-1]
 	content := "launcher deterministic bytes"
-	if strings.HasSuffix(packagePath, "agentmemory-runtime-helper") {
+	if strings.HasSuffix(packagePath, "agentmemory-bootstrap") {
+		content = "bootstrap deterministic bytes"
+	} else if strings.HasSuffix(packagePath, "agentmemory-runtime-helper") {
 		content = "helper deterministic bytes"
 	}
 	if r.nondeterministic && r.builds%2 == 0 {

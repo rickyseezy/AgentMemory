@@ -62,6 +62,35 @@ func TestPF001LauncherCompositionBuildsAndRunsOfficialBootstrapMCP(t *testing.T)
 	}
 }
 
+func TestPF001LauncherCompositionExposesOneTransportFreeAuthenticatedSurface(t *testing.T) {
+	t.Parallel()
+	resolved, runtime := launcherFixture(t)
+	factory, err := NewFactory(
+		&resolverStub{resolved: resolved},
+		&runtimeFactoryStub{runtime: runtime},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := factory.buildBootstrapSurface(context.Background(), agentconfigdomain.AgentHostGemini)
+	if err != nil || !surface.valid() {
+		t.Fatalf("buildBootstrapSurface() = %+v, %v", surface, err)
+	}
+	if _, err := surface.application.Status(context.Background()); err != nil {
+		t.Fatalf("surface status error = %v", err)
+	}
+	if err := closeRuntime(context.Background(), surface.lifecycle); err != nil {
+		t.Fatalf("surface lifecycle close error = %v", err)
+	}
+	if runtime.Lifecycle.(*lifecycleStub).calls.Load() != 1 {
+		t.Fatal("surface lifecycle ownership was not transferred exactly once")
+	}
+	if runner, err := newManagedRunner(context.Background(), bootstrapSurface{}); runner != nil ||
+		!errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
+		t.Fatalf("invalid surface runner = %T, %v", runner, err)
+	}
+}
+
 func TestPF001LauncherFirstStartInitializesThenResolvesExactProtectedAuthority(t *testing.T) {
 	t.Parallel()
 	resolved, runtime := launcherFixture(t)

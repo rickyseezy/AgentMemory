@@ -97,32 +97,50 @@ func NewNativeFactory() MCPFactory {
 	}
 }
 
+func newInstalledNativeFactory() *NativeFactory {
+	return &NativeFactory{
+		roots: defaultNativeRoots, journals: newPlatformJournalProvider,
+		ready: pendingReadySurface{}, production: composeInstalledNativeProduction,
+	}
+}
+
 // BuildMCP creates a short-lived native composition and transfers ownership
 // of its resources to the returned managed runner.
 func (f *NativeFactory) BuildMCP(
 	ctx context.Context,
 	host agentconfigdomain.AgentHost,
 ) (MCPRunner, error) {
+	surface, err := f.buildBootstrapSurface(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return newManagedRunner(ctx, surface)
+}
+
+func (f *NativeFactory) buildBootstrapSurface(
+	ctx context.Context,
+	host agentconfigdomain.AgentHost,
+) (bootstrapSurface, error) {
 	if f == nil || ctx == nil || !host.Valid() || f.roots == nil || f.journals == nil || nilCapability(f.ready) {
-		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return bootstrapSurface{}, err
 	}
 	roots, err := f.roots()
 	if err != nil || !roots.valid() {
-		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
 	composition, err := composeNative(ctx, roots, f.journals, f.ready)
 	if err != nil {
-		return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
 	}
 	if f.production != nil {
 		production, productionError := f.production(ctx, &composition)
 		if productionError != nil || production.Factory == nil || production.Supervisor == nil ||
 			production.Release == nil {
 			_ = composition.resources.Close(context.WithoutCancel(ctx))
-			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+			return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
 		}
 		if addError := composition.resources.addClosers(
 			production.Release,
@@ -131,16 +149,16 @@ func (f *NativeFactory) BuildMCP(
 			_ = production.Supervisor.Close(context.WithoutCancel(ctx))
 			_ = production.Release.Close(context.WithoutCancel(ctx))
 			_ = composition.resources.Close(context.WithoutCancel(ctx))
-			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+			return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
 		}
 		composition.factory = production.Factory
 	}
-	runner, err := composition.factory.BuildMCP(ctx, host)
+	surface, err := composition.factory.buildBootstrapSurface(ctx, host)
 	if err != nil {
 		_ = composition.resources.Close(context.WithoutCancel(ctx))
-		return nil, err
+		return bootstrapSurface{}, err
 	}
-	return runner, nil
+	return surface, nil
 }
 
 // ResumeInstallation resolves an owner-only token back to its authenticated

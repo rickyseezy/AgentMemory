@@ -39,6 +39,8 @@ func TestPF001NativeReleaseStackRejectsEveryMissingOrInvalidTrustAuthority(t *te
 	base := nativeReleaseStackFixture(t)
 	var nilSource *nativeReleaseSourceStub
 	var nilClock *nativeReleaseClock
+	var nilPlatform *nativeReleaseExactPlatform
+	var nilProtocol *nativeReleaseProtocol
 	var nilAnchor *nativeReleasePorts
 	for _, test := range []struct {
 		name   string
@@ -46,6 +48,8 @@ func TestPF001NativeReleaseStackRejectsEveryMissingOrInvalidTrustAuthority(t *te
 	}{
 		{name: "source", mutate: func(d *nativeReleaseStackDependencies) { d.Source = nilSource }},
 		{name: "clock", mutate: func(d *nativeReleaseStackDependencies) { d.Clock = nilClock }},
+		{name: "platform", mutate: func(d *nativeReleaseStackDependencies) { d.Platform = nilPlatform }},
+		{name: "protocol", mutate: func(d *nativeReleaseStackDependencies) { d.Protocol = nilProtocol }},
 		{name: "anchor", mutate: func(d *nativeReleaseStackDependencies) { d.AntiRollback = nilAnchor }},
 		{name: "manifest keys", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.ManifestKeys = nil }},
 		{name: "runtime helper publisher certificates", mutate: func(d *nativeReleaseStackDependencies) {
@@ -108,7 +112,8 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 	vulnerability := releaseinventory.DigestBytes([]byte("vulnerability-policy"))
 	ports := &nativeReleasePorts{}
 	return nativeReleaseStackDependencies{
-		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()}, AntiRollback: ports,
+		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()},
+		Platform: nativeReleasePlatform{}, Protocol: nativeReleaseProtocol{}, AntiRollback: ports,
 		Trust: nativeReleaseTrustMaterial{
 			ManifestKeys:       map[string]ed25519.PublicKey{"release-root": manifestPublic},
 			HostPolicyKeys:     map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},

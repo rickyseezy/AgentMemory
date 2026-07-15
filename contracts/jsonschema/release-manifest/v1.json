@@ -206,12 +206,44 @@
         }
       ]
     },
+    "expandedTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes", "digest", "kind", "storage_id"],
+          "properties": {
+            "bytes": { "const": 0 },
+            "digest": { "const": "" },
+            "kind": { "const": "" },
+            "storage_id": { "const": "" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes", "digest", "kind", "storage_id"],
+          "properties": {
+            "bytes": { "$ref": "#/$defs/safePositiveInteger" },
+            "digest": { "$ref": "#/$defs/digest" },
+            "kind": { "const": "compose-bundle" },
+            "storage_id": {
+              "type": "string",
+              "minLength": 13,
+              "maxLength": 256,
+              "pattern": "^compose/(?!.*(?:^|/)\\.\\.?/)(?!.*//)[A-Za-z0-9._/-]+\\.ya?ml$"
+            }
+          }
+        }
+      ]
+    },
     "resource": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "cyclonedx_sbom_resource_id",
         "digest",
+        "expanded_target",
         "id",
         "kind",
         "license_resource_id",
@@ -238,6 +270,7 @@
       "properties": {
         "cyclonedx_sbom_resource_id": { "$ref": "#/$defs/optionalIdentifier" },
         "digest": { "$ref": "#/$defs/digest" },
+        "expanded_target": { "$ref": "#/$defs/expandedTarget" },
         "id": { "$ref": "#/$defs/identifier" },
         "kind": {
           "enum": [
@@ -253,8 +286,12 @@
             "model",
             "tokenizer",
             "template",
+            "install_plan_template",
+            "product_manifest",
             "offline_bundle_component",
             "runtime_catalog",
+            "runtime_installer",
+            "runtime_distribution",
             "cyclonedx_sbom",
             "spdx_sbom",
             "provenance",
@@ -275,8 +312,12 @@
             "application/vnd.agentmemory.model-weights",
             "application/vnd.agentmemory.tokenizer+json",
             "text/vnd.agentmemory.prompt-template",
+            "application/vnd.agentmemory.install-plan-template+json",
+            "application/vnd.agentmemory.signed-product-manifest+json",
             "application/vnd.agentmemory.offline-component",
             "application/vnd.agentmemory.runtime-catalog+json",
+            "application/x-msi",
+            "application/vnd.ms-wsl",
             "application/vnd.cyclonedx+json",
             "application/spdx+json",
             "application/vnd.in-toto+json",
@@ -306,8 +347,12 @@
             "model_weights",
             "tokenizer",
             "prompt_template",
+            "install_plan_template",
+            "product_manifest",
             "offline_bundle_component",
             "runtime_catalog",
+            "runtime_prerequisite_installer",
+            "runtime_distribution",
             "cyclonedx_sbom",
             "spdx_sbom",
             "slsa_provenance",

@@ -39,6 +39,8 @@ type nativeReleaseTrustMaterial struct {
 type nativeReleaseStackDependencies struct {
 	Source       nativeReleaseContentSource
 	Clock        appreleaseverify.Clock
+	Platform     appreleaseverify.PlatformProvider
+	Protocol     appreleaseverify.ProtocolProvider
 	AntiRollback appreleaseverify.AntiRollbackRepository
 	Trust        nativeReleaseTrustMaterial
 }
@@ -47,6 +49,7 @@ type nativeReleaseStackDependencies struct {
 // its verified first-start template source to pristine-start preparation.
 type nativeReleaseStack struct {
 	application *appreleaseverify.Application
+	bootstrap   *appreleaseverify.BootstrapCatalog
 	templates   *firststartadapter.VerifiedTemplateSource
 }
 
@@ -54,7 +57,8 @@ type nativeReleaseStack struct {
 // the launcher. Every constructor below fails closed; there is no permissive
 // verifier for development or offline installation.
 func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeReleaseStack, error) {
-	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) || nilAny(dependencies.AntiRollback) {
+	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) || nilAny(dependencies.Platform) ||
+		nilAny(dependencies.Protocol) || nilAny(dependencies.AntiRollback) {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	if !validNativeHelperCertificateBindings(dependencies.Trust.RuntimeHelperPublisherCertificates) {
@@ -107,7 +111,7 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	application, err := appreleaseverify.NewApplication(appreleaseverify.Dependencies{
-		Clock: dependencies.Clock, Platform: nativeReleasePlatform{}, Protocol: nativeReleaseProtocol{},
+		Clock: dependencies.Clock, Platform: dependencies.Platform, Protocol: dependencies.Protocol,
 		Signature: signature, TrustEvidence: offline, ResourceDigest: digests,
 		SBOM: sboms, Provenance: provenance, License: qualification, Vulnerability: qualification,
 		NativePublisher: publishers, OCIIndex: oci, AntiRollback: dependencies.AntiRollback,
@@ -131,7 +135,7 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 	if err != nil {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
-	return nativeReleaseStack{application: application, templates: templates}, nil
+	return nativeReleaseStack{application: application, bootstrap: bootstrap, templates: templates}, nil
 }
 
 func validNativeHelperCertificateBindings(values map[string]releaseinventory.Digest) bool {

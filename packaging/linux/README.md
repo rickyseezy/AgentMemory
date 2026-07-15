@@ -31,14 +31,26 @@ go run ./apps/launcher/cmd/agentmemory-linux-release \
   -trust /absolute/path/to/native-release-trust.json \
   -output /absolute/path/to/new-stage \
   -arch amd64 \
-  -source-date-epoch "$SOURCE_DATE_EPOCH"
+  -source-date-epoch "$SOURCE_DATE_EPOCH" \
+  -verification-epoch "$RELEASE_VERIFICATION_EPOCH"
 ```
 
 The assembler requires a clean Git revision, validates the trust document with
-the launcher's production decoder, rejects links and special bundle entries,
-cross-builds both exact Linux entry points with the same embedded public trust,
-normalizes files to `0644`, binaries/directories to `0755`, assigns every entry
-the release epoch, and atomically publishes a previously nonexistent stage.
+the launcher's production decoder, first copies the untrusted input into a
+private symlink-free staging root, and runs the launcher's complete production
+release/evidence/bootstrap verifier against that retained copy at the explicit
+qualification time. It selects the exact Linux launcher/helper resources from
+the verified manifest and rechecks their canonical bundle paths, sizes, and
+SHA-256 digests while copying those exact already-built and already-signed bytes
+into the package stage. Package assembly has no compiler capability and never
+rebuilds a manifest-bound artifact. It then normalizes files to `0644`, native
+entry points/directories to `0755`, assigns every entry the release epoch, and
+atomically publishes a previously nonexistent stage.
+
+Native binaries must therefore be reproducibly built, platform-signed where
+required, and entered into the signed release manifest before this assembler is
+called. `RELEASE_VERIFICATION_EPOCH` is the trusted qualification instant bound
+to the release evidence; it is deliberately distinct from `SOURCE_DATE_EPOCH`.
 
 Package that stage with pinned nFPM 2.47.0. Release assembly must provide these
 environment variables:

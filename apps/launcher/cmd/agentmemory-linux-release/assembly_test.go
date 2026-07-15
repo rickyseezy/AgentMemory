@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,9 +20,16 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 	fixture := newAssemblyFixture(t)
 	runner := &fakeCommandRunner{}
 	validated := ""
+	var bundleValidation bundleValidationCall
 	err := Assemble(context.Background(), fixture.options, runner, func(encoded string) error {
 		validated = encoded
 		return nil
+	}, func(_ context.Context, root string, trust string, operatingSystem string, architecture string, verifiedAt time.Time) (verifiedNativePackage, error) {
+		bundleValidation = bundleValidationCall{
+			root: root, trust: trust, operatingSystem: operatingSystem,
+			architecture: architecture, verifiedAt: verifiedAt,
+		}
+		return verifiedNativePackageAtRoot(t, root), nil
 	})
 	if err != nil {
 		t.Fatalf("Assemble() error = %v", err)
@@ -28,24 +37,22 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 	if decoded, err := base64.StdEncoding.DecodeString(validated); err != nil || string(decoded) != `{"schemaVersion":1}` {
 		t.Fatalf("validated trust = %q, decode error = %v", validated, err)
 	}
-	if len(runner.commands) != 3 || runner.commands[0].Name != "git" {
-		t.Fatalf("commands = %+v, want git and two builds", runner.commands)
+	if bundleValidation.root == fixture.bundle || filepath.Base(bundleValidation.root) != "bundle" ||
+		!strings.HasPrefix(filepath.Base(filepath.Dir(bundleValidation.root)), ".agentmemory-linux-stage-") ||
+		bundleValidation.trust != validated ||
+		bundleValidation.operatingSystem != "linux" || bundleValidation.architecture != "arm64" ||
+		bundleValidation.verifiedAt.Unix() != fixture.options.VerificationEpoch {
+		t.Fatalf("bundle validation = %+v", bundleValidation)
 	}
-	wantPackages := []string{"./apps/launcher/cmd/agentmemory", "./apps/launcher/cmd/agentmemory-runtime-helper"}
+	if len(runner.commands) != 1 || runner.commands[0].Name != "git" {
+		t.Fatalf("commands = %+v, want only the clean-revision check", runner.commands)
+	}
 	resolvedRepository, err := filepath.EvalSymlinks(fixture.repository)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index, wantPackage := range wantPackages {
-		command := runner.commands[index+1]
-		if command.Name != "go" || command.Dir != resolvedRepository ||
-			command.Env["GOOS"] != "linux" || command.Env["GOARCH"] != "arm64" ||
-			command.Env["CGO_ENABLED"] != "0" || command.Args[len(command.Args)-1] != wantPackage {
-			t.Fatalf("build command %d = %+v", index, command)
-		}
-		if !strings.Contains(strings.Join(command.Args, " "), releaseTrustVariable+"="+validated) {
-			t.Fatalf("build command %d does not embed validated trust", index)
-		}
+	if runner.commands[0].Dir != resolvedRepository {
+		t.Fatalf("git command = %+v", runner.commands[0])
 	}
 
 	epoch := time.Unix(fixture.options.SourceEpoch, 0)
@@ -71,6 +78,15 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 	if err != nil || string(content) != "model" {
 		t.Fatalf("copied model = %q, error = %v", content, err)
 	}
+	for path, want := range map[string]string{
+		"agentmemory":                "signed launcher bytes",
+		"agentmemory-runtime-helper": "signed helper bytes",
+	} {
+		content, err := os.ReadFile(filepath.Join(fixture.output, path)) // #nosec G304 -- path is a closed test-owned leaf set.
+		if err != nil || string(content) != want {
+			t.Fatalf("packaged %s = %q, error = %v", path, content, err)
+		}
+	}
 }
 
 func TestPF001LinuxReleaseAssemblyRejectsEveryUnsafeInput(t *testing.T) {
@@ -78,6 +94,9 @@ func TestPF001LinuxReleaseAssemblyRejectsEveryUnsafeInput(t *testing.T) {
 	for name, mutate := range map[string]func(*testing.T, *assemblyFixture){
 		"architecture": func(_ *testing.T, fixture *assemblyFixture) { fixture.options.Architecture = "386" },
 		"epoch":        func(_ *testing.T, fixture *assemblyFixture) { fixture.options.SourceEpoch = 0 },
+		"verification epoch": func(_ *testing.T, fixture *assemblyFixture) {
+			fixture.options.VerificationEpoch = 0
+		},
 		"existing output": func(t *testing.T, fixture *assemblyFixture) {
 			if err := os.Mkdir(fixture.output, 0o700); err != nil {
 				t.Fatal(err)
@@ -106,7 +125,7 @@ func TestPF001LinuxReleaseAssemblyRejectsEveryUnsafeInput(t *testing.T) {
 			fixture := newAssemblyFixture(t)
 			mutate(t, fixture)
 			runner := &fakeCommandRunner{}
-			if err := Assemble(context.Background(), fixture.options, runner, func(string) error { return nil }); err == nil {
+			if err := Assemble(context.Background(), fixture.options, runner, func(string) error { return nil }, acceptBundle); err == nil {
 				t.Fatal("Assemble() error = nil, want rejection")
 			}
 			if _, err := os.Lstat(fixture.output); !errors.Is(err, os.ErrNotExist) && name != "existing output" {
@@ -116,7 +135,7 @@ func TestPF001LinuxReleaseAssemblyRejectsEveryUnsafeInput(t *testing.T) {
 	}
 }
 
-func TestPF001LinuxReleaseAssemblyFailsClosedForAuthorityRevisionAndBuild(t *testing.T) {
+func TestPF001LinuxReleaseAssemblyFailsClosedForAuthorityAndRevision(t *testing.T) {
 	t.Parallel()
 	for name, configure := range map[string]func(*fakeCommandRunner) trustValidator{
 		"trust": func(_ *fakeCommandRunner) trustValidator {
@@ -130,20 +149,12 @@ func TestPF001LinuxReleaseAssemblyFailsClosedForAuthorityRevisionAndBuild(t *tes
 			runner.gitError = errors.New("failed")
 			return func(string) error { return nil }
 		},
-		"build failure": func(runner *fakeCommandRunner) trustValidator {
-			runner.buildErrorAt = 1
-			return func(string) error { return nil }
-		},
-		"missing build output": func(runner *fakeCommandRunner) trustValidator {
-			runner.skipBuildAt = 1
-			return func(string) error { return nil }
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			fixture := newAssemblyFixture(t)
 			runner := &fakeCommandRunner{}
-			if err := Assemble(context.Background(), fixture.options, runner, configure(runner)); err == nil {
+			if err := Assemble(context.Background(), fixture.options, runner, configure(runner), acceptBundle); err == nil {
 				t.Fatal("Assemble() error = nil, want failure")
 			}
 			if _, err := os.Lstat(fixture.output); !errors.Is(err, os.ErrNotExist) {
@@ -158,15 +169,18 @@ func TestPF001LinuxReleaseAssemblyRejectsInvalidCapabilitiesAndPaths(t *testing.
 	fixture := newAssemblyFixture(t)
 	validator := func(string) error { return nil }
 	runner := &fakeCommandRunner{}
-	if err := Assemble(context.Background(), fixture.options, nil, validator); err == nil {
+	if err := Assemble(context.Background(), fixture.options, nil, validator, acceptBundle); err == nil {
 		t.Fatal("Assemble(nil runner) error = nil")
 	}
-	if err := Assemble(context.Background(), fixture.options, runner, nil); err == nil {
+	if err := Assemble(context.Background(), fixture.options, runner, nil, acceptBundle); err == nil {
 		t.Fatal("Assemble(nil validator) error = nil")
+	}
+	if err := Assemble(context.Background(), fixture.options, runner, validator, nil); err == nil {
+		t.Fatal("Assemble(nil bundle validator) error = nil")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Assemble(cancelled, fixture.options, runner, validator); !errors.Is(err, context.Canceled) {
+	if err := Assemble(cancelled, fixture.options, runner, validator, acceptBundle); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Assemble(cancelled) error = %v", err)
 	}
 
@@ -190,17 +204,80 @@ func TestPF001LinuxReleaseAssemblyRejectsInvalidCapabilitiesAndPaths(t *testing.
 		t.Run(name, func(t *testing.T) {
 			options := fixture.options
 			mutate(&options)
-			if err := Assemble(context.Background(), options, runner, validator); err == nil {
+			if err := Assemble(context.Background(), options, runner, validator, acceptBundle); err == nil {
 				t.Fatal("Assemble() error = nil, want rejection")
 			}
 		})
 	}
-	if err := normalizeBuiltBinary(filepath.Join(t.TempDir(), "missing"), time.Unix(1, 0)); err == nil {
-		t.Fatal("normalizeBuiltBinary(missing) error = nil")
-	}
 	if _, err := readBoundedRegularFile(fixture.trust, 1); err == nil {
 		t.Fatal("readBoundedRegularFile(oversized) error = nil")
 	}
+}
+
+func TestPF001LinuxReleaseAssemblyRejectsUnboundNativePackageProjection(t *testing.T) {
+	t.Parallel()
+	for name, mutate := range map[string]func(*verifiedNativePackage){
+		"empty":        func(value *verifiedNativePackage) { *value = verifiedNativePackage{} },
+		"wrong target": func(value *verifiedNativePackage) { value.operatingSystem = "windows" },
+		"path traversal": func(value *verifiedNativePackage) {
+			value.launcher.bundlePath = "../agentmemory"
+		},
+		"malformed digest": func(value *verifiedNativePackage) {
+			value.launcher.sha256 = strings.Repeat("g", 64)
+		},
+		"wrong digest": func(value *verifiedNativePackage) {
+			value.launcher.sha256 = strings.Repeat("0", 64)
+		},
+		"wrong size":    func(value *verifiedNativePackage) { value.helper.size++ },
+		"same resource": func(value *verifiedNativePackage) { value.helper = value.launcher },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newAssemblyFixture(t)
+			resolver := func(_ context.Context, root string, _ string, _ string, _ string, _ time.Time) (verifiedNativePackage, error) {
+				value := verifiedNativePackageAtRoot(t, root)
+				mutate(&value)
+				return value, nil
+			}
+			if err := Assemble(
+				context.Background(), fixture.options, &fakeCommandRunner{},
+				func(string) error { return nil }, resolver,
+			); err == nil {
+				t.Fatal("Assemble() error = nil, want rejection")
+			}
+			if _, err := os.Lstat(fixture.output); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("partial output exists: %v", err)
+			}
+		})
+	}
+}
+
+func TestPF001LinuxReleaseAssemblyFailsClosedWhenProductionBundleVerificationFails(t *testing.T) {
+	t.Parallel()
+	fixture := newAssemblyFixture(t)
+	runner := &fakeCommandRunner{}
+	err := Assemble(context.Background(), fixture.options, runner, func(string) error { return nil },
+		func(context.Context, string, string, string, string, time.Time) (verifiedNativePackage, error) {
+			return verifiedNativePackage{}, errors.New("verification failed")
+		})
+	if err == nil || len(runner.commands) != 1 || runner.commands[0].Name != "git" {
+		t.Fatalf("Assemble() error=%v commands=%+v", err, runner.commands)
+	}
+	if _, statErr := os.Lstat(fixture.output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("partial output exists: %v", statErr)
+	}
+}
+
+type bundleValidationCall struct {
+	root            string
+	trust           string
+	operatingSystem string
+	architecture    string
+	verifiedAt      time.Time
+}
+
+func acceptBundle(_ context.Context, root string, _ string, _ string, _ string, _ time.Time) (verifiedNativePackage, error) {
+	return verifiedNativePackageFromRoot(root)
 }
 
 func TestPF001LinuxReleaseProcessRunnerIsAllowlistedAndDeterministic(t *testing.T) {
@@ -214,6 +291,9 @@ func TestPF001LinuxReleaseProcessRunnerIsAllowlistedAndDeterministic(t *testing.
 	if _, err := runner.Run(context.Background(), Command{Name: "sh", Dir: workingDirectory}); err == nil {
 		t.Fatal("processRunner.Run(disallowed) error = nil")
 	}
+	if _, err := runner.Run(context.Background(), Command{Name: "go", Dir: workingDirectory}); err == nil {
+		t.Fatal("processRunner.Run(go) error = nil; assembly must never rebuild manifest-bound bytes")
+	}
 	t.Setenv("AGENTMEMORY_ENV_TEST", "original")
 	environment := mergedEnvironment(map[string]string{"AGENTMEMORY_ENV_TEST": "replacement", "ZZ_AGENTMEMORY": "last"})
 	joined := strings.Join(environment, "\n")
@@ -225,6 +305,11 @@ func TestPF001LinuxReleaseProcessRunnerIsAllowlistedAndDeterministic(t *testing.
 
 func TestPF001LinuxReleaseCommandRejectsInvalidInvocation(t *testing.T) {
 	t.Parallel()
+	//lint:ignore SA1012 Deliberate absent-context composition-boundary test.
+	_, projectionErr := resolveProductionNativePackage(nil, "", "", "linux", "amd64", time.Time{}) //nolint:staticcheck
+	if projectionErr == nil {
+		t.Fatal("resolveProductionNativePackage(invalid) error = nil")
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	if code := run(context.Background(), []string{"unexpected"}, &stdout, &stderr); code != 2 {
@@ -256,6 +341,7 @@ func newAssemblyFixture(t *testing.T) *assemblyFixture {
 		repository,
 		filepath.Join(bundle, "bootstrap"),
 		filepath.Join(bundle, "models", "embedding"),
+		filepath.Join(bundle, "native", "linux", "arm64"),
 	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
@@ -264,8 +350,10 @@ func newAssemblyFixture(t *testing.T) *assemblyFixture {
 	trust := filepath.Join(parent, "trust.json")
 	for path, content := range map[string]string{
 		trust: `{"schemaVersion":1}`,
-		filepath.Join(bundle, "bootstrap/distribution-manifest.json"): `{"signed":true}`,
-		filepath.Join(bundle, "models/embedding/model.bin"):           "model",
+		filepath.Join(bundle, "bootstrap/distribution-manifest.json"):          `{"signed":true}`,
+		filepath.Join(bundle, "models/embedding/model.bin"):                    "model",
+		filepath.Join(bundle, "native/linux/arm64/agentmemory"):                "signed launcher bytes",
+		filepath.Join(bundle, "native/linux/arm64/agentmemory-runtime-helper"): "signed helper bytes",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
@@ -276,17 +364,50 @@ func newAssemblyFixture(t *testing.T) *assemblyFixture {
 		options: AssemblyOptions{
 			RepositoryRoot: repository, BundleRoot: bundle, TrustDocument: trust,
 			Output: output, Architecture: "arm64", SourceEpoch: 1_784_073_600,
+			VerificationEpoch: 1_784_116_800,
 		},
 	}
 }
 
+func verifiedNativePackageAtRoot(t testing.TB, root string) verifiedNativePackage {
+	t.Helper()
+	value, err := verifiedNativePackageFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func verifiedNativePackageFromRoot(root string) (verifiedNativePackage, error) {
+	resource := func(id string, relative string) (verifiedNativeResource, error) {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative))) // #nosec G304 -- test fixture path.
+		if err != nil {
+			return verifiedNativeResource{}, err
+		}
+		digest := sha256.Sum256(content)
+		return verifiedNativeResource{
+			resourceID: id, bundlePath: relative,
+			sha256: hex.EncodeToString(digest[:]), size: uint64(len(content)),
+		}, nil
+	}
+	launcher, err := resource("launcher-linux-arm64", "native/linux/arm64/agentmemory")
+	if err != nil {
+		return verifiedNativePackage{}, err
+	}
+	helper, err := resource("helper-linux-arm64", "native/linux/arm64/agentmemory-runtime-helper")
+	if err != nil {
+		return verifiedNativePackage{}, err
+	}
+	return verifiedNativePackage{
+		operatingSystem: "linux", architecture: "arm64",
+		launcher: launcher, helper: helper,
+	}, nil
+}
+
 type fakeCommandRunner struct {
-	commands     []Command
-	gitOutput    []byte
-	gitError     error
-	buildErrorAt int
-	skipBuildAt  int
-	builds       int
+	commands  []Command
+	gitOutput []byte
+	gitError  error
 }
 
 func (r *fakeCommandRunner) Run(_ context.Context, command Command) ([]byte, error) {
@@ -294,25 +415,5 @@ func (r *fakeCommandRunner) Run(_ context.Context, command Command) ([]byte, err
 	if command.Name == "git" {
 		return append([]byte(nil), r.gitOutput...), r.gitError
 	}
-	r.builds++
-	if r.buildErrorAt == r.builds {
-		return nil, errors.New("build failed")
-	}
-	if r.skipBuildAt == r.builds {
-		return nil, nil
-	}
-	output := ""
-	for index, argument := range command.Args {
-		if argument == "-o" && index+1 < len(command.Args) {
-			output = command.Args[index+1]
-			break
-		}
-	}
-	if output == "" {
-		return nil, errors.New("missing output")
-	}
-	if err := os.WriteFile(output, []byte("linux binary"), 0o600); err != nil {
-		return nil, err
-	}
-	return nil, nil
+	return nil, errors.New("unexpected command")
 }

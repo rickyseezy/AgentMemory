@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,17 +19,17 @@ import (
 
 const (
 	maximumTrustDocumentBytes = 128 * 1024
-	releaseTrustVariable      = "github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher.embeddedNativeReleaseTrustBase64"
 )
 
 // AssemblyOptions contains every caller-controlled release assembly input.
 type AssemblyOptions struct {
-	RepositoryRoot string
-	BundleRoot     string
-	TrustDocument  string
-	Output         string
-	Architecture   string
-	SourceEpoch    int64
+	RepositoryRoot    string
+	BundleRoot        string
+	TrustDocument     string
+	Output            string
+	Architecture      string
+	SourceEpoch       int64
+	VerificationEpoch int64
 }
 
 // Command is one closed external process invocation used during assembly.
@@ -44,6 +46,36 @@ type CommandRunner interface {
 }
 
 type trustValidator func(string) error
+type bundleResolver func(context.Context, string, string, string, string, time.Time) (verifiedNativePackage, error)
+
+type verifiedNativeResource struct {
+	resourceID string
+	bundlePath string
+	sha256     string
+	size       uint64
+}
+
+func (r verifiedNativeResource) valid() bool {
+	if r.resourceID == "" || r.bundlePath == "" || r.size == 0 || len(r.sha256) != sha256.Size*2 {
+		return false
+	}
+	digest, err := hex.DecodeString(r.sha256)
+	return err == nil && len(digest) == sha256.Size
+}
+
+type verifiedNativePackage struct {
+	operatingSystem string
+	architecture    string
+	launcher        verifiedNativeResource
+	helper          verifiedNativeResource
+}
+
+func (p verifiedNativePackage) valid(operatingSystem string, architecture string) bool {
+	return p.operatingSystem == operatingSystem && p.architecture == architecture &&
+		p.launcher.valid() && p.helper.valid() &&
+		p.launcher.resourceID != p.helper.resourceID &&
+		p.launcher.bundlePath != p.helper.bundlePath && p.launcher.sha256 != p.helper.sha256
+}
 
 // Assemble validates release authority, requires a clean source revision,
 // cross-builds both Linux entry points, and atomically publishes a normalized
@@ -53,8 +85,9 @@ func Assemble(
 	options AssemblyOptions,
 	runner CommandRunner,
 	validateTrust trustValidator,
+	resolveBundle bundleResolver,
 ) error {
-	if ctx == nil || runner == nil || validateTrust == nil {
+	if ctx == nil || runner == nil || validateTrust == nil || resolveBundle == nil {
 		return errors.New("assembly capabilities are incomplete")
 	}
 	if err := ctx.Err(); err != nil {
@@ -75,6 +108,7 @@ func Assemble(
 	if err := requireCleanRevision(ctx, runner, resolved.RepositoryRoot); err != nil {
 		return err
 	}
+	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
 
 	parent := filepath.Dir(resolved.Output)
 	temporary, err := os.MkdirTemp(parent, ".agentmemory-linux-stage-")
@@ -88,30 +122,32 @@ func Assemble(
 		}
 	}()
 
-	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
-	if err := copyBundle(resolved.BundleRoot, filepath.Join(temporary, "bundle"), epoch); err != nil {
+	stagedBundle := filepath.Join(temporary, "bundle")
+	if err := copyBundle(resolved.BundleRoot, stagedBundle, epoch); err != nil {
 		return fmt.Errorf("stage release bundle: %w", err)
 	}
+	verifiedAt := time.Unix(resolved.VerificationEpoch, 0).UTC()
+	selection, err := resolveBundle(
+		ctx, stagedBundle, encodedTrust, "linux", resolved.Architecture, verifiedAt,
+	)
+	if err != nil || !selection.valid("linux", resolved.Architecture) {
+		return errors.New("release bundle failed the production verification stack")
+	}
 	for _, binary := range []struct {
-		name        string
-		packagePath string
+		name     string
+		resource verifiedNativeResource
 	}{
-		{name: "agentmemory", packagePath: "./apps/launcher/cmd/agentmemory"},
-		{name: "agentmemory-runtime-helper", packagePath: "./apps/launcher/cmd/agentmemory-runtime-helper"},
+		{name: "agentmemory", resource: selection.launcher},
+		{name: "agentmemory-runtime-helper", resource: selection.helper},
 	} {
-		output := filepath.Join(temporary, binary.name)
-		if err := buildLinuxBinary(
-			ctx, runner, resolved.RepositoryRoot, resolved.Architecture,
-			encodedTrust, binary.packagePath, output,
+		if err := copyVerifiedNativeResource(
+			stagedBundle, filepath.Join(temporary, binary.name), binary.resource, epoch,
 		); err != nil {
-			return fmt.Errorf("build %s: %w", binary.name, err)
-		}
-		if err := normalizeBuiltBinary(output, epoch); err != nil {
-			return fmt.Errorf("normalize %s: %w", binary.name, err)
+			return fmt.Errorf("stage verified %s: %w", binary.name, err)
 		}
 	}
-	if err := normalizeDirectory(temporary, epoch); err != nil {
-		return fmt.Errorf("normalize staging root: %w", err)
+	if err := normalizeDirectoryTree(temporary, epoch); err != nil {
+		return fmt.Errorf("normalize staging directories: %w", err)
 	}
 	if err := os.Rename(temporary, resolved.Output); err != nil {
 		return fmt.Errorf("publish staging directory: %w", err)
@@ -142,6 +178,9 @@ func resolveAssemblyOptions(options AssemblyOptions) (AssemblyOptions, error) {
 	}
 	if options.SourceEpoch <= 0 {
 		return AssemblyOptions{}, errors.New("source date epoch must be positive")
+	}
+	if options.VerificationEpoch <= 0 {
+		return AssemblyOptions{}, errors.New("release verification epoch must be positive")
 	}
 
 	resolved := options
@@ -185,33 +224,6 @@ func requireCleanRevision(ctx context.Context, runner CommandRunner, root string
 	return nil
 }
 
-func buildLinuxBinary(
-	ctx context.Context,
-	runner CommandRunner,
-	root string,
-	architecture string,
-	encodedTrust string,
-	packagePath string,
-	output string,
-) error {
-	ldflags := "-buildid= -X " + releaseTrustVariable + "=" + encodedTrust
-	_, err := runner.Run(ctx, Command{
-		Name: "go",
-		Args: []string{
-			"build", "-buildvcs=true", "-trimpath", "-ldflags", ldflags,
-			"-o", output, packagePath,
-		},
-		Dir: root,
-		Env: map[string]string{
-			"CGO_ENABLED": "0", "GOARCH": architecture, "GOOS": "linux",
-		},
-	})
-	if err != nil {
-		return errors.New("reproducible Go build failed")
-	}
-	return nil
-}
-
 func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 	rootInfo, err := os.Lstat(sourceRoot)
 	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
@@ -220,7 +232,6 @@ func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 	if err := os.Mkdir(targetRoot, 0o700); err != nil {
 		return err
 	}
-	directories := []string{targetRoot}
 	err = filepath.WalkDir(sourceRoot, func(path string, _ fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -244,7 +255,6 @@ func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 			if err := os.Mkdir(target, 0o700); err != nil {
 				return err
 			}
-			directories = append(directories, target)
 			return nil
 		}
 		if !info.Mode().IsRegular() {
@@ -258,15 +268,6 @@ func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 	manifest := filepath.Join(targetRoot, "bootstrap", "distribution-manifest.json")
 	if info, err := os.Lstat(manifest); err != nil || !info.Mode().IsRegular() {
 		return errors.New("bundle is missing bootstrap/distribution-manifest.json")
-	}
-	sort.Slice(directories, func(i, j int) bool {
-		return strings.Count(directories[i], string(filepath.Separator)) >
-			strings.Count(directories[j], string(filepath.Separator))
-	})
-	for _, directory := range directories {
-		if err := normalizeDirectory(directory, epoch); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -314,16 +315,104 @@ func copyRegularFile(source string, target string, expected os.FileInfo, epoch t
 	return nil
 }
 
-func normalizeBuiltBinary(path string, epoch time.Time) error {
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("build did not produce a regular file")
+func copyVerifiedNativeResource(
+	bundleRoot string,
+	target string,
+	resource verifiedNativeResource,
+	epoch time.Time,
+) error {
+	if !resource.valid() || strings.Contains(resource.bundlePath, `\`) ||
+		strings.ContainsRune(resource.bundlePath, 0) || filepath.IsAbs(resource.bundlePath) ||
+		filepath.ToSlash(filepath.Clean(filepath.FromSlash(resource.bundlePath))) != resource.bundlePath ||
+		resource.bundlePath == "." || strings.HasPrefix(resource.bundlePath, "../") {
+		return errors.New("native resource projection is invalid")
 	}
-	// #nosec G302 -- native package entry points must be executable by the invoking desktop user.
-	if err := os.Chmod(path, 0o755); err != nil {
+	source := filepath.Join(bundleRoot, filepath.FromSlash(resource.bundlePath))
+	relative, err := filepath.Rel(bundleRoot, source)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("native resource escaped the retained bundle")
+	}
+	expected, err := os.Lstat(source)
+	if err != nil || !expected.Mode().IsRegular() || expected.Mode()&os.ModeSymlink != 0 ||
+		expected.Size() <= 0 || uint64(expected.Size()) != resource.size { // #nosec G115 -- positivity is checked first.
+		return errors.New("native resource size or type does not match its verified projection")
+	}
+	// #nosec G304 -- source is a confined, canonical signed bundle path validated above.
+	input, err := os.Open(source)
+	if err != nil {
 		return err
 	}
-	return os.Chtimes(path, epoch, epoch)
+	defer func() { _ = input.Close() }()
+	opened, err := input.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
+		return errors.New("native resource changed while opening")
+	}
+	// #nosec G304 -- target is one fixed leaf beneath the private staging root.
+	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	failed := true
+	defer func() {
+		_ = output.Close()
+		if failed {
+			_ = os.Remove(target)
+		}
+	}()
+	digest := sha256.New()
+	written, err := io.Copy(io.MultiWriter(output, digest), input)
+	if err != nil || written <= 0 || uint64(written) != resource.size { // #nosec G115 -- positivity is checked first.
+		return errors.New("native resource changed while copying")
+	}
+	if !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), resource.sha256) {
+		return errors.New("native resource digest does not match its verified projection")
+	}
+	if err := output.Sync(); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	// #nosec G302 -- native package entry points must be executable by the invoking desktop user.
+	if err := os.Chmod(target, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chtimes(target, epoch, epoch); err != nil {
+		return err
+	}
+	failed = false
+	return nil
+}
+
+func normalizeDirectoryTree(root string, epoch time.Time) error {
+	directories := make([]string, 0, 32)
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("staging tree contains an invalid entry")
+		}
+		if entry.IsDir() {
+			directories = append(directories, path)
+		} else if !info.Mode().IsRegular() {
+			return errors.New("staging tree contains a special entry")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(directories, func(i, j int) bool {
+		return strings.Count(directories[i], string(filepath.Separator)) >
+			strings.Count(directories[j], string(filepath.Separator))
+	})
+	for _, directory := range directories {
+		if err := normalizeDirectory(directory, epoch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeDirectory(path string, epoch time.Time) error {
@@ -362,7 +451,7 @@ func (processRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	if ctx == nil || command.Name == "" || command.Dir == "" {
 		return nil, errors.New("invalid release command")
 	}
-	if command.Name != "git" && command.Name != "go" {
+	if command.Name != "git" {
 		return nil, errors.New("release command is not allowlisted")
 	}
 	// #nosec G204 -- executable names are allowlisted above and every argument is constructed by this command.

@@ -74,6 +74,7 @@ func newNativeReleaseAuthority(
 	}
 	stack, err := newNativeReleaseStack(nativeReleaseStackDependencies{
 		Source: source, Clock: dependencies.Clock,
+		Platform: nativeReleasePlatform{}, Protocol: nativeReleaseProtocol{},
 		AntiRollback: dependencies.AntiRollback, Trust: trust,
 	})
 	if err != nil {

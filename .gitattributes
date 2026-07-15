@@ -1,3 +1,4 @@
+.gitattributes text eol=lf
 packaging/darwin/** text eol=lf
 packaging/windows/*.ps1 text eol=lf
 packaging/windows/*.wxs text eol=lf

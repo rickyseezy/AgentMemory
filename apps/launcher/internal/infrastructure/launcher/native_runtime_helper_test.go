@@ -164,10 +164,24 @@ func nativeDesktopHelperCertificates(resources []releaseinventory.Resource) map[
 
 func launcherDesktopAuthority(t testing.TB, platform runtimeinstall.Platform) runtimeport.DesktopAuthority {
 	t.Helper()
+	return launcherDesktopAuthorityForDigests(
+		t, platform,
+		runtimeinstall.Sum([]byte("desktop-plan-"+platform.String())),
+		runtimeinstall.Sum([]byte("desktop-catalog-"+platform.String())),
+	)
+}
+
+func launcherDesktopAuthorityForDigests(
+	t testing.TB,
+	platform runtimeinstall.Platform,
+	planDigest runtimeinstall.Hash,
+	catalogDigest runtimeinstall.Hash,
+) runtimeport.DesktopAuthority {
+	t.Helper()
 	architecture := runtimeinstall.ArchitectureARM64
 	input := runtimeport.DesktopAuthorityInput{
-		PlanDigest:    runtimeinstall.Sum([]byte("desktop-plan-" + platform.String())),
-		CatalogDigest: runtimeinstall.Sum([]byte("desktop-catalog-" + platform.String())),
+		PlanDigest:    planDigest,
+		CatalogDigest: catalogDigest,
 		Platform:      platform, Architecture: architecture, PrincipalID: "uid:501", UserName: "agentmemory",
 		MachineDigest: runtimeinstall.Sum([]byte("desktop-machine")), HomeDirectory: "/Users/agentmemory",
 		OSProduct: "macos", MinimumOSVersion: "15.0", MaximumOSVersion: "15.9.9",

@@ -21,7 +21,6 @@ import (
 // Release, host-policy, and artifact-acquisition authority are deliberately
 // absent: the builder derives those only from the verified retained release.
 type nativeInstallPhaseCapabilities struct {
-	RuntimePlatform    nativePlatformRuntimeApplicationFactory
 	Capacity           installphase.ArtifactCapacityApplication
 	ManagedResources   installphase.ManagedResourceEnsurer
 	ProductStack       productstack.Ensurer
@@ -53,7 +52,6 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		return nil, errNativeInstallerIntegrity
 	}
 	required := []any{
-		capabilities.RuntimePlatform,
 		capabilities.Capacity, capabilities.ManagedResources, capabilities.ProductStack,
 		capabilities.AgentConfiguration,
 	}
@@ -81,6 +79,10 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 		artifacts, err := newNativeArtifactApplication(
 			composition.artifacts, composition.artifactStore, release,
 		)
+		if err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		runtimePlatform, err := newNativePlatformRuntimeFactory(composition, release, artifacts)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
@@ -157,7 +159,7 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 			) (installphase.RuntimeEnsurer, error) {
 				return newNativeRuntimeEnsurer(
 					buildAuthority.PlanDigest, buildAuthority.OperationID, plans,
-					runtimeExecution, capabilities.RuntimePlatform,
+					runtimeExecution, runtimePlatform,
 				)
 			}
 			graph, graphError := newNativeInstallApplicationFactory(nativeInstallGraphDependencies{

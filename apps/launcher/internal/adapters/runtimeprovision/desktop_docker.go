@@ -156,7 +156,9 @@ func desktopRunnersMatchAuthority(
 		dockerAuthority.PublisherIdentity() == authority.ExecutablePublisherIdentity() &&
 		composeAuthority.PublisherIdentity() == authority.ExecutablePublisherIdentity() &&
 		dockerAuthority.PublisherPolicyID() == authority.ExecutablePublisherPolicyID() &&
-		composeAuthority.PublisherPolicyID() == authority.ExecutablePublisherPolicyID()
+		composeAuthority.PublisherPolicyID() == authority.ExecutablePublisherPolicyID() &&
+		dockerAuthority.PublisherTrustDigest() == authority.Publisher().CertificateSHA256() &&
+		composeAuthority.PublisherTrustDigest() == authority.Publisher().CertificateSHA256()
 }
 
 func (i *DesktopDockerInspector) desktopContainerWorkloads(

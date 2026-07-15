@@ -36,6 +36,8 @@ The release owner must provide:
 
 - an approved Authenticode code-signing certificate and protected private-key
   operation (preferably hardware-backed or a managed signing service);
+- the SHA-256 digest of the exact DER-encoded primary leaf certificate for every
+  Windows installer, helper, and executable authority cell;
 - the exact expected subject, chain, EKU, and timestamp policy;
 - an RFC 3161 timestamp authority approved for the release; and
 - signed installer/helper verification evidence from every certified Windows
@@ -48,8 +50,14 @@ workflow must follow that contract:
 - [SignTool package signing requirements](https://learn.microsoft.com/en-us/windows/win32/appxpkg/how-to-sign-a-package-using-signtool)
 
 Repository acceptance is an exact-artifact WinVerifyTrust and publisher-policy
-verification. A self-signed development certificate cannot satisfy the
-production release record.
+verification. The native verifier follows Microsoft's documented
+[`CryptQueryObject`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptqueryobject),
+[`CryptMsgGetParam`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptmsggetparam),
+and [`CertFindCertificateInStore`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-certfindcertificateinstore)
+flow to extract the one primary signer and compare the SHA-256 digest of the
+exact returned certificate DER to signed authority. A self-signed development
+certificate, a subject-name-only match, or another valid certificate from the
+same publisher cannot satisfy the production release record.
 
 ## Docker Desktop executable qualification
 

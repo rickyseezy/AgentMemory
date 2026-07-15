@@ -41,6 +41,7 @@ type ExecutableAuthorityInput struct {
 	OwnerIdentity         string
 	PublisherIdentity     string
 	PublisherPolicyID     string
+	PublisherTrustDigest  [sha256.Size]byte
 	ReleaseManifestDigest [sha256.Size]byte
 	RuntimePlanDigest     [sha256.Size]byte
 	Role                  ExecutableRole
@@ -58,6 +59,7 @@ type ExecutableAuthority struct {
 	ownerIdentity         string
 	publisherIdentity     string
 	publisherPolicyID     string
+	publisherTrustDigest  [sha256.Size]byte
 	releaseManifestDigest [sha256.Size]byte
 	runtimePlanDigest     [sha256.Size]byte
 	role                  ExecutableRole
@@ -70,6 +72,7 @@ type ExecutableAuthority struct {
 func NewExecutableAuthority(input ExecutableAuthorityInput) (ExecutableAuthority, error) {
 	if !validAuthorityIdentity(input.CanonicalID) || !validAuthorityIdentity(input.OwnerIdentity) ||
 		!validAuthorityIdentity(input.PublisherIdentity) || !validAuthorityIdentity(input.PublisherPolicyID) ||
+		input.PublisherTrustDigest == [sha256.Size]byte{} ||
 		!input.Role.valid() || input.ReleaseManifestDigest == [sha256.Size]byte{} ||
 		input.RuntimePlanDigest == [sha256.Size]byte{} ||
 		!validAuthorityPlatform(input.Platform) || !validAuthorityArchitecture(input.Architecture) ||
@@ -85,6 +88,7 @@ func NewExecutableAuthority(input ExecutableAuthorityInput) (ExecutableAuthority
 		ownerIdentity:         input.OwnerIdentity,
 		publisherIdentity:     input.PublisherIdentity,
 		publisherPolicyID:     input.PublisherPolicyID,
+		publisherTrustDigest:  input.PublisherTrustDigest,
 		releaseManifestDigest: input.ReleaseManifestDigest,
 		runtimePlanDigest:     input.RuntimePlanDigest,
 		role:                  input.Role,
@@ -147,6 +151,7 @@ func validAuthorityPath(path, platform string) bool {
 func (a ExecutableAuthority) Valid() bool {
 	return a.canonicalID != "" && a.canonicalPath != "" && a.sha256 != [sha256.Size]byte{} &&
 		a.ownerIdentity != "" && a.publisherIdentity != "" && a.publisherPolicyID != "" &&
+		a.publisherTrustDigest != [sha256.Size]byte{} &&
 		a.releaseManifestDigest != [sha256.Size]byte{} && a.runtimePlanDigest != [sha256.Size]byte{} &&
 		a.role.valid() &&
 		validAuthorityPlatform(a.platform) && validAuthorityArchitecture(a.architecture) &&
@@ -170,6 +175,13 @@ func (a ExecutableAuthority) PublisherIdentity() string { return a.publisherIden
 
 // PublisherPolicyID returns the signed native verification policy.
 func (a ExecutableAuthority) PublisherPolicyID() string { return a.publisherPolicyID }
+
+// PublisherTrustDigest returns the signed platform-native trust anchor. On
+// Windows this is the SHA-256 digest of the exact Authenticode leaf
+// certificate DER; other platforms bind their equivalent signed trust record.
+func (a ExecutableAuthority) PublisherTrustDigest() [sha256.Size]byte {
+	return a.publisherTrustDigest
+}
 
 // ReleaseManifestDigest returns the authorizing signed release digest.
 func (a ExecutableAuthority) ReleaseManifestDigest() [sha256.Size]byte {

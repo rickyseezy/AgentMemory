@@ -220,6 +220,7 @@ func darwinAuthority(
 		CanonicalID: "darwin-executable", CanonicalPath: path,
 		SHA256: sha256.Sum256([]byte(path)), OwnerIdentity: "uid:0",
 		PublisherIdentity: publisher, PublisherPolicyID: policy,
+		PublisherTrustDigest:  sha256.Sum256([]byte("test-publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("release")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("plan")),
 		Role:                  role, Platform: runtime.GOOS, Architecture: runtime.GOARCH,

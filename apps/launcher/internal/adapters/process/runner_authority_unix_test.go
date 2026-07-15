@@ -34,6 +34,7 @@ func testExecutableAuthority(t *testing.T, path string) argvprocess.ExecutableAu
 		OwnerIdentity:         "uid:" + strconv.FormatUint(uint64(status.Uid), 10),
 		PublisherIdentity:     "test-publisher",
 		PublisherPolicyID:     "test-policy",
+		PublisherTrustDigest:  sha256.Sum256([]byte("test-publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("test-release-manifest")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("test-runtime-plan")),
 		Role:                  argvprocess.ExecutableRoleDockerCLI,

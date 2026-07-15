@@ -503,6 +503,7 @@ func dockerAuthorityForEdge(
 		CanonicalID: "docker-cli", CanonicalPath: "/usr/bin/docker",
 		SHA256: [32]byte(runtimeinstall.Sum([]byte("docker-cli"))), OwnerIdentity: "uid:0",
 		PublisherIdentity: "docker-linux-packages", PublisherPolicyID: "linux-package-signature-v1",
+		PublisherTrustDigest:  [32]byte(runtimeinstall.Sum([]byte("docker-linux-package-trust"))),
 		ReleaseManifestDigest: [32]byte(runtimeinstall.Sum([]byte("release"))),
 		RuntimePlanDigest:     [32]byte(authority.PlanDigest()), Role: argvprocess.ExecutableRoleDockerCLI,
 		Platform: "linux", Architecture: authority.Architecture().String(),

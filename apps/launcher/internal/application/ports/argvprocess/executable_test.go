@@ -20,6 +20,7 @@ func TestPF001ExecutableAuthorityIsRoleAndSignedPlanBound(t *testing.T) {
 		authority.OwnerIdentity() != input.OwnerIdentity ||
 		authority.PublisherIdentity() != input.PublisherIdentity ||
 		authority.PublisherPolicyID() != input.PublisherPolicyID ||
+		authority.PublisherTrustDigest() != input.PublisherTrustDigest ||
 		authority.Role() != ExecutableRoleDockerCLI || authority.Platform() != input.Platform ||
 		authority.Architecture() != input.Architecture ||
 		authority.ReleaseManifestDigest() != input.ReleaseManifestDigest ||
@@ -83,6 +84,7 @@ func TestPF001ExecutableAuthorityRejectsIncompleteOrOpenPolicy(t *testing.T) {
 		{name: "newline owner identity", mutate: func(v *ExecutableAuthorityInput) { v.OwnerIdentity = "uid:0\n" }},
 		{name: "zero release digest", mutate: func(v *ExecutableAuthorityInput) { v.ReleaseManifestDigest = [sha256.Size]byte{} }},
 		{name: "zero runtime plan digest", mutate: func(v *ExecutableAuthorityInput) { v.RuntimePlanDigest = [sha256.Size]byte{} }},
+		{name: "zero publisher trust digest", mutate: func(v *ExecutableAuthorityInput) { v.PublisherTrustDigest = [sha256.Size]byte{} }},
 		{name: "unknown role", mutate: func(v *ExecutableAuthorityInput) { v.Role = ExecutableRole("generic") }},
 		{name: "cross platform", mutate: func(v *ExecutableAuthorityInput) { v.Platform = "other" }},
 		{name: "unsupported architecture", mutate: func(v *ExecutableAuthorityInput) { v.Architecture = "386" }},
@@ -138,6 +140,7 @@ func validExecutableAuthorityInput() ExecutableAuthorityInput {
 		CanonicalID: "docker", CanonicalPath: "/verified/docker",
 		SHA256: sha256.Sum256([]byte("docker")), OwnerIdentity: "uid:0",
 		PublisherIdentity: "publisher", PublisherPolicyID: "policy",
+		PublisherTrustDigest:  sha256.Sum256([]byte("publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("release")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("plan")), Role: ExecutableRoleDockerCLI,
 		Platform: "darwin", Architecture: "arm64",

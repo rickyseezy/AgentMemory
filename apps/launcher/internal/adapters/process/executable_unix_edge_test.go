@@ -243,6 +243,7 @@ func unixAuthority(
 		CanonicalID: "unix-test-executable", CanonicalPath: path,
 		SHA256: digest, OwnerIdentity: owner,
 		PublisherIdentity: "test-publisher", PublisherPolicyID: "test-policy",
+		PublisherTrustDigest:  sha256.Sum256([]byte("test-publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("test-release-manifest")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("test-runtime-plan")),
 		Role:                  argvprocess.ExecutableRoleDockerCLI,

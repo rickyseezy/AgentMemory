@@ -252,6 +252,7 @@ func newDockerScriptRunner(
 		CanonicalID: id, CanonicalPath: path, SHA256: [32]byte(runtimeinstall.Sum([]byte(id))),
 		OwnerIdentity: "uid:0", PublisherIdentity: "docker-linux-packages",
 		PublisherPolicyID:     "linux-package-signature-v1",
+		PublisherTrustDigest:  [32]byte(runtimeinstall.Sum([]byte("docker-linux-package-trust"))),
 		ReleaseManifestDigest: [32]byte(runtimeinstall.Sum([]byte("release"))),
 		RuntimePlanDigest:     [32]byte(authority.PlanDigest()), Role: role,
 		Platform: "linux", Architecture: authority.Architecture().String(),

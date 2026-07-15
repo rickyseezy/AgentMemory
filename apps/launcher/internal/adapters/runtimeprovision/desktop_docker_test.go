@@ -264,6 +264,7 @@ func desktopExecutableAuthority(
 	executable, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
 		CanonicalID: id, CanonicalPath: path, SHA256: [sha256.Size]byte(digest), OwnerIdentity: authority.ExecutableOwnerIdentity(),
 		PublisherIdentity: authority.ExecutablePublisherIdentity(), PublisherPolicyID: authority.ExecutablePublisherPolicyID(),
+		PublisherTrustDigest:  [sha256.Size]byte(authority.Publisher().CertificateSHA256()),
 		ReleaseManifestDigest: [32]byte(release), RuntimePlanDigest: [32]byte(authority.PlanDigest()),
 		Role: role, Platform: authority.Platform().String(), Architecture: authority.Architecture().String(),
 	})

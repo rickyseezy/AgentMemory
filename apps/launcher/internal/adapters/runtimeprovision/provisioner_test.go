@@ -637,6 +637,7 @@ func rootlessAuthority(t *testing.T, authority runtimeport.LinuxAuthority) argvp
 		CanonicalID: "docker-rootless-setup", CanonicalPath: authority.RootlessToolPath(),
 		SHA256: [32]byte(authority.RootlessToolDigest()), OwnerIdentity: "uid:0",
 		PublisherIdentity: "docker-linux-packages", PublisherPolicyID: "linux-package-signature-v1",
+		PublisherTrustDigest:  [32]byte(runtimeinstall.Sum([]byte("docker-linux-package-trust"))),
 		ReleaseManifestDigest: [32]byte(runtimeinstall.Sum([]byte("release"))),
 		RuntimePlanDigest:     [32]byte(authority.PlanDigest()), Role: argvprocess.ExecutableRoleRootlessSetup,
 		Platform: "linux", Architecture: authority.Architecture().String(),

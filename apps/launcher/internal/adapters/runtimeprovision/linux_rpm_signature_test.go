@@ -145,7 +145,8 @@ func rpmKeysAuthority(t testing.TB) argvprocess.ExecutableAuthority {
 	authority, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
 		CanonicalID: "rpmkeys", CanonicalPath: "/usr/bin/rpmkeys", SHA256: sha256.Sum256([]byte("rpmkeys")),
 		OwnerIdentity: "root", PublisherIdentity: "fedora-project", PublisherPolicyID: "fedora-rpm-policy",
-		Platform: "linux", Architecture: "amd64", ReleaseManifestDigest: sha256.Sum256([]byte("release")),
+		PublisherTrustDigest: sha256.Sum256([]byte("fedora-rpm-trust")),
+		Platform:             "linux", Architecture: "amd64", ReleaseManifestDigest: sha256.Sum256([]byte("release")),
 		RuntimePlanDigest: sha256.Sum256([]byte("runtime")), Role: argvprocess.ExecutableRoleRPMKeys,
 	})
 	if err != nil {

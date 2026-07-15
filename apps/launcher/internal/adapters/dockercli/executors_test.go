@@ -154,7 +154,8 @@ func testToolAuthority(
 		CanonicalID: id, CanonicalPath: path, SHA256: sha256.Sum256([]byte(id)),
 		OwnerIdentity: "test-owner", PublisherIdentity: "test-publisher",
 		PublisherPolicyID: "test-policy", ReleaseManifestDigest: releaseDigest,
-		RuntimePlanDigest: planDigest, Role: role, Platform: runtime.GOOS, Architecture: runtime.GOARCH,
+		PublisherTrustDigest: sha256.Sum256([]byte("test-publisher-trust")),
+		RuntimePlanDigest:    planDigest, Role: role, Platform: runtime.GOOS, Architecture: runtime.GOARCH,
 	})
 	if err != nil {
 		t.Fatal(err)

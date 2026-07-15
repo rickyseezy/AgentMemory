@@ -148,6 +148,7 @@ func verifierAuthority(t *testing.T, role argvprocess.ExecutableRole) argvproces
 		CanonicalID: "agentmemory-launcher", CanonicalPath: path,
 		SHA256: sha256.Sum256([]byte("launcher")), OwnerIdentity: "owner",
 		PublisherIdentity: "publisher", PublisherPolicyID: "publisher-policy",
+		PublisherTrustDigest:  sha256.Sum256([]byte("publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("release")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("runtime")),
 		Role:                  role, Platform: runtime.GOOS, Architecture: runtime.GOARCH,

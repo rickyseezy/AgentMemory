@@ -83,6 +83,7 @@ func TestPF001ArgvRunnerRejectsCrossPlatformAndCrossArchitectureAuthorities(t *t
 		CanonicalID: "cross-target", CanonicalPath: "/verified/docker",
 		SHA256: sha256.Sum256([]byte("docker")), OwnerIdentity: "test-owner",
 		PublisherIdentity: "test-publisher", PublisherPolicyID: "test-policy",
+		PublisherTrustDigest:  sha256.Sum256([]byte("test-publisher-trust")),
 		ReleaseManifestDigest: sha256.Sum256([]byte("release")),
 		RuntimePlanDigest:     sha256.Sum256([]byte("plan")), Role: argvprocess.ExecutableRoleDockerCLI,
 		Platform: otherPlatform, Architecture: runtime.GOARCH,

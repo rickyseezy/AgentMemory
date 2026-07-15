@@ -148,7 +148,9 @@ settings navigation is delegated to the user.
 
 Supported Windows 11 x86_64 cells use Docker's recommended per-user Docker Desktop installation in
 WSL2/Linux-container mode below `%LOCALAPPDATA%\Programs\DockerDesktop`. Verify digest and
-Authenticode with `WinVerifyTrust`. Probe build/edition,
+Authenticode with `WinVerifyTrust`, then extract the one primary signer from the embedded PKCS#7
+message and compare the SHA-256 digest of its exact DER leaf certificate to signed catalog
+authority. Subject display names or chain success alone are insufficient. Probe build/edition,
 virtualization/firmware, Windows features, WSL version, and existing distributions. Install only
 the per-user Desktop payload without elevation. Catalog-bound Microsoft-signed WSL prerequisites may
 use the fixed UAC plan only when the host proves they are absent or outdated; never mutate existing

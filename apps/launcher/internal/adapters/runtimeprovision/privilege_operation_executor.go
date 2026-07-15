@@ -18,6 +18,7 @@ type PrivilegeRepositoryManager interface {
 // PrivilegePackageManager owns only exact local-package installation.
 type PrivilegePackageManager interface {
 	EnsurePrivilegePackages(context.Context, runtimeport.PrivilegeRequest, PrivilegeArtifactSet) (bool, error)
+	RemovePrivilegePackages(context.Context, runtimeport.PrivilegeRequest, PrivilegeArtifactSet) (bool, error)
 }
 
 // PrivilegeSubordinateIDManager owns only collision-safe /etc/subuid and
@@ -30,6 +31,7 @@ type PrivilegeSubordinateIDManager interface {
 // user-service unit.
 type PrivilegeUserServiceManager interface {
 	EnsurePrivilegeUserService(context.Context, runtimeport.PrivilegeRequest) (bool, error)
+	DisablePrivilegeUserService(context.Context, runtimeport.PrivilegeRequest) (bool, error)
 }
 
 // PrivilegeManagedStateObservation is independently re-probed post-state. It
@@ -66,7 +68,7 @@ type PrivilegeOperationDependencies struct {
 }
 
 // ClosedPrivilegeOperationExecutor dispatches no caller-controlled command,
-// path, environment, or operation outside the domain's five capabilities.
+// path, environment, or operation outside the domain's six capabilities.
 type ClosedPrivilegeOperationExecutor struct {
 	dependencies PrivilegeOperationDependencies
 }
@@ -111,6 +113,14 @@ func (e *ClosedPrivilegeOperationExecutor) ExecutePrivilegeOperation(
 	case runtimeport.PrivilegeEnableUserService:
 		changed, err = e.dependencies.Service.EnsurePrivilegeUserService(ctx, request)
 	case runtimeport.PrivilegeVerifyManagedState:
+	case runtimeport.PrivilegeRemoveManagedPackages:
+		serviceChanged, serviceError := e.dependencies.Service.DisablePrivilegeUserService(ctx, request)
+		if serviceError != nil {
+			err = serviceError
+			break
+		}
+		packageChanged, packageError := e.dependencies.Packages.RemovePrivilegePackages(ctx, request, artifacts)
+		changed, err = serviceChanged || packageChanged, packageError
 	default:
 		return PrivilegeOperationObservationInput{}, runtimeport.ErrPrivilegeIntegrity
 	}
@@ -140,7 +150,8 @@ func projectPrivilegeManagedObservation(
 	authority := request.Authority()
 	repository, repositoryError := runtimeport.ExpectedRepositoryStateDigest(authority)
 	packages, packageError := runtimeport.ExpectedPackageStateDigest(authority)
-	if repositoryError != nil || packageError != nil || request.ExpectedState().IsZero() ||
+	removedPackages, removedPackageError := runtimeport.ExpectedRemovedPackageStateDigest(authority)
+	if repositoryError != nil || packageError != nil || removedPackageError != nil || request.ExpectedState().IsZero() ||
 		result != runtimeport.PrivilegeResultCompleted && result != runtimeport.PrivilegeResultAlreadyApplied {
 		return PrivilegeOperationObservationInput{}, runtimeport.ErrPrivilegeIntegrity
 	}
@@ -177,10 +188,24 @@ func projectPrivilegeManagedObservation(
 		output.RepositoryDigest, output.PackageStateDigest = observed.RepositoryDigest, observed.PackageStateDigest
 		projectPrivilegeSubordinates(&output, observed)
 		projectPrivilegeService(&output, observed)
+	case runtimeport.PrivilegeRemoveManagedPackages:
+		if observed.PackageStateDigest != removedPackages || !validRemovedPrivilegeServiceObservation(authority, observed) {
+			return PrivilegeOperationObservationInput{}, runtimeport.ErrPrivilegeIntegrity
+		}
+		output.PackageStateDigest = observed.PackageStateDigest
+		projectPrivilegeService(&output, observed)
 	default:
 		return PrivilegeOperationObservationInput{}, runtimeport.ErrPrivilegeIntegrity
 	}
 	return output, nil
+}
+
+func validRemovedPrivilegeServiceObservation(
+	authority runtimeport.LinuxAuthority,
+	observed PrivilegeManagedStateObservation,
+) bool {
+	return observed.ServiceUnitDigest == authority.ServiceUnitDigest() && !observed.ServiceEnabled &&
+		!observed.ServiceActive
 }
 
 func validPrivilegeSubordinateObservation(

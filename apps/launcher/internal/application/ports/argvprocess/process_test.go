@@ -192,6 +192,46 @@ func TestPF006LinuxPackageTransactionInvocationsAreOfflineAndClosed(t *testing.T
 	}
 }
 
+func TestPF001LinuxManagedPackageRemovalInvocationsPreserveDataAndForbidResolution(t *testing.T) {
+	t.Parallel()
+	packages := []string{
+		"containerd.io", "docker-buildx-plugin", "docker-ce", "docker-ce-cli",
+		"docker-ce-rootless-extras", "docker-compose-plugin",
+	}
+	apt, err := NewAPTRemoveInvocation("/usr/bin/apt-get", packages)
+	wantAPT := append([]string{
+		"--assume-yes", "--no-download", "-o", "Acquire::Retries=0", "-o", "Dpkg::Use-Pty=0",
+		"purge", "--",
+	}, packages...)
+	if err != nil || !slices.Equal(apt.Arguments(), wantAPT) || apt.EnvironmentProfile() != EnvironmentProfileAPTTransaction {
+		t.Fatalf("APT removal=%+v error=%v", apt, err)
+	}
+	dnf, err := NewDNFRemoveInvocation("/usr/bin/dnf5", packages)
+	wantDNF := append([]string{
+		"--assumeyes", "--cacheonly", "--no-plugins", "--disable-repo=*", "--setopt=keepcache=False",
+		"remove", "--",
+	}, packages...)
+	if err != nil || !slices.Equal(dnf.Arguments(), wantDNF) || dnf.EnvironmentProfile() != EnvironmentProfileDNFTransaction {
+		t.Fatalf("DNF removal=%+v error=%v", dnf, err)
+	}
+	for name, invoke := range map[string]func() error{
+		"APT executable": func() error { _, callErr := NewAPTRemoveInvocation("apt-get", packages); return callErr },
+		"DNF executable": func() error { _, callErr := NewDNFRemoveInvocation("/usr/bin/dnf", packages); return callErr },
+		"option injection": func() error {
+			_, callErr := NewAPTRemoveInvocation("/usr/bin/apt-get", []string{"--autoremove"})
+			return callErr
+		},
+		"unsorted": func() error {
+			_, callErr := NewDNFRemoveInvocation("/usr/bin/dnf5", []string{"docker-ce", "containerd.io"})
+			return callErr
+		},
+	} {
+		if err := invoke(); !errors.Is(err, ErrInvalidInvocation) {
+			t.Fatalf("%s error=%v", name, err)
+		}
+	}
+}
+
 func TestPF006LinuxPackageQueryInvocationsHaveFixedMachineReadableContracts(t *testing.T) {
 	t.Parallel()
 	packages := []string{"containerd.io", "docker-ce"}
@@ -263,6 +303,11 @@ func TestPF006SystemdUserServiceInvocationsAreIdentityAndCapabilityClosed(t *tes
 	if err != nil || !slices.Equal(enable.Arguments(), append(append([]string(nil), prefix...),
 		"enable", "--now", "docker.service")) {
 		t.Fatalf("enable service=%+v error=%v", enable, err)
+	}
+	disable, err := NewSystemctlUserDisableNowInvocation("/usr/bin/systemctl", "agentmemory")
+	if err != nil || !slices.Equal(disable.Arguments(), append(append([]string(nil), prefix...),
+		"disable", "--now", "docker.service")) {
+		t.Fatalf("disable service=%+v error=%v", disable, err)
 	}
 	show, err := NewSystemctlUserShowInvocation("/usr/bin/systemctl", "agentmemory")
 	if err != nil || !slices.Equal(show.Arguments(), append(append([]string(nil), prefix...),

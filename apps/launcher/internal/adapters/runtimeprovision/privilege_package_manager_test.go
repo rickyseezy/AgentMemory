@@ -95,6 +95,83 @@ func TestPF006ExactPrivilegePackageManagerRejectsTransactionOrPostStateSubstitut
 	}
 }
 
+func TestPF001ExactPrivilegePackageManagerRemovesOnlyVendorPackagesAndPreservesData(t *testing.T) {
+	t.Parallel()
+	_, authority, baseRequest, _ := privilegeCodecFixture(t)
+	request := privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeRemoveManagedPackages)
+	runner := &privilegePackageRunnerStub{
+		authority: privilegePackageExecutableAuthority(t, authority, argvprocess.ExecutableRoleAPTTransaction),
+	}
+	state := &privilegePackageStateProbeStub{
+		managedMatches: []bool{true}, managedAbsent: []bool{false, true},
+	}
+	manager, err := NewExactPrivilegePackageManager(runner, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := manager.RemovePrivilegePackages(t.Context(), request, privilegePackageTransaction(t, request))
+	managed, _ := runtimeport.ManagedRuntimePackages(authority)
+	want := make([]string, 0, len(managed))
+	for _, pkg := range managed {
+		want = append(want, pkg.Name())
+	}
+	slices.Sort(want)
+	arguments := runner.invocation.Arguments()
+	separator := slices.Index(arguments, "--")
+	if err != nil || !changed || runner.calls != 1 || separator < 0 ||
+		!slices.Equal(arguments[separator+1:], want) || slices.Contains(arguments, "uidmap") ||
+		state.absentCalls != 2 || state.managedCalls != 1 {
+		t.Fatalf("changed=%t args=%v absent=%d managed=%d error=%v", changed, arguments, state.absentCalls, state.managedCalls, err)
+	}
+
+	idempotentRunner := &privilegePackageRunnerStub{authority: runner.authority}
+	idempotent, _ := NewExactPrivilegePackageManager(
+		idempotentRunner, &privilegePackageStateProbeStub{managedAbsent: []bool{true}},
+	)
+	changed, err = idempotent.RemovePrivilegePackages(
+		t.Context(), request, privilegePackageTransaction(t, request),
+	)
+	if err != nil || changed || idempotentRunner.calls != 0 {
+		t.Fatalf("idempotent changed=%t calls=%d error=%v", changed, idempotentRunner.calls, err)
+	}
+
+	substitutedRunner := &privilegePackageRunnerStub{authority: runner.authority}
+	substituted, _ := NewExactPrivilegePackageManager(
+		substitutedRunner,
+		&privilegePackageStateProbeStub{managedAbsent: []bool{false}, managedMatches: []bool{false}},
+	)
+	if changed, err := substituted.RemovePrivilegePackages(
+		t.Context(), request, privilegePackageTransaction(t, request),
+	); changed || !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) || substitutedRunner.calls != 0 {
+		t.Fatalf("substituted changed=%t calls=%d error=%v", changed, substitutedRunner.calls, err)
+	}
+}
+
+func TestPF001PrivilegePackageManagerBuildsClosedDNFInstallAndRemovalInvocations(t *testing.T) {
+	t.Parallel()
+	packagePath := linuxPrivilegeTransactionRoot + "/" + strings.Repeat("a", 64) +
+		"/docker-ce-" + strings.Repeat("b", 64) + ".rpm"
+	install, err := privilegePackageInstallInvocation(
+		runtimeport.PackageManagerDNF, []string{packagePath},
+	)
+	if err != nil || install.EnvironmentProfile() != argvprocess.EnvironmentProfileDNFTransaction {
+		t.Fatalf("install=%+v error=%v", install, err)
+	}
+	remove, err := privilegePackageRemoveInvocation(
+		runtimeport.PackageManagerDNF, []string{"docker-ce", "docker-ce-cli"},
+	)
+	if err != nil || remove.EnvironmentProfile() != argvprocess.EnvironmentProfileDNFTransaction ||
+		!slices.Equal(remove.Arguments()[len(remove.Arguments())-2:], []string{"docker-ce", "docker-ce-cli"}) {
+		t.Fatalf("remove=%+v error=%v", remove, err)
+	}
+	if _, err := privilegePackageInstallInvocation("unknown", []string{"/tmp/package"}); err == nil {
+		t.Fatal("unknown package-manager install invocation accepted")
+	}
+	if _, err := privilegePackageRemoveInvocation("unknown", []string{"docker-ce"}); err == nil {
+		t.Fatal("unknown package-manager removal invocation accepted")
+	}
+}
+
 func TestPF006NativePrivilegePackageProbeParsesExactAPTAndRPMState(t *testing.T) {
 	t.Parallel()
 	_, aptAuthority, _, _ := privilegeCodecFixture(t)
@@ -161,6 +238,104 @@ func TestPF006NativePrivilegePackageProbeDistinguishesAbsentMismatchAndMalformed
 				t.Fatalf("matches=%t error=%v", matches, callError)
 			}
 		})
+	}
+}
+
+func TestPF001NativePrivilegePackageProbeRequiresEveryManagedPackageAbsent(t *testing.T) {
+	t.Parallel()
+	_, authority, _, _ := privilegeCodecFixture(t)
+	executable := privilegePackageExecutableAuthority(t, authority, argvprocess.ExecutableRoleDPKGQuery)
+	managed, _ := runtimeport.ManagedRuntimePackages(authority)
+	absentResults := make([]privilegePackageRunResult, len(managed))
+	for index := range absentResults {
+		absentResults[index] = privilegePackageRunResult{
+			result: argvprocess.Result{ExitCode: 1}, err: errors.New("not installed"),
+		}
+	}
+	runner := &privilegePackageRunnerStub{authority: executable, results: absentResults}
+	probe, err := NewNativePrivilegePackageStateProbe(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent, err := probe.PrivilegeManagedPackagesAbsent(t.Context(), authority); err != nil || !absent || runner.calls != len(managed) {
+		t.Fatalf("absent=%t calls=%d error=%v", absent, runner.calls, err)
+	}
+	partial := slices.Clone(absentResults)
+	partial[0] = privilegePackageRunResult{result: argvprocess.Result{
+		StandardOutput: []byte(managed[0].Name() + "\t" + managed[0].Version() + "\tinstalled\n"),
+	}}
+	runner = &privilegePackageRunnerStub{authority: executable, results: partial}
+	probe, _ = NewNativePrivilegePackageStateProbe(runner)
+	if absent, err := probe.PrivilegeManagedPackagesAbsent(t.Context(), authority); err != nil || absent {
+		t.Fatalf("partial absent=%t error=%v", absent, err)
+	}
+	malformed := slices.Clone(absentResults)
+	malformed[0] = privilegePackageRunResult{result: argvprocess.Result{StandardOutput: []byte("malformed\n")}}
+	runner = &privilegePackageRunnerStub{authority: executable, results: malformed}
+	probe, _ = NewNativePrivilegePackageStateProbe(runner)
+	if absent, err := probe.PrivilegeManagedPackagesAbsent(t.Context(), authority); err == nil || absent {
+		t.Fatalf("malformed absent=%t error=%v", absent, err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	runner = &privilegePackageRunnerStub{authority: executable, results: absentResults}
+	probe, _ = NewNativePrivilegePackageStateProbe(runner)
+	if absent, err := probe.PrivilegeManagedPackagesAbsent(cancelled, authority); !errors.Is(err, context.Canceled) || absent {
+		t.Fatalf("cancelled absent=%t error=%v", absent, err)
+	}
+	var unavailable *NativePrivilegePackageStateProbe
+	if absent, err := unavailable.PrivilegeManagedPackagesAbsent(t.Context(), authority); err == nil || absent {
+		t.Fatalf("nil probe absent=%t error=%v", absent, err)
+	}
+}
+
+func TestPF001NativePrivilegePackageProbeMatchesOnlyExactManagedRuntimeSet(t *testing.T) {
+	t.Parallel()
+	_, authority, _, _ := privilegeCodecFixture(t)
+	executable := privilegePackageExecutableAuthority(t, authority, argvprocess.ExecutableRoleDPKGQuery)
+	managed, err := runtimeport.ManagedRuntimePackages(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	wantedNames := make([]string, 0, len(managed))
+	for _, pkg := range managed {
+		wantedNames = append(wantedNames, pkg.Name())
+		output.WriteString(pkg.Name() + "\t" + pkg.Version() + "\tinstalled\n")
+	}
+	slices.Sort(wantedNames)
+	runner := &privilegePackageRunnerStub{authority: executable, result: argvprocess.Result{
+		StandardOutput: []byte(output.String()),
+	}}
+	probe, err := NewNativePrivilegePackageStateProbe(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := probe.PrivilegeManagedPackageStateMatches(t.Context(), authority)
+	arguments := runner.invocation.Arguments()
+	if err != nil || !matches || len(arguments) != len(wantedNames)+3 ||
+		!slices.Equal(arguments[3:], wantedNames) || slices.Contains(arguments, "uidmap") {
+		t.Fatalf("matches=%t arguments=%v error=%v", matches, runner.invocation.Arguments(), err)
+	}
+
+	runner = &privilegePackageRunnerStub{
+		authority: executable, result: argvprocess.Result{ExitCode: 1}, err: errors.New("not installed"),
+	}
+	probe, _ = NewNativePrivilegePackageStateProbe(runner)
+	if matches, err := probe.PrivilegeManagedPackageStateMatches(t.Context(), authority); err != nil || matches {
+		t.Fatalf("missing matches=%t error=%v", matches, err)
+	}
+
+	runner = &privilegePackageRunnerStub{authority: executable, result: argvprocess.Result{
+		StandardOutput: []byte("substituted\t1\tinstalled\n"),
+	}}
+	probe, _ = NewNativePrivilegePackageStateProbe(runner)
+	if matches, err := probe.PrivilegeManagedPackageStateMatches(t.Context(), authority); err == nil || matches {
+		t.Fatalf("substituted matches=%t error=%v", matches, err)
+	}
+	var unavailable *NativePrivilegePackageStateProbe
+	if matches, err := unavailable.PrivilegeManagedPackageStateMatches(t.Context(), authority); err == nil || matches {
+		t.Fatalf("nil probe matches=%t error=%v", matches, err)
 	}
 }
 
@@ -268,6 +443,7 @@ type privilegePackageRunnerStub struct {
 	invocation argvprocess.Invocation
 	result     argvprocess.Result
 	err        error
+	results    []privilegePackageRunResult
 	calls      int
 }
 
@@ -279,15 +455,58 @@ func (s *privilegePackageRunnerStub) Run(
 	_ context.Context,
 	invocation argvprocess.Invocation,
 ) (argvprocess.Result, error) {
+	index := s.calls
 	s.calls++
 	s.invocation = invocation
+	if index < len(s.results) {
+		return s.results[index].result, s.results[index].err
+	}
 	return s.result, s.err
 }
 
+type privilegePackageRunResult struct {
+	result argvprocess.Result
+	err    error
+}
+
 type privilegePackageStateProbeStub struct {
-	matches []bool
-	err     error
-	calls   int
+	matches        []bool
+	managedMatches []bool
+	managedAbsent  []bool
+	err            error
+	calls          int
+	managedCalls   int
+	absentCalls    int
+}
+
+func (s *privilegePackageStateProbeStub) PrivilegeManagedPackageStateMatches(
+	context.Context,
+	runtimeport.LinuxAuthority,
+) (bool, error) {
+	index := s.managedCalls
+	s.managedCalls++
+	if s.err != nil {
+		return false, s.err
+	}
+	if index >= len(s.managedMatches) {
+		return false, nil
+	}
+	return s.managedMatches[index], nil
+}
+
+func (s *privilegePackageStateProbeStub) PrivilegeManagedPackagesAbsent(
+	context.Context,
+	runtimeport.LinuxAuthority,
+) (bool, error) {
+	index := s.absentCalls
+	s.absentCalls++
+	if s.err != nil {
+		return false, s.err
+	}
+	if index >= len(s.managedAbsent) {
+		return false, nil
+	}
+	return s.managedAbsent[index], nil
 }
 
 func (s *privilegePackageStateProbeStub) PrivilegePackageStateMatches(

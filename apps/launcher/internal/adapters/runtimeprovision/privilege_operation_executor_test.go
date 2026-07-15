@@ -18,6 +18,7 @@ func TestPF006ClosedPrivilegeOperationExecutorDispatchesOnlyExactCapabilityThenR
 		runtimeport.PrivilegeConfigureSubordinateIDs,
 		runtimeport.PrivilegeEnableUserService,
 		runtimeport.PrivilegeVerifyManagedState,
+		runtimeport.PrivilegeRemoveManagedPackages,
 	} {
 		t.Run(string(operation), func(t *testing.T) {
 			request := privilegeOperationRequest(t, baseRequest, operation)
@@ -29,6 +30,9 @@ func TestPF006ClosedPrivilegeOperationExecutorDispatchesOnlyExactCapabilityThenR
 			service := &privilegeServiceManagerStub{events: &events, changed: true}
 			observer := &privilegeManagedStateObserverStub{
 				events: &events, observation: completePrivilegeManagedObservation(t, authority),
+			}
+			if operation == runtimeport.PrivilegeRemoveManagedPackages {
+				observer.observation = removedPrivilegeManagedObservation(t, authority)
 			}
 			executor, err := NewClosedPrivilegeOperationExecutor(PrivilegeOperationDependencies{
 				Repository: repository, Packages: packages, Subordinates: subordinates,
@@ -47,6 +51,10 @@ func TestPF006ClosedPrivilegeOperationExecutorDispatchesOnlyExactCapabilityThenR
 			}[operation]
 			expectedEvents := []string{"observe"}
 			expectedResult := runtimeport.PrivilegeResultAlreadyApplied
+			if operation == runtimeport.PrivilegeRemoveManagedPackages {
+				expectedEvents = []string{"service-remove", "packages-remove", "observe"}
+				expectedResult = runtimeport.PrivilegeResultCompleted
+			}
 			if expectedMutation != "" {
 				expectedEvents = []string{expectedMutation, "observe"}
 				expectedResult = runtimeport.PrivilegeResultCompleted
@@ -84,6 +92,14 @@ func TestPF006ClosedPrivilegeOperationExecutorRejectsMutationOrObservationFailur
 		"service mutation": func(input *PrivilegeOperationDependencies, request *runtimeport.PrivilegeRequest) {
 			*request = privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeEnableUserService)
 			input.Service = &privilegeServiceManagerStub{err: errors.New("service failed")}
+		},
+		"removal service mutation": func(input *PrivilegeOperationDependencies, request *runtimeport.PrivilegeRequest) {
+			*request = privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeRemoveManagedPackages)
+			input.Service = &privilegeServiceManagerStub{removeErr: errors.New("service removal failed")}
+		},
+		"removal package mutation": func(input *PrivilegeOperationDependencies, request *runtimeport.PrivilegeRequest) {
+			*request = privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeRemoveManagedPackages)
+			input.Packages = &privilegePackageManagerStub{removeErr: errors.New("package removal failed")}
 		},
 		"observation failure": func(input *PrivilegeOperationDependencies, request *runtimeport.PrivilegeRequest) {
 			*request = privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeVerifyManagedState)
@@ -148,6 +164,9 @@ func privilegeOperationRequest(
 	input := base.TransportInput()
 	input.Operation = operation
 	input.ExpectedState = expected
+	if operation == runtimeport.PrivilegeRemoveManagedPackages {
+		input.AuthorizationDigest = runtimeinstall.Sum([]byte("separate-removal-authorization"))
+	}
 	request, err := runtimeport.NewPrivilegeRequest(input)
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +196,21 @@ func completePrivilegeManagedObservation(
 	}
 }
 
+func removedPrivilegeManagedObservation(
+	t testing.TB,
+	authority runtimeport.LinuxAuthority,
+) PrivilegeManagedStateObservation {
+	t.Helper()
+	packages, err := runtimeport.ExpectedRemovedPackageStateDigest(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return PrivilegeManagedStateObservation{
+		PackageStateDigest: packages, ServiceUnitDigest: authority.ServiceUnitDigest(),
+		UserLingerEnabled: true,
+	}
+}
+
 type privilegeRepositoryManagerStub struct {
 	events  *[]string
 	changed bool
@@ -195,9 +229,21 @@ func (s *privilegeRepositoryManagerStub) EnsurePrivilegeRepository(
 }
 
 type privilegePackageManagerStub struct {
-	events  *[]string
-	changed bool
-	err     error
+	events    *[]string
+	changed   bool
+	err       error
+	removeErr error
+}
+
+func (s *privilegePackageManagerStub) RemovePrivilegePackages(
+	context.Context,
+	runtimeport.PrivilegeRequest,
+	PrivilegeArtifactSet,
+) (bool, error) {
+	if s.events != nil {
+		*s.events = append(*s.events, "packages-remove")
+	}
+	return s.changed, s.removeErr
 }
 
 func (s *privilegePackageManagerStub) EnsurePrivilegePackages(
@@ -228,9 +274,20 @@ func (s *privilegeSubordinateManagerStub) EnsurePrivilegeSubordinateIDs(
 }
 
 type privilegeServiceManagerStub struct {
-	events  *[]string
-	changed bool
-	err     error
+	events    *[]string
+	changed   bool
+	err       error
+	removeErr error
+}
+
+func (s *privilegeServiceManagerStub) DisablePrivilegeUserService(
+	context.Context,
+	runtimeport.PrivilegeRequest,
+) (bool, error) {
+	if s.events != nil {
+		*s.events = append(*s.events, "service-remove")
+	}
+	return s.changed, s.removeErr
 }
 
 func (s *privilegeServiceManagerStub) EnsurePrivilegeUserService(

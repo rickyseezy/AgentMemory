@@ -176,6 +176,43 @@ func TestPF006CanonicalPrivilegeCodecRejectsAmbiguityAndSubstitution(t *testing.
 	}
 }
 
+func TestPF001CanonicalPrivilegeCodecBindsRemovalAuthorizationDigest(t *testing.T) {
+	t.Parallel()
+	plan, authority, base, _ := privilegeCodecFixture(t)
+	request := privilegeOperationRequest(t, base, runtimeport.PrivilegeRemoveManagedPackages)
+	codec, err := NewCanonicalPrivilegeTransportCodec(PrivilegeEnvelopeInput{
+		SignedRelease: []byte(`{"fixture":"signed-release"}`), SignedRuntimeCatalog: []byte(`{"fixture":"catalog"}`),
+		CanonicalPlan: plan.CanonicalBytes(), RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+		ArtifactStager: privilegeCodecArtifactStager(authority),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := codec.EncodePrivilegeRequest(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalPrivilegeRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := decoded.BindAuthority(authority)
+	if err != nil || bound.Digest() != request.Digest() ||
+		bound.AuthorizationDigest() != request.AuthorizationDigest() {
+		t.Fatalf("bound=%+v error=%v", bound, err)
+	}
+	foreign := runtimeinstall.Sum([]byte("foreign-removal-authorization"))
+	mutated := bytes.Replace(
+		raw, []byte(request.AuthorizationDigest().String()), []byte(foreign.String()), 1,
+	)
+	untrusted, err := DecodeCanonicalPrivilegeRequest(mutated)
+	if err == nil {
+		if _, bindError := untrusted.BindAuthority(authority); bindError == nil {
+			t.Fatal("substituted removal authorization was accepted")
+		}
+	}
+}
+
 func TestPF006CanonicalPrivilegeCodecRejectsArtifactHandoffSubstitution(t *testing.T) {
 	t.Parallel()
 	plan, authority, request, _ := privilegeCodecFixture(t)

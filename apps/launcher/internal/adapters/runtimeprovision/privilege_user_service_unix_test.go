@@ -73,6 +73,37 @@ func TestPF006NativePrivilegeUserServiceIsIdempotentForReprovedActiveState(t *te
 	}
 }
 
+func TestPF001NativePrivilegeUserServiceDisablesManagedUnitWithoutChangingLinger(t *testing.T) {
+	t.Parallel()
+	authority, baseRequest := privilegeUserServiceFixture(t, []byte("unit\n"))
+	request := privilegeOperationRequest(t, baseRequest, runtimeport.PrivilegeRemoveManagedPackages)
+	loginctl := &privilegeServiceRunnerStub{
+		authority: privilegePackageExecutableAuthority(t, authority, argvprocess.ExecutableRoleLoginCTL),
+		results: []privilegeServiceRunResult{
+			{result: argvprocess.Result{StandardOutput: []byte("yes\n")}},
+			{result: argvprocess.Result{StandardOutput: []byte("yes\n")}},
+		},
+	}
+	systemctl := &privilegeServiceRunnerStub{
+		authority: privilegePackageExecutableAuthority(t, authority, argvprocess.ExecutableRoleSystemCTL),
+		results: []privilegeServiceRunResult{
+			{result: argvprocess.Result{StandardOutput: []byte(privilegeActiveSystemdState)}},
+			{},
+			{result: argvprocess.Result{StandardOutput: []byte("ActiveState=inactive\nLoadState=loaded\nUnitFileState=disabled\n")}},
+		},
+	}
+	manager, err := NewNativePrivilegeUserServiceManager(loginctl, systemctl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := manager.DisablePrivilegeUserService(t.Context(), request)
+	if err != nil || !changed || loginctl.calls != 2 || systemctl.calls != 3 ||
+		!slices.Contains(systemctl.invocations[1].Arguments(), "disable") ||
+		!slices.Contains(systemctl.invocations[1].Arguments(), "--now") {
+		t.Fatalf("changed=%t loginctl=%d systemctl=%d invocations=%v error=%v", changed, loginctl.calls, systemctl.calls, systemctl.invocations, err)
+	}
+}
+
 func TestPF006NativePrivilegeUserServiceRejectsUnitAndObservationSubstitution(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]struct {

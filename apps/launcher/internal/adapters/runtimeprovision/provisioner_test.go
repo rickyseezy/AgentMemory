@@ -394,6 +394,10 @@ func (b *fakePrivilegeBroker) Execute(
 		input.RepositoryDigest = repository
 	case runtimeport.PrivilegeInstallPackages:
 		input.RepositoryDigest, input.PackageStateDigest = repository, packages
+	case runtimeport.PrivilegeRemoveManagedPackages:
+		input.PackageStateDigest, _ = runtimeport.ExpectedRemovedPackageStateDigest(authority)
+		input.ServiceUnitDigest = authority.ServiceUnitDigest()
+		input.UserLingerEnabled = true
 	case runtimeport.PrivilegeConfigureSubordinateIDs:
 		input.SubordinateIDs = authority.SubordinateIDCount()
 		input.SubordinateUIDStart, input.SubordinateGIDStart = 100000, 200000

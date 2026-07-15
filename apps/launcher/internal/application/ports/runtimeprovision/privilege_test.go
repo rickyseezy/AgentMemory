@@ -106,6 +106,9 @@ func TestPrivilegeRequestRejectsReplayFriendlyOrUnboundedInputs(t *testing.T) {
 		{name: "unsafe operation ID", mutate: func(input *PrivilegeRequestInput) { input.OperationID = "op;rm" }},
 		{name: "unknown operation", mutate: func(input *PrivilegeRequestInput) { input.Operation = "run_command" }},
 		{name: "missing state", mutate: func(input *PrivilegeRequestInput) { input.ExpectedState = runtimeinstall.Hash{} }},
+		{name: "authorization on non-removal", mutate: func(input *PrivilegeRequestInput) {
+			input.AuthorizationDigest = runtimeinstall.Sum([]byte("unexpected"))
+		}},
 	}
 	for _, test := range tests {
 		test := test
@@ -117,6 +120,18 @@ func TestPrivilegeRequestRejectsReplayFriendlyOrUnboundedInputs(t *testing.T) {
 				t.Fatalf("NewPrivilegeRequest(%s) succeeded", test.name)
 			}
 		})
+	}
+	removal := base
+	removal.Operation = PrivilegeRemoveManagedPackages
+	removal.ExpectedState, _ = ExpectedPrivilegeState(authority, removal.Operation)
+	if _, err := NewPrivilegeRequest(removal); err == nil {
+		t.Fatal("removal request without separately consented authorization succeeded")
+	}
+	removal.AuthorizationDigest = runtimeinstall.Sum([]byte("consent-and-execution-scan"))
+	bound, err := NewPrivilegeRequest(removal)
+	if err != nil || bound.AuthorizationDigest() != removal.AuthorizationDigest ||
+		bound.TransportInput().AuthorizationDigest != removal.AuthorizationDigest {
+		t.Fatalf("removal authorization was not bound: request=%+v error=%v", bound, err)
 	}
 }
 
@@ -177,15 +192,17 @@ func TestEveryPrivilegeOperationRequiresItsExactReceiptShape(t *testing.T) {
 	}
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	packages, _ := ExpectedPackageStateDigest(authority)
+	removed, _ := ExpectedRemovedPackageStateDigest(authority)
 	repository, _ := ExpectedRepositoryStateDigest(authority)
 	operations := []PrivilegeOperation{
 		PrivilegeConfigureRepository,
 		PrivilegeInstallPackages,
+		PrivilegeRemoveManagedPackages,
 		PrivilegeConfigureSubordinateIDs,
 		PrivilegeEnableUserService,
 		PrivilegeVerifyManagedState,
 	}
-	nonces := []Nonce{{1}, {2}, {3}, {4}, {5}}
+	nonces := []Nonce{{1}, {2}, {3}, {4}, {5}, {6}}
 	for index, operation := range operations {
 		operation := operation
 		index := index
@@ -195,9 +212,14 @@ func TestEveryPrivilegeOperationRequiresItsExactReceiptShape(t *testing.T) {
 			if stateError != nil {
 				t.Fatal(stateError)
 			}
+			authorization := runtimeinstall.Hash{}
+			if operation == PrivilegeRemoveManagedPackages {
+				authorization = runtimeinstall.Sum([]byte("separate-removal-authorization"))
+			}
 			request, requestError := NewPrivilegeRequest(PrivilegeRequestInput{
 				OperationID: "operation-all", Attempt: 1, Operation: operation, Authority: authority,
-				Nonce: nonces[index], IssuedAt: now, ExpiresAt: now.Add(time.Minute), ExpectedState: expected,
+				AuthorizationDigest: authorization, Nonce: nonces[index], IssuedAt: now,
+				ExpiresAt: now.Add(time.Minute), ExpectedState: expected,
 			})
 			if requestError != nil {
 				t.Fatal(requestError)
@@ -214,6 +236,9 @@ func TestEveryPrivilegeOperationRequiresItsExactReceiptShape(t *testing.T) {
 				input.RepositoryDigest = repository
 			case PrivilegeInstallPackages:
 				input.RepositoryDigest, input.PackageStateDigest = repository, packages
+			case PrivilegeRemoveManagedPackages:
+				input.PackageStateDigest = removed
+				input.ServiceUnitDigest = authority.ServiceUnitDigest()
 			case PrivilegeConfigureSubordinateIDs:
 				input.SubordinateIDs = authority.SubordinateIDCount()
 				input.SubordinateUIDStart, input.SubordinateGIDStart = 100000, 200000

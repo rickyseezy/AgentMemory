@@ -99,6 +99,41 @@ func (m *NativePrivilegeUserServiceManager) EnsurePrivilegeUserService(
 	return true, nil
 }
 
+// DisablePrivilegeUserService stops and disables only the exact verified
+// docker.service. Linger and the unit file are preserved because either may
+// predate AgentMemory or be shared with another rootless workflow.
+func (m *NativePrivilegeUserServiceManager) DisablePrivilegeUserService(
+	ctx context.Context,
+	request runtimeport.PrivilegeRequest,
+) (bool, error) {
+	if m == nil || ctx == nil || request.Operation() != runtimeport.PrivilegeRemoveManagedPackages ||
+		request.Digest().IsZero() || !m.runnersMatchPrivilegeServiceAuthority(request.Authority()) {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	authority := request.Authority()
+	unit, _, enabled, active, err := m.ObservePrivilegeUserServiceState(ctx, authority)
+	if err != nil || unit != authority.ServiceUnitDigest() {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	if !enabled && !active {
+		return false, nil
+	}
+	disable, err := argvprocess.NewSystemctlUserDisableNowInvocation(
+		m.systemctl.ExecutableAuthority().CanonicalPath(), authority.AccountName(),
+	)
+	if err != nil || runPrivilegeServiceInvocation(ctx, m.systemctl, disable) != nil {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	unit, _, enabled, active, err = m.ObservePrivilegeUserServiceState(ctx, authority)
+	if err != nil || unit != authority.ServiceUnitDigest() || enabled || active {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	return true, nil
+}
+
 // ObservePrivilegeUserServiceState rehashes the user-owned unit before and
 // after querying systemd so a replaced unit cannot authorize a receipt.
 func (m *NativePrivilegeUserServiceManager) ObservePrivilegeUserServiceState(

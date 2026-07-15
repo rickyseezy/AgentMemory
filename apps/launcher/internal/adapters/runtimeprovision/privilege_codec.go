@@ -130,6 +130,7 @@ type canonicalPrivilegeArtifact struct {
 type canonicalPrivilegeRequest struct {
 	Attempt             uint32 `json:"attempt"`
 	AuthorityDigest     string `json:"authority_digest"`
+	AuthorizationDigest string `json:"authorization_digest"`
 	ExpectedStateDigest string `json:"expected_state_digest"`
 	ExpiresAtUnixMicro  int64  `json:"expires_at_unix_micro"`
 	IssuedAtUnixMicro   int64  `json:"issued_at_unix_micro"`
@@ -144,6 +145,7 @@ func privilegeRequestDocument(request runtimeport.PrivilegeRequest) canonicalPri
 	nonce := request.Nonce()
 	return canonicalPrivilegeRequest{
 		Attempt: request.Attempt(), AuthorityDigest: request.Authority().Digest().String(),
+		AuthorizationDigest: optionalPrivilegeHashString(request.AuthorizationDigest()),
 		ExpectedStateDigest: request.ExpectedState().String(), ExpiresAtUnixMicro: request.ExpiresAt().UnixMicro(),
 		IssuedAtUnixMicro: request.IssuedAt().UnixMicro(), Nonce: hex.EncodeToString(nonce[:]),
 		Operation: string(request.Operation()), OperationID: request.OperationID(),
@@ -198,13 +200,14 @@ func (d DecodedPrivilegeRequest) BindAuthority(
 ) (runtimeport.PrivilegeRequest, error) {
 	claims := d.document.Request
 	authorityDigest, authorityError := runtimeinstall.ParseHash(claims.AuthorityDigest)
+	authorizationDigest, authorizationError := parseOptionalPrivilegeHash(claims.AuthorizationDigest)
 	expectedState, expectedError := runtimeinstall.ParseHash(claims.ExpectedStateDigest)
 	operationKey, operationKeyError := runtimeinstall.ParseHash(claims.OperationKey)
 	requestDigest, requestDigestError := runtimeinstall.ParseHash(claims.RequestDigest)
 	nonce, nonceError := parsePrivilegeNonce(claims.Nonce)
 	if !authority.ValidFor(d.plan) || authority.PlanDigest() != d.plan.Digest() ||
 		!validPrivilegeArtifactBindings(d.artifacts, authority) ||
-		authorityError != nil || authorityDigest != authority.Digest() || expectedError != nil ||
+		authorityError != nil || authorityDigest != authority.Digest() || authorizationError != nil || expectedError != nil ||
 		operationKeyError != nil || requestDigestError != nil || nonceError != nil {
 		return runtimeport.PrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
 	}
@@ -215,13 +218,21 @@ func (d DecodedPrivilegeRequest) BindAuthority(
 	}
 	request, err := runtimeport.NewPrivilegeRequest(runtimeport.PrivilegeRequestInput{
 		OperationID: claims.OperationID, Attempt: claims.Attempt, Operation: operation,
-		Authority: authority, Nonce: nonce, IssuedAt: time.UnixMicro(claims.IssuedAtUnixMicro).UTC(),
+		Authority: authority, AuthorizationDigest: authorizationDigest,
+		Nonce: nonce, IssuedAt: time.UnixMicro(claims.IssuedAtUnixMicro).UTC(),
 		ExpiresAt: time.UnixMicro(claims.ExpiresAtUnixMicro).UTC(), ExpectedState: expectedState,
 	})
 	if err != nil || request.OperationKey() != operationKey || request.Digest() != requestDigest {
 		return runtimeport.PrivilegeRequest{}, runtimeport.ErrPrivilegeIntegrity
 	}
 	return request, nil
+}
+
+func optionalPrivilegeHashString(value runtimeinstall.Hash) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.String()
 }
 
 // CanonicalBytes returns a defensive exact re-encoding for authenticated
@@ -493,7 +504,7 @@ func privilegeReceiptInput(
 
 func parseOptionalPrivilegeHash(value string) (runtimeinstall.Hash, error) {
 	zero := runtimeinstall.Hash{}
-	if value == zero.String() {
+	if value == "" || value == zero.String() {
 		return zero, nil
 	}
 	return runtimeinstall.ParseHash(value)

@@ -32,6 +32,9 @@ const (
 	PrivilegeConfigureRepository PrivilegeOperation = "configure_official_repository"
 	// PrivilegeInstallPackages installs/verifies the exact signed package set.
 	PrivilegeInstallPackages PrivilegeOperation = "install_exact_packages"
+	// PrivilegeRemoveManagedPackages stops the exact managed user service and
+	// removes only vendor-runtime packages while preserving local runtime data.
+	PrivilegeRemoveManagedPackages PrivilegeOperation = "remove_managed_packages_preserve_data"
 	// PrivilegeConfigureSubordinateIDs atomically allocates collision-free UID/GID ranges.
 	PrivilegeConfigureSubordinateIDs PrivilegeOperation = "configure_subordinate_ids"
 	// PrivilegeEnableUserService validates, enables, and starts the exact rootless user unit.
@@ -42,7 +45,7 @@ const (
 
 func (o PrivilegeOperation) valid() bool {
 	switch o {
-	case PrivilegeConfigureRepository, PrivilegeInstallPackages,
+	case PrivilegeConfigureRepository, PrivilegeInstallPackages, PrivilegeRemoveManagedPackages,
 		PrivilegeConfigureSubordinateIDs, PrivilegeEnableUserService,
 		PrivilegeVerifyManagedState:
 		return true
@@ -60,28 +63,30 @@ func (n Nonce) IsZero() bool { return n == Nonce{} }
 // PrivilegeRequestInput is populated exclusively by the PF-006 adapter from
 // LinuxAuthority and durable operation identity.
 type PrivilegeRequestInput struct {
-	OperationID   string
-	Attempt       uint32
-	Operation     PrivilegeOperation
-	Authority     LinuxAuthority
-	Nonce         Nonce
-	IssuedAt      time.Time
-	ExpiresAt     time.Time
-	ExpectedState runtimeinstall.Hash
+	OperationID         string
+	Attempt             uint32
+	Operation           PrivilegeOperation
+	Authority           LinuxAuthority
+	AuthorizationDigest runtimeinstall.Hash
+	Nonce               Nonce
+	IssuedAt            time.Time
+	ExpiresAt           time.Time
+	ExpectedState       runtimeinstall.Hash
 }
 
 // PrivilegeRequest is immutable typed authority sent to the native helper.
 type PrivilegeRequest struct {
-	operationID   string
-	attempt       uint32
-	operation     PrivilegeOperation
-	authority     LinuxAuthority
-	nonce         Nonce
-	issuedAt      time.Time
-	expiresAt     time.Time
-	expectedState runtimeinstall.Hash
-	operationKey  runtimeinstall.Hash
-	digest        runtimeinstall.Hash
+	operationID         string
+	attempt             uint32
+	operation           PrivilegeOperation
+	authority           LinuxAuthority
+	authorizationDigest runtimeinstall.Hash
+	nonce               Nonce
+	issuedAt            time.Time
+	expiresAt           time.Time
+	expectedState       runtimeinstall.Hash
+	operationKey        runtimeinstall.Hash
+	digest              runtimeinstall.Hash
 }
 
 // NewPrivilegeRequest binds one bounded helper call to the plan, principal,
@@ -91,12 +96,14 @@ func NewPrivilegeRequest(input PrivilegeRequestInput) (PrivilegeRequest, error) 
 		!input.Authority.Valid() || input.Nonce.IsZero() || input.IssuedAt.IsZero() || input.ExpiresAt.IsZero() ||
 		input.IssuedAt.Location() != time.UTC || input.ExpiresAt.Location() != time.UTC ||
 		!input.ExpiresAt.After(input.IssuedAt) || input.ExpiresAt.Sub(input.IssuedAt) > maximumPrivilegeLifetime ||
-		input.ExpectedState.IsZero() {
+		input.ExpectedState.IsZero() ||
+		(input.Operation == PrivilegeRemoveManagedPackages) != !input.AuthorizationDigest.IsZero() {
 		return PrivilegeRequest{}, ErrPrivilegeIntegrity
 	}
 	request := PrivilegeRequest{
 		operationID: input.OperationID, attempt: input.Attempt, operation: input.Operation,
-		authority: input.Authority, nonce: input.Nonce, issuedAt: input.IssuedAt,
+		authority: input.Authority, authorizationDigest: input.AuthorizationDigest,
+		nonce: input.Nonce, issuedAt: input.IssuedAt,
 		expiresAt: input.ExpiresAt, expectedState: input.ExpectedState,
 	}
 	request.operationKey = request.computeOperationKey()
@@ -123,12 +130,13 @@ func validOperationID(value string) bool {
 
 func (r PrivilegeRequest) computeOperationKey() runtimeinstall.Hash {
 	encoded, _ := json.Marshal(struct {
-		Authority string `json:"authority_digest"`
-		ID        string `json:"operation_id"`
-		Operation string `json:"operation"`
-		Plan      string `json:"plan_digest"`
+		Authority     string `json:"authority_digest"`
+		Authorization string `json:"authorization_digest"`
+		ID            string `json:"operation_id"`
+		Operation     string `json:"operation"`
+		Plan          string `json:"plan_digest"`
 	}{
-		Authority: r.authority.Digest().String(), ID: r.operationID,
+		Authority: r.authority.Digest().String(), Authorization: r.authorizationDigest.String(), ID: r.operationID,
 		Operation: string(r.operation), Plan: r.authority.PlanDigest().String(),
 	})
 	return runtimeinstall.Sum(encoded)
@@ -138,6 +146,7 @@ func (r PrivilegeRequest) computeDigest() runtimeinstall.Hash {
 	encoded, _ := json.Marshal(struct {
 		Attempt       uint32 `json:"attempt"`
 		Authority     string `json:"authority_digest"`
+		Authorization string `json:"authorization_digest"`
 		ExpectedState string `json:"expected_state_digest"`
 		ExpiresAt     int64  `json:"expires_at_unix_micro"`
 		IssuedAt      int64  `json:"issued_at_unix_micro"`
@@ -149,7 +158,7 @@ func (r PrivilegeRequest) computeDigest() runtimeinstall.Hash {
 		Plan          string `json:"plan_digest"`
 		Principal     string `json:"principal"`
 	}{
-		Attempt: r.attempt, Authority: r.authority.Digest().String(),
+		Attempt: r.attempt, Authority: r.authority.Digest().String(), Authorization: r.authorizationDigest.String(),
 		ExpectedState: r.expectedState.String(), ExpiresAt: r.expiresAt.UnixMicro(),
 		IssuedAt: r.issuedAt.UnixMicro(), Machine: r.authority.MachineDigest().String(),
 		Nonce: r.nonce, Operation: string(r.operation), OperationID: r.operationID,
@@ -170,6 +179,11 @@ func (r PrivilegeRequest) Operation() PrivilegeOperation { return r.operation }
 
 // Authority returns immutable signed execution authority.
 func (r PrivilegeRequest) Authority() LinuxAuthority { return r.authority }
+
+// AuthorizationDigest binds separately consented destructive authority. It is
+// non-zero only for managed-runtime removal and covers the exact removal plan,
+// ownership record, execution-time dependency scan, and consent receipt.
+func (r PrivilegeRequest) AuthorizationDigest() runtimeinstall.Hash { return r.authorizationDigest }
 
 // Nonce returns the exact one-use helper challenge.
 func (r PrivilegeRequest) Nonce() Nonce { return r.nonce }
@@ -195,7 +209,8 @@ func (r PrivilegeRequest) Digest() runtimeinstall.Hash { return r.digest }
 func (r PrivilegeRequest) TransportInput() PrivilegeRequestInput {
 	return PrivilegeRequestInput{
 		OperationID: r.operationID, Attempt: r.attempt, Operation: r.operation,
-		Authority: r.authority, Nonce: r.nonce, IssuedAt: r.issuedAt,
+		Authority: r.authority, AuthorizationDigest: r.authorizationDigest,
+		Nonce: r.nonce, IssuedAt: r.issuedAt,
 		ExpiresAt: r.expiresAt, ExpectedState: r.expectedState,
 	}
 }
@@ -232,6 +247,13 @@ func ExpectedPrivilegeState(authority LinuxAuthority, operation PrivilegeOperati
 		document.Metadata = repository.MetadataDigest().String()
 		document.Packages = packageBindings
 		document.Repository = repository.ConfigurationDigest().String()
+	case PrivilegeRemoveManagedPackages:
+		removed, err := ExpectedRemovedPackageStateDigest(authority)
+		if err != nil {
+			return runtimeinstall.Hash{}, ErrPrivilegeIntegrity
+		}
+		document.Packages = []string{removed.String()}
+		document.Service = authority.ServiceUnitDigest().String()
 	case PrivilegeConfigureSubordinateIDs:
 		document.Subordinates = authority.SubordinateIDCount()
 	case PrivilegeEnableUserService:
@@ -271,6 +293,61 @@ func ExpectedPackageStateDigest(authority LinuxAuthority) (runtimeinstall.Hash, 
 	for _, pkg := range packages {
 		document = append(document, packageBinding{
 			Name: pkg.Name(), Purpose: string(pkg.Purpose()), Receipt: pkg.NativeReceiptDigest().String(),
+			Repository: pkg.RepositoryID(), Version: pkg.Version(),
+		})
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return runtimeinstall.Hash{}, ErrPrivilegeIntegrity
+	}
+	return runtimeinstall.Sum(encoded), nil
+}
+
+// ManagedRuntimePackages returns only packages authenticated by the signed
+// runtime repository. Distribution prerequisites are deliberately excluded
+// from removal because they may be shared by unrelated software.
+func ManagedRuntimePackages(authority LinuxAuthority) ([]Package, error) {
+	if !authority.Valid() {
+		return nil, ErrPrivilegeIntegrity
+	}
+	repositoryID := authority.Repository().ID()
+	packages := make([]Package, 0, len(authority.Packages()))
+	for _, pkg := range authority.Packages() {
+		if pkg.RepositoryID() == repositoryID {
+			if pkg.Purpose() != PackagePurposeRuntime {
+				return nil, ErrPrivilegeIntegrity
+			}
+			packages = append(packages, pkg)
+		}
+	}
+	if len(packages) == 0 {
+		return nil, ErrPrivilegeIntegrity
+	}
+	return packages, nil
+}
+
+// ExpectedRemovedPackageStateDigest binds exact vendor package identities to
+// an absent-software/preserved-data postcondition.
+func ExpectedRemovedPackageStateDigest(authority LinuxAuthority) (runtimeinstall.Hash, error) {
+	packages, err := ManagedRuntimePackages(authority)
+	if err != nil {
+		return runtimeinstall.Hash{}, ErrPrivilegeIntegrity
+	}
+	type packageBinding struct {
+		Name       string `json:"name"`
+		Receipt    string `json:"receipt_digest"`
+		Repository string `json:"repository_id"`
+		Version    string `json:"version"`
+	}
+	document := struct {
+		Packages      []packageBinding `json:"packages"`
+		Present       bool             `json:"present"`
+		PreserveData  bool             `json:"preserve_local_runtime_data"`
+		ServiceActive bool             `json:"service_active"`
+	}{Packages: make([]packageBinding, 0, len(packages)), PreserveData: true}
+	for _, pkg := range packages {
+		document.Packages = append(document.Packages, packageBinding{
+			Name: pkg.Name(), Receipt: pkg.NativeReceiptDigest().String(),
 			Repository: pkg.RepositoryID(), Version: pkg.Version(),
 		})
 	}
@@ -450,6 +527,10 @@ func (r PrivilegeReceipt) matchesOperationEvidence(authority LinuxAuthority) boo
 	case PrivilegeInstallPackages:
 		return r.input.RepositoryDigest == repository &&
 			r.input.PackageStateDigest == packages && r.noServiceEvidence() && r.noSubordinateEvidence()
+	case PrivilegeRemoveManagedPackages:
+		removed, err := ExpectedRemovedPackageStateDigest(authority)
+		return err == nil && r.input.RepositoryDigest.IsZero() && r.input.PackageStateDigest == removed &&
+			r.validRemovedServiceEvidence(authority) && r.noSubordinateEvidence()
 	case PrivilegeConfigureSubordinateIDs:
 		return r.input.RepositoryDigest.IsZero() && r.input.PackageStateDigest.IsZero() &&
 			r.noServiceEvidence() && r.validSubordinateEvidence(authority)
@@ -463,6 +544,11 @@ func (r PrivilegeReceipt) matchesOperationEvidence(authority LinuxAuthority) boo
 	default:
 		return false
 	}
+}
+
+func (r PrivilegeReceipt) validRemovedServiceEvidence(authority LinuxAuthority) bool {
+	return r.input.ServiceUnitDigest == authority.ServiceUnitDigest() &&
+		!r.input.ServiceEnabled && !r.input.ServiceActive
 }
 
 func (r PrivilegeReceipt) noServiceEvidence() bool {

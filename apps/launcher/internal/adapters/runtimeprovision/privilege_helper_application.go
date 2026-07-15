@@ -113,7 +113,7 @@ type PrivilegeOperationObservationInput struct {
 	SubordinateStateDigest runtimeinstall.Hash
 }
 
-// PrivilegeOperationExecutor implements only the five closed operation kinds.
+// PrivilegeOperationExecutor implements only the six closed operation kinds.
 type PrivilegeOperationExecutor interface {
 	ExecutePrivilegeOperation(
 		context.Context,

@@ -188,6 +188,53 @@ func NewDNFInstallInvocation(executable string, packages []string) (Invocation, 
 	return invocation, nil
 }
 
+// NewAPTRemoveInvocation purges only the exact sorted managed package names.
+// It neither autoremoves dependencies nor deletes Docker/containerd data.
+func NewAPTRemoveInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/apt-get" || !validLinuxPackageNames(packages) {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 9+len(packages))
+	arguments = append(arguments,
+		"--assume-yes", "--no-download", "-o", "Acquire::Retries=0", "-o", "Dpkg::Use-Pty=0",
+		"purge", "--",
+	)
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileAPTTransaction
+	invocation.environment = []string{
+		"DEBIAN_FRONTEND=noninteractive", "HOME=/root", "LANG=C", "LC_ALL=C",
+		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	return invocation, nil
+}
+
+// NewDNFRemoveInvocation removes only the exact sorted managed package names
+// with repositories/plugins disabled and preserves runtime data directories.
+func NewDNFRemoveInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/dnf5" || !validLinuxPackageNames(packages) {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 8+len(packages))
+	arguments = append(arguments,
+		"--assumeyes", "--cacheonly", "--no-plugins", "--disable-repo=*", "--setopt=keepcache=False",
+		"remove", "--",
+	)
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileDNFTransaction
+	invocation.environment = []string{
+		"HOME=/root", "LANG=C", "LC_ALL=C", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	return invocation, nil
+}
+
 // NewDPKGQueryInvocation constructs the only admitted Debian installed-state
 // query. The machine-readable record contains exact package, version, and
 // status fields; callers cannot select another format or database operation.
@@ -268,6 +315,12 @@ func NewSystemctlUserDaemonReloadInvocation(executable string, account string) (
 // for the verified local account's user manager.
 func NewSystemctlUserEnableNowInvocation(executable string, account string) (Invocation, error) {
 	return newSystemctlUserInvocation(executable, account, []string{"enable", "--now", "docker.service"})
+}
+
+// NewSystemctlUserDisableNowInvocation stops and disables only docker.service
+// in the signed invoking account's user manager.
+func NewSystemctlUserDisableNowInvocation(executable string, account string) (Invocation, error) {
+	return newSystemctlUserInvocation(executable, account, []string{"disable", "--now", "docker.service"})
 }
 
 // NewSystemctlUserShowInvocation observes only load, enablement, and active

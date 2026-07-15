@@ -21,6 +21,7 @@ func TestPF006ManagedStateObserverProjectsOnlyOperationEvidenceInDeterministicOr
 		runtimeport.PrivilegeConfigureSubordinateIDs,
 		runtimeport.PrivilegeEnableUserService,
 		runtimeport.PrivilegeVerifyManagedState,
+		runtimeport.PrivilegeRemoveManagedPackages,
 	} {
 		t.Run(string(operation), func(t *testing.T) {
 			events := make([]string, 0, 4)
@@ -39,6 +40,10 @@ func TestPF006ManagedStateObserverProjectsOnlyOperationEvidenceInDeterministicOr
 				t.Fatal(err)
 			}
 			request := privilegeOperationRequest(t, baseRequest, operation)
+			if operation == runtimeport.PrivilegeRemoveManagedPackages {
+				service := observer.dependencies.Service.(*privilegeUserServiceStateProbeStub)
+				service.enabled, service.active = false, false
+			}
 			observation, err := observer.ObservePrivilegeManagedState(t.Context(), request)
 			wanted := map[runtimeport.PrivilegeOperation][]string{
 				runtimeport.PrivilegeConfigureRepository:     {"repository"},
@@ -46,6 +51,7 @@ func TestPF006ManagedStateObserverProjectsOnlyOperationEvidenceInDeterministicOr
 				runtimeport.PrivilegeConfigureSubordinateIDs: {"subordinates"},
 				runtimeport.PrivilegeEnableUserService:       {"service"},
 				runtimeport.PrivilegeVerifyManagedState:      {"repository", "packages", "subordinates", "service"},
+				runtimeport.PrivilegeRemoveManagedPackages:   {"packages-absent", "service"},
 			}[operation]
 			if err != nil || !slices.Equal(events, wanted) {
 				t.Fatalf("observation=%+v events=%v want=%v error=%v", observation, events, wanted, err)
@@ -104,6 +110,23 @@ func (s *privilegePackageStateProbeEventsStub) PrivilegePackageStateMatches(
 ) (bool, error) {
 	if s.events != nil {
 		*s.events = append(*s.events, "packages")
+	}
+	return s.matches, s.err
+}
+
+func (s *privilegePackageStateProbeEventsStub) PrivilegeManagedPackageStateMatches(
+	context.Context,
+	runtimeport.LinuxAuthority,
+) (bool, error) {
+	return s.matches, s.err
+}
+
+func (s *privilegePackageStateProbeEventsStub) PrivilegeManagedPackagesAbsent(
+	context.Context,
+	runtimeport.LinuxAuthority,
+) (bool, error) {
+	if s.events != nil {
+		*s.events = append(*s.events, "packages-absent")
 	}
 	return s.matches, s.err
 }

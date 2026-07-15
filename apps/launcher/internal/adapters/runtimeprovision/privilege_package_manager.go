@@ -19,6 +19,8 @@ const maximumPrivilegePackageQueryBytes = 1 << 20
 // through one signed native package database executable.
 type PrivilegePackageStateProbe interface {
 	PrivilegePackageStateMatches(context.Context, runtimeport.LinuxAuthority) (bool, error)
+	PrivilegeManagedPackageStateMatches(context.Context, runtimeport.LinuxAuthority) (bool, error)
+	PrivilegeManagedPackagesAbsent(context.Context, runtimeport.LinuxAuthority) (bool, error)
 }
 
 // ExactPrivilegePackageManager installs only the descriptor-verified local
@@ -83,6 +85,62 @@ func (m *ExactPrivilegePackageManager) EnsurePrivilegePackages(
 	return true, nil
 }
 
+// RemovePrivilegePackages removes only exact vendor-runtime packages. It
+// deliberately excludes distribution prerequisites and never removes local
+// Docker/containerd data directories.
+func (m *ExactPrivilegePackageManager) RemovePrivilegePackages(
+	ctx context.Context,
+	request runtimeport.PrivilegeRequest,
+	artifacts PrivilegeArtifactSet,
+) (bool, error) {
+	if m == nil || ctx == nil || nilArtifactDependency(m.transaction) || nilArtifactDependency(m.state) ||
+		request.Operation() != runtimeport.PrivilegeRemoveManagedPackages || request.Digest().IsZero() ||
+		nilArtifactDependency(artifacts) {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	authority := request.Authority()
+	if _, err := exactPrivilegePackagePaths(request, artifacts); err != nil ||
+		!privilegePackageRunnerMatchesAuthority(m.transaction.ExecutableAuthority(), authority) {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	absent, err := m.state.PrivilegeManagedPackagesAbsent(ctx, authority)
+	if err != nil {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	if absent {
+		return false, nil
+	}
+	matches, err := m.state.PrivilegeManagedPackageStateMatches(ctx, authority)
+	if err != nil || !matches {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	managed, err := runtimeport.ManagedRuntimePackages(authority)
+	if err != nil {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	names := make([]string, 0, len(managed))
+	for _, pkg := range managed {
+		names = append(names, pkg.Name())
+	}
+	slices.Sort(names)
+	invocation, err := privilegePackageRemoveInvocation(authority.PackageManager(), names)
+	if err != nil {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	result, err := m.transaction.Run(ctx, invocation)
+	if err != nil || result.ExitCode != 0 || result.OutputTruncated {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	absent, err = m.state.PrivilegeManagedPackagesAbsent(ctx, authority)
+	if err != nil || !absent {
+		return false, privilegeOperationContextOrIntegrity(ctx)
+	}
+	return true, nil
+}
+
 func exactPrivilegePackagePaths(
 	request runtimeport.PrivilegeRequest,
 	artifacts PrivilegeArtifactSet,
@@ -123,6 +181,19 @@ func privilegePackageInstallInvocation(
 		return argvprocess.NewAPTInstallInvocation("/usr/bin/apt-get", paths)
 	case runtimeport.PackageManagerDNF:
 		return argvprocess.NewDNFInstallInvocation("/usr/bin/dnf5", paths)
+	}
+	return argvprocess.Invocation{}, argvprocess.ErrInvalidInvocation
+}
+
+func privilegePackageRemoveInvocation(
+	manager runtimeport.PackageManager,
+	names []string,
+) (argvprocess.Invocation, error) {
+	switch manager {
+	case runtimeport.PackageManagerAPT:
+		return argvprocess.NewAPTRemoveInvocation("/usr/bin/apt-get", names)
+	case runtimeport.PackageManagerDNF:
+		return argvprocess.NewDNFRemoveInvocation("/usr/bin/dnf5", names)
 	}
 	return argvprocess.Invocation{}, argvprocess.ErrInvalidInvocation
 }
@@ -200,6 +271,97 @@ func (p *NativePrivilegePackageStateProbe) PrivilegePackageStateMatches(
 		return false, runtimeport.ErrPrivilegeIntegrity
 	}
 	return parsePrivilegePackageQuery(authority.PackageManager(), result.StandardOutput, packages)
+}
+
+// PrivilegeManagedPackageStateMatches requires the exact signed version of
+// every vendor-runtime package while ignoring shared distribution prerequisites.
+func (p *NativePrivilegePackageStateProbe) PrivilegeManagedPackageStateMatches(
+	ctx context.Context,
+	authority runtimeport.LinuxAuthority,
+) (bool, error) {
+	managed, err := runtimeport.ManagedRuntimePackages(authority)
+	if err != nil {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	return p.packageStateMatches(ctx, authority, managed)
+}
+
+func (p *NativePrivilegePackageStateProbe) packageStateMatches(
+	ctx context.Context,
+	authority runtimeport.LinuxAuthority,
+	packages []runtimeport.Package,
+) (bool, error) {
+	if p == nil || ctx == nil || nilArtifactDependency(p.query) || !authority.Valid() || len(packages) == 0 ||
+		!privilegePackageQueryRunnerMatchesAuthority(p.query.ExecutableAuthority(), authority) {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	names := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		names = append(names, pkg.Name())
+	}
+	slices.Sort(names)
+	invocation, err := privilegePackageQueryInvocation(authority.PackageManager(), names)
+	if err != nil {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	result, runError := p.query.Run(ctx, invocation)
+	if runError != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return false, contextError
+		}
+		if result.ExitCode == 1 && !result.OutputTruncated && len(result.StandardOutput) == 0 {
+			return false, nil
+		}
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	if result.ExitCode != 0 || result.OutputTruncated || len(result.StandardOutput) > maximumPrivilegePackageQueryBytes {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	return parsePrivilegePackageQuery(authority.PackageManager(), result.StandardOutput, packages)
+}
+
+// PrivilegeManagedPackagesAbsent queries every managed package separately so
+// one missing package can never hide another package that remains installed.
+func (p *NativePrivilegePackageStateProbe) PrivilegeManagedPackagesAbsent(
+	ctx context.Context,
+	authority runtimeport.LinuxAuthority,
+) (bool, error) {
+	managed, err := runtimeport.ManagedRuntimePackages(authority)
+	if p == nil || ctx == nil || err != nil || nilArtifactDependency(p.query) ||
+		!privilegePackageQueryRunnerMatchesAuthority(p.query.ExecutableAuthority(), authority) {
+		return false, runtimeport.ErrPrivilegeIntegrity
+	}
+	for _, pkg := range managed {
+		invocation, invocationError := privilegePackageQueryInvocation(
+			authority.PackageManager(), []string{pkg.Name()},
+		)
+		if invocationError != nil {
+			return false, runtimeport.ErrPrivilegeIntegrity
+		}
+		result, runError := p.query.Run(ctx, invocation)
+		if runError != nil || result.ExitCode != 0 {
+			if contextError := ctx.Err(); contextError != nil {
+				return false, contextError
+			}
+			if result.ExitCode == 1 && !result.OutputTruncated && len(result.StandardOutput) == 0 {
+				continue
+			}
+			return false, runtimeport.ErrPrivilegeIntegrity
+		}
+		if result.OutputTruncated || len(result.StandardOutput) > maximumPrivilegePackageQueryBytes {
+			return false, runtimeport.ErrPrivilegeIntegrity
+		}
+		if _, parseError := parsePrivilegePackageQuery(
+			authority.PackageManager(), result.StandardOutput, []runtimeport.Package{pkg},
+		); parseError != nil {
+			return false, runtimeport.ErrPrivilegeIntegrity
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 func privilegePackageQueryInvocation(

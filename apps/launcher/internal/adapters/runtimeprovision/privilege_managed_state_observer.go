@@ -69,6 +69,10 @@ func (o *NativePrivilegeManagedStateObserver) ObservePrivilegeManagedState(
 		if err == nil {
 			err = o.observeService(ctx, request, &observation)
 		}
+	case runtimeport.PrivilegeRemoveManagedPackages:
+		if err = o.observeRemovedPackages(ctx, request, &observation); err == nil {
+			err = o.observeService(ctx, request, &observation)
+		}
 	default:
 		err = runtimeport.ErrPrivilegeIntegrity
 	}
@@ -76,6 +80,19 @@ func (o *NativePrivilegeManagedStateObserver) ObservePrivilegeManagedState(
 		return PrivilegeManagedStateObservation{}, privilegeOperationContextOrIntegrity(ctx)
 	}
 	return observation, nil
+}
+
+func (o *NativePrivilegeManagedStateObserver) observeRemovedPackages(
+	ctx context.Context,
+	request runtimeport.PrivilegeRequest,
+	observation *PrivilegeManagedStateObservation,
+) error {
+	absent, err := o.dependencies.Packages.PrivilegeManagedPackagesAbsent(ctx, request.Authority())
+	if err != nil || !absent {
+		return runtimeport.ErrPrivilegeIntegrity
+	}
+	observation.PackageStateDigest, err = runtimeport.ExpectedRemovedPackageStateDigest(request.Authority())
+	return err
 }
 
 func (o *NativePrivilegeManagedStateObserver) observeRepository(

@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	packageAttributesPath       = ".gitattributes"
 	darwinDistributionAMD64Path = "packaging/darwin/distribution-amd64.xml"
 	darwinDistributionARM64Path = "packaging/darwin/distribution-arm64.xml"
 	darwinDistributionPath      = darwinDistributionAMD64Path
@@ -31,6 +32,7 @@ type packageContract struct {
 }
 
 var reviewedPackageContracts = map[string]packageContract{
+	packageAttributesPath:       {mode: 0o644, sha256: "3cce3389c996732c495c7d13eb213e2cfad2055ec579b0b3749b9fbe04b068f0"},
 	darwinDistributionAMD64Path: {mode: 0o644, sha256: "5f2c10d126e4bf799e11ec413938c528f8d7f419ed8c67abed3a4b65c90f9dd1"},
 	darwinDistributionARM64Path: {mode: 0o644, sha256: "db76744298e0a803bb0e748d1f182fdc1babad7b7d15651010e83607950c4d8a"},
 	darwinLauncherEntitlements:  {mode: 0o644, sha256: "c706e295c8d105efa39a488b2fb7da1256f5652721633b37da9077c1d9145e32"},

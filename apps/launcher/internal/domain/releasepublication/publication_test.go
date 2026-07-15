@@ -98,8 +98,11 @@ func TestPF001PublicationRejectsUnsafeArtifactAndIdentityInputs(t *testing.T) {
 		"trust digest":  func(input *PublicationInput) { input.ReleaseTrustDigest = releaseinventory.Digest{} },
 		"trust size":    func(input *PublicationInput) { input.ReleaseTrustSize = 0 },
 		"unsafe name":   func(input *PublicationInput) { input.Artifacts[0].FileName = "../agentmemory.pkg" },
-		"empty object":  func(input *PublicationInput) { input.Artifacts[0].Size = 0 },
-		"missing SBOM":  func(input *PublicationInput) { input.Artifacts[0].CycloneDXSBOMDigest = releaseinventory.Digest{} },
+		"Windows alternate stream": func(input *PublicationInput) {
+			input.Artifacts[0].FileName = "agentmemory:alternate.pkg"
+		},
+		"empty object": func(input *PublicationInput) { input.Artifacts[0].Size = 0 },
+		"missing SBOM": func(input *PublicationInput) { input.Artifacts[0].CycloneDXSBOMDigest = releaseinventory.Digest{} },
 		"missing provenance": func(input *PublicationInput) {
 			input.Artifacts[0].ProvenanceDigest = releaseinventory.Digest{}
 		},

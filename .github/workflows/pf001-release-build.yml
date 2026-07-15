@@ -1,0 +1,185 @@
+name: PF-001 sealed release candidate build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SemVer core matching the selected v-prefixed final tag
+        required: true
+        type: string
+      release_id:
+        description: Signed inner release identifier
+        required: true
+        type: string
+      build_id:
+        description: Qualified candidate build identifier
+        required: true
+        type: string
+      sealed_release_tag:
+        description: Immutable staging-release tag containing externally signed native packages
+        required: true
+        type: string
+      sealed_asset_name:
+        description: Exact Zstandard tar staging asset name
+        required: true
+        type: string
+      sealed_asset_sha256:
+        description: Exact lowercase SHA-256 of the staging asset
+        required: true
+        type: string
+
+permissions:
+  attestations: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pf001-release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Seal exact signed packages and release authority
+    if: github.repository == 'rickyseezy/AgentMemory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pf001-release-build
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FINAL_TAG: v${{ inputs.version }}
+    steps:
+      - name: Check out exact final tagged source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Install the pinned Cosign signer and verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.1
+
+      - name: Fail closed unless both final source and staging release are immutable
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ inputs.version }}' =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ '${{ inputs.release_id }}' =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]
+          [[ '${{ inputs.build_id }}' =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]
+          [[ '${{ inputs.sealed_release_tag }}' =~ ^candidate-v[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9._-]+$ ]]
+          [[ '${{ inputs.sealed_asset_name }}' =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.zst$ ]]
+          [[ '${{ inputs.sealed_asset_sha256 }}' =~ ^[0-9a-f]{64}$ ]]
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$FINAL_TAG"
+          test "$(git rev-list -n 1 "$FINAL_TAG")" = "$GITHUB_SHA"
+          test "$(git rev-list -n 1 '${{ inputs.sealed_release_tag }}')" = "$GITHUB_SHA"
+          test "$(git status --porcelain=v1 --untracked-files=all)" = ''
+          gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            --jq '.enabled == true' | grep -Fxq true
+          gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases/tags/${{ inputs.sealed_release_tag }}" \
+            --jq '.draft == false and .immutable == true' | grep -Fxq true
+
+      - name: Download the exact sealed native candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/sealed-download"
+          gh release download '${{ inputs.sealed_release_tag }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '${{ inputs.sealed_asset_name }}' \
+            --dir "$RUNNER_TEMP/sealed-download"
+          asset="$RUNNER_TEMP/sealed-download/${{ inputs.sealed_asset_name }}"
+          test -f "$asset"
+          printf '%s  %s\n' '${{ inputs.sealed_asset_sha256 }}' "$asset" | sha256sum --check --strict
+
+      - name: Expand only the closed unsigned-evidence candidate layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="$RUNNER_TEMP/sealed-download/${{ inputs.sealed_asset_name }}"
+          root="$RUNNER_TEMP/release-build"
+          install -d -m 0700 "$root"
+          if tar --zstd --list --file "$asset" | \
+            awk 'BEGIN { bad=0 } !/^candidate\// || /(^|\/)\.\.($|\/)/ || /\\/ { bad=1 } END { exit bad }'; then
+            :
+          else
+            echo 'Sealed candidate contains an unsafe or foreign path' >&2
+            exit 1
+          fi
+          tar --zstd --extract --file "$asset" --directory "$root" \
+            --no-same-owner --no-same-permissions
+          candidate="$root/candidate"
+          test -f "$candidate/distribution-manifest.json"
+          test -f "$candidate/release-trust.json"
+          test "$(find "$candidate/objects" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 8
+          test "$(find "$candidate/evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 16
+          test "$(find "$candidate" -type f | wc -l | tr -d ' ')" -eq 26
+          test -z "$(find "$candidate" -type l -print -quit)"
+          test -z "$(find "$candidate/evidence" -name '*.sigstore.json' -print -quit)"
+
+      - name: Sign every exact release object with the trusted build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/release-build/candidate"
+          for object in "$candidate"/objects/*; do
+            name=$(basename "$object")
+            id=${name%.tar.zst}
+            id=${id%.pkg}
+            id=${id%.msi}
+            id=${id%.deb}
+            id=${id%.rpm}
+            test -f "$candidate/evidence/$id.cyclonedx.json"
+            test -f "$candidate/evidence/$id.provenance.json"
+            cosign sign-blob --yes \
+              --bundle "$candidate/evidence/$id.sigstore.json" \
+              "$object"
+          done
+          test "$(find "$candidate/evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 24
+
+      - name: Build canonical publication authority from exact bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/release-build"
+          source_epoch=$(git show -s --format='%ct' "$GITHUB_SHA")
+          go run ./apps/launcher/cmd/agentmemory-publication-record \
+            -candidate-root "$root/candidate" \
+            -output "$root/publication.json" \
+            -release-id '${{ inputs.release_id }}' \
+            -version '${{ inputs.version }}' \
+            -build-id '${{ inputs.build_id }}' \
+            -source-commit "$GITHUB_SHA" \
+            -source-date-epoch "$source_epoch"
+          go run ./apps/launcher/cmd/agentmemory-publication-record \
+            -candidate-root "$root/candidate" \
+            -verify-record "$root/publication.json"
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 35
+
+      - name: Attest every exact release-build output
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ runner.temp }}/release-build/**/*
+
+      - name: Retain exact candidate for native qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pf001-release-build-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-build
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: false

@@ -5,7 +5,6 @@ package releasepublication
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
@@ -161,8 +160,9 @@ func validSafeText(value string, maximum int) bool {
 }
 
 func validFileName(value string, format Format) bool {
-	if !validSafeText(value, 255) || value == "." || value == ".." || filepath.Base(value) != value ||
-		strings.ContainsAny(value, "/\\") {
+	if !validSafeText(value, 255) || value == "." || value == ".." ||
+		strings.ContainsAny(value, `/<>:"\|?*`) || strings.HasSuffix(value, ".") ||
+		strings.HasSuffix(value, " ") {
 		return false
 	}
 	return strings.HasSuffix(value, "."+string(format))

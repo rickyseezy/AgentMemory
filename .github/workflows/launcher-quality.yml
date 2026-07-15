@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/launcher-quality.yml"
+      - ".github/workflows/pf001-release-build.yml"
       - ".github/workflows/pf001-release.yml"
       - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"
@@ -22,6 +23,7 @@ on:
       - "codex/**"
     paths:
       - ".github/workflows/launcher-quality.yml"
+      - ".github/workflows/pf001-release-build.yml"
       - ".github/workflows/pf001-release.yml"
       - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"

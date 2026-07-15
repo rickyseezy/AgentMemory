@@ -12,12 +12,14 @@ import (
 )
 
 const (
+	buildWorkflowPath         = ".github/workflows/pf001-release-build.yml"
 	releaseWorkflowPath       = ".github/workflows/pf001-release.yml"
 	qualificationWorkflowPath = ".github/workflows/pf001-release-qualification.yml"
 	downloadArtifactCommit    = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
 
 var reviewedWorkflows = map[string]string{
+	buildWorkflowPath:         "e4ba0d81cef92964679b41661a5b6923e8427baaac84ec157b029315682eadd4",
 	releaseWorkflowPath:       "b06d66b71191597e96a88895adab096cba7300c9dfec0de21bbbf399ee717d47",
 	qualificationWorkflowPath: "72580bbd634f8962bf41ae093b185dc8819cc733f171bb5feffc7d9bb79ef520",
 }

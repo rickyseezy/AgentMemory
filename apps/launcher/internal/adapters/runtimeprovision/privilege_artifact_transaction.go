@@ -114,7 +114,7 @@ func (s *RootPrivilegeArtifactStore) PreparePrivilegeArtifacts(
 	ctx context.Context,
 	request runtimeport.PrivilegeRequest,
 	bindings []PrivilegeArtifactBinding,
-) (PrivilegeArtifactTransaction, error) {
+) (PrivilegeArtifactSet, error) {
 	authority := request.Authority()
 	if s == nil || ctx == nil || nilArtifactDependency(s.copier) || request.Digest().IsZero() ||
 		!authority.Valid() || !validPrivilegeArtifactBindings(bindings, authority) {

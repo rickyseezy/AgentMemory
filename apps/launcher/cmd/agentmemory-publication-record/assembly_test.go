@@ -116,6 +116,45 @@ func TestPF001PublicationAssemblerRejectsInvalidCapabilitiesAndIdentity(t *testi
 	}
 }
 
+func TestPF001PublicationVerifierRehashesBeforePromotion(t *testing.T) {
+	t.Parallel()
+	fixture := newCandidateFixture(t)
+	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPublication(
+		context.Background(), fixture.options.CandidateRoot, fixture.options.Output,
+	); err != nil {
+		t.Fatalf("VerifyPublication() error=%v", err)
+	}
+	object := filepath.Join(fixture.options.CandidateRoot, candidateArtifacts[0].objectPath)
+	if err := os.WriteFile(object, []byte("substituted exact object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPublication(context.Background(), fixture.options.CandidateRoot, fixture.options.Output); err == nil {
+		t.Fatal("changed candidate was accepted")
+	}
+}
+
+func TestPF001PublicationVerifierRejectsMalformedAuthorityAndCapabilities(t *testing.T) {
+	t.Parallel()
+	fixture := newCandidateFixture(t)
+	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.options.Output, []byte(`{"open":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPublication(context.Background(), fixture.options.CandidateRoot, fixture.options.Output); err == nil {
+		t.Fatal("malformed publication was accepted")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := VerifyPublication(cancelled, fixture.options.CandidateRoot, fixture.options.Output); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled error=%v", err)
+	}
+}
+
 func TestPF001PublicationCommandFailsClosed(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
@@ -127,6 +166,22 @@ func TestPF001PublicationCommandFailsClosed(t *testing.T) {
 	if code := run(context.Background(), nil, &stdout, &stderr); code != 1 ||
 		!strings.Contains(stderr.String(), "Publication record creation failed") {
 		t.Fatalf("run(invalid)=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestPF001PublicationCommandVerifiesCandidateMode(t *testing.T) {
+	t.Parallel()
+	fixture := newCandidateFixture(t)
+	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"-candidate-root", fixture.options.CandidateRoot,
+		"-verify-record", fixture.options.Output,
+	}, &stdout, &stderr)
+	if code != 0 || stdout.String() != fixture.options.Output+"\n" || stderr.Len() != 0 {
+		t.Fatalf("run(verify)=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
 

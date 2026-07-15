@@ -133,6 +133,50 @@ func AssemblePublication(ctx context.Context, options PublicationOptions, compil
 	return publish(resolved.Output, compiled, time.Unix(resolved.SourceEpoch, 0).UTC())
 }
 
+// VerifyPublication rehashes the closed candidate tree and proves every byte
+// still matches an already-created canonical publication record.
+func VerifyPublication(ctx context.Context, candidateRoot string, recordPath string) error {
+	if ctx == nil || candidateRoot == "" || recordPath == "" {
+		return errors.New("publication verification inputs are incomplete")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	root, err := filepath.Abs(candidateRoot)
+	if err != nil {
+		return errors.New("candidate root path is invalid")
+	}
+	root = filepath.Clean(root)
+	rootInfo, err := os.Lstat(root)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("candidate root must be a non-symlink directory")
+	}
+	record, err := filepath.Abs(recordPath)
+	if err != nil {
+		return errors.New("publication record path is invalid")
+	}
+	raw, err := readBoundedRegular(filepath.Clean(record), maximumEnvelopeSize)
+	if err != nil {
+		return fmt.Errorf("read publication record: %w", err)
+	}
+	publication, err := releasepublication.DecodeV1(raw)
+	if err != nil {
+		return errors.New("publication record is not canonical authority")
+	}
+	parts, err := inspectCandidate(PublicationOptions{
+		CandidateRoot: root, ReleaseID: publication.ReleaseID(), Version: publication.Version(),
+		BuildID: publication.BuildID(), SourceCommit: publication.SourceCommit(),
+		SourceEpoch: publication.BuildTimestamp().Unix(),
+	})
+	if err != nil {
+		return err
+	}
+	if !publicationMatchesParts(publication, parts) {
+		return errors.New("qualified candidate no longer matches publication authority")
+	}
+	return ctx.Err()
+}
+
 func resolveOptions(options PublicationOptions) (PublicationOptions, error) {
 	if options.CandidateRoot == "" || options.Output == "" || options.ReleaseID == "" ||
 		options.Version == "" || options.BuildID == "" || options.SourceCommit == "" || options.SourceEpoch <= 0 {
@@ -275,6 +319,28 @@ func digestRegularFile(path string, maximum int64) (releaseinventory.Digest, uin
 	copy(digest[:], hash.Sum(nil))
 	// #nosec G115 -- size is proven positive and at most maximumSafeFileSize above.
 	return digest, uint64(info.Size()), nil
+}
+
+func readBoundedRegular(path string, maximum int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximum {
+		return nil, errors.New("input must be a bounded non-empty regular file")
+	}
+	// #nosec G304 -- caller supplies one explicit publication record path.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, errors.New("publication record changed while opening")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || int64(len(content)) != info.Size() {
+		return nil, errors.New("publication record changed while reading")
+	}
+	return content, nil
 }
 
 func compilePublication(parts publicationParts) ([]byte, error) {

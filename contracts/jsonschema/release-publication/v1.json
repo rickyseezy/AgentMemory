@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.local/contracts/release-publication/v1.json",
+  "title": "AgentMemory ReleasePublication v1",
+  "description": "Closed exact-object promotion authority. The releasepublication domain additionally enforces the complete certified package matrix and globally unique artifact/evidence digests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifacts",
+    "build_id",
+    "build_timestamp",
+    "distribution_envelope_sha256",
+    "distribution_envelope_size",
+    "release_id",
+    "schema_version",
+    "source_commit",
+    "version"
+  ],
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "build_id": { "$ref": "#/$defs/identifier" },
+    "build_timestamp": { "$ref": "#/$defs/safePositiveInteger" },
+    "distribution_envelope_sha256": { "$ref": "#/$defs/digest" },
+    "distribution_envelope_size": { "$ref": "#/$defs/safePositiveInteger" },
+    "release_id": { "$ref": "#/$defs/identifier" },
+    "schema_version": { "const": 1 },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "version": { "$ref": "#/$defs/stableSemver" }
+  },
+  "$defs": {
+    "safePositiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stableSemver": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+    },
+    "safeLeaf": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture",
+        "cyclonedx_sbom_sha256",
+        "file_name",
+        "format",
+        "id",
+        "kind",
+        "media_type",
+        "native_publisher_policy",
+        "operating_system",
+        "provenance_sha256",
+        "sha256",
+        "signature_bundle_sha256",
+        "size"
+      ],
+      "properties": {
+        "architecture": { "enum": ["", "amd64", "arm64"] },
+        "cyclonedx_sbom_sha256": { "$ref": "#/$defs/digest" },
+        "file_name": { "$ref": "#/$defs/safeLeaf" },
+        "format": { "enum": ["deb", "msi", "pkg", "rpm", "tar.zst"] },
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "enum": ["native_package", "offline_bundle"] },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~]+$"
+        },
+        "native_publisher_policy": {
+          "enum": [
+            "apple_developer_id_notarized",
+            "linux_package_signature",
+            "manifest_signature",
+            "microsoft_authenticode"
+          ]
+        },
+        "operating_system": { "enum": ["", "darwin", "linux", "windows"] },
+        "provenance_sha256": { "$ref": "#/$defs/digest" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "signature_bundle_sha256": { "$ref": "#/$defs/digest" },
+        "size": { "$ref": "#/$defs/safePositiveInteger" }
+      }
+    }
+  }
+}

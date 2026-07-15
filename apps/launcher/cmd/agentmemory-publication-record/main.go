@@ -17,6 +17,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	flags.SetOutput(stderr)
 	candidateRoot := flags.String("candidate-root", "", "closed qualified candidate tree")
 	output := flags.String("output", "", "new canonical publication JSON")
+	verifyRecord := flags.String("verify-record", "", "existing canonical record to reverify before promotion")
 	releaseID := flags.String("release-id", "", "manifest-bound release identifier")
 	version := flags.String("version", "", "stable product semantic version")
 	buildID := flags.String("build-id", "", "qualified candidate build identifier")
@@ -28,6 +29,21 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	if flags.NArg() != 0 {
 		_, _ = fmt.Fprintf(stderr, "unexpected positional arguments: %v\n", flags.Args())
 		return 2
+	}
+	if *verifyRecord != "" {
+		if *output != "" || *releaseID != "" || *version != "" || *buildID != "" ||
+			*sourceCommit != "" || *sourceEpoch != 0 {
+			_, _ = fmt.Fprintln(stderr, "verification mode accepts only -candidate-root and -verify-record")
+			return 2
+		}
+		if err := VerifyPublication(ctx, *candidateRoot, *verifyRecord); err != nil {
+			_, _ = fmt.Fprintf(stderr, "Publication record verification failed: %v\n", err)
+			return 1
+		}
+		if _, err := fmt.Fprintln(stdout, *verifyRecord); err != nil {
+			return 1
+		}
+		return 0
 	}
 	err := AssemblePublication(ctx, PublicationOptions{
 		CandidateRoot: *candidateRoot, Output: *output, ReleaseID: *releaseID, Version: *version,

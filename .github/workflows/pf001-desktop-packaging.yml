@@ -1,0 +1,192 @@
+name: PF-001 desktop packaging
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/pf001-desktop-packaging.yml"
+      - "apps/launcher/**"
+      - "go.mod"
+      - "go.sum"
+      - "packaging/darwin/**"
+      - "packaging/windows/**"
+      - "tools/check_desktop_packages/**"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - ".github/workflows/pf001-desktop-packaging.yml"
+      - "apps/launcher/**"
+      - "go.mod"
+      - "go.sum"
+      - "packaging/darwin/**"
+      - "packaging/windows/**"
+      - "tools/check_desktop_packages/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pf001-desktop-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-stage:
+    name: Verified stage (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Verify reviewed package authority files
+        run: go run ./tools/check_desktop_packages
+
+      - name: Exercise package-stage policy and mandatory coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -shuffle=on -count=1 -covermode=atomic \
+            -coverprofile=package-stage.cover \
+            ./apps/launcher/cmd/agentmemory-native-package-stage \
+            ./tools/check_desktop_packages
+          go tool cover -func=package-stage.cover
+          go run ./tools/check_go_coverage \
+            -profile package-stage.cover \
+            -root . \
+            -base HEAD \
+            -package 80 \
+            -changed 80
+
+      - name: Parse closed Windows signing and package scripts
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @(
+            'packaging/windows/Sign-Binaries.ps1',
+            'packaging/windows/Build-Package.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $path), [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -ne 0) {
+              throw "PowerShell parser rejected ${path}: $($errors | Out-String)"
+            }
+          }
+
+      - name: Exercise unsigned Windows MSI layout when WiX use is approved
+        if: matrix.os == 'windows' && vars.AGENTMEMORY_WIX_OSMF_APPROVED == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $toolRoot = Join-Path $env:RUNNER_TEMP 'wix'
+          $installer = Join-Path $env:RUNNER_TEMP 'wix-cli-x64.msi'
+          Invoke-WebRequest `
+            -Uri 'https://github.com/wixtoolset/wix/releases/download/v7.0.0/wix-cli-x64.msi' `
+            -OutFile $installer
+          $actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne '16ff3857255e0ffa118d90e6d3a20e47499e55cda109853b5aac4700735f0293') {
+            throw 'WiX installer digest changed'
+          }
+          $process = Start-Process msiexec.exe `
+            -ArgumentList @('/i', $installer, '/qn', "INSTALLFOLDER=$toolRoot") `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "WiX installation failed: $($process.ExitCode)" }
+          $wix = Get-ChildItem -LiteralPath $toolRoot -Filter wix.exe -Recurse | Select-Object -First 1
+          if ($null -eq $wix) { throw 'Pinned WiX executable was not installed' }
+          if ((& $wix.FullName --version | Out-String).Trim() -notmatch '^7\.0\.0(?:\+.*)?$') {
+            throw 'Pinned WiX executable reported another version'
+          }
+          $payload = Join-Path $env:RUNNER_TEMP 'payload'
+          New-Item -ItemType Directory -Force -Path `
+            (Join-Path $payload 'bin'), `
+            (Join-Path $payload 'resources/bundle/bootstrap') | Out-Null
+          go build -trimpath -ldflags='-buildid=' -o (Join-Path $payload 'agentmemory.exe') ./apps/launcher/cmd/agentmemory
+          go build -trimpath -ldflags='-buildid=' -o (Join-Path $payload 'bin/agentmemory-runtime-helper.exe') ./apps/launcher/cmd/agentmemory-runtime-helper
+          Set-Content -LiteralPath (Join-Path $payload 'resources/bundle/bootstrap/distribution-manifest.json') `
+            -Value '{"fixture":true}' -NoNewline
+          $package = Join-Path $env:RUNNER_TEMP 'agentmemory-fixture.msi'
+          & $wix.FullName build packaging/windows/Package.wxs `
+            -arch x64 `
+            -bindpath "Payload=$payload" `
+            -define AgentMemoryVersion=0.0.1 `
+            -pdbtype none `
+            -out $package
+          if ($LASTEXITCODE -ne 0) { throw 'WiX fixture build failed' }
+          & $wix.FullName msi validate $package
+          if ($LASTEXITCODE -ne 0) { throw 'WiX fixture validation failed' }
+
+      - name: Parse and exercise unsigned macOS product layout
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n \
+            packaging/darwin/sign-binaries.sh \
+            packaging/darwin/build-package.sh \
+            packaging/darwin/scripts/postinstall
+          plutil -lint \
+            packaging/darwin/launcher.entitlements \
+            packaging/darwin/runtime-helper.entitlements
+          payload="$RUNNER_TEMP/payload"
+          mkdir -p \
+            "$payload/usr/local/bin" \
+            "$payload/Library/PrivilegedHelperTools" \
+            "$payload/Library/Application Support/AgentMemory/resources/bundle/bootstrap"
+          go build -trimpath -ldflags='-buildid=' \
+            -o "$payload/usr/local/bin/agentmemory" \
+            ./apps/launcher/cmd/agentmemory
+          go build -trimpath -ldflags='-buildid=' \
+            -o "$payload/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper" \
+            ./apps/launcher/cmd/agentmemory-runtime-helper
+          codesign --force --sign - "$payload/usr/local/bin/agentmemory"
+          codesign --force --sign - \
+            "$payload/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper"
+          printf '%s' '{"fixture":true}' > \
+            "$payload/Library/Application Support/AgentMemory/resources/bundle/bootstrap/distribution-manifest.json"
+          component="$RUNNER_TEMP/agentmemory-component.pkg"
+          package="$RUNNER_TEMP/agentmemory-fixture.pkg"
+          pkgbuild \
+            --root "$payload" \
+            --identifier com.rickyseezy.agentmemory \
+            --version 0.0.1 \
+            --install-location / \
+            --scripts packaging/darwin/scripts \
+            "$component"
+          productbuild \
+            --distribution "packaging/darwin/distribution-${{ matrix.arch }}.xml" \
+            --package-path "$RUNNER_TEMP" \
+            "$package"
+          test -s "$package"
+          pkgutil --payload-files "$component" | tee "$RUNNER_TEMP/payload-files.txt"
+          grep -Fxq './usr/local/bin/agentmemory' "$RUNNER_TEMP/payload-files.txt"
+          grep -Fxq './Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper' \
+            "$RUNNER_TEMP/payload-files.txt"
+
+      # These packages are deliberately unsigned/ad-hoc fixture packages.
+      # They contain no production trust and are never uploaded or published.

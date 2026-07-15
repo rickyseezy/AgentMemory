@@ -2,6 +2,7 @@ package runtimecatalog
 
 import (
 	"errors"
+	"sort"
 	"testing"
 )
 
@@ -48,6 +49,32 @@ func TestLinuxExecutionPolicyBindsCompleteRetainedPackageSet(t *testing.T) {
 	verification[0] = LinuxRepositoryArtifact{}
 	if policy.Repository().VerificationArtifacts()[0].Role() != LinuxRepositoryArtifactSigningKey {
 		t.Fatal("Linux repository projection leaked mutable storage")
+	}
+}
+
+func TestLinuxExecutionPolicyAcceptsSignedOfflineDependencyClosure(t *testing.T) {
+	t.Parallel()
+	artifactInput := linuxArtifactPolicyInput(t)
+	input := linuxExecutionPolicyInput(t, artifactInput)
+	dependency := linuxPackage(
+		"libseccomp2", "2.5.5-1ubuntu3.1", LinuxPackagePurposeDependency, 120_000,
+		"/ubuntu/pool/main/libs/libseccomp/libseccomp2_2.5.5-1ubuntu3.1_amd64.deb",
+	)
+	input.Packages = append(input.Packages, dependency)
+	sort.Slice(input.Packages, func(left, right int) bool { return input.Packages[left].Name < input.Packages[right].Name })
+	input.PackageSetDigest = LinuxPackageSetDigest(input.Packages)
+	artifactInput.SHA256 = input.PackageSetDigest
+	artifactInput.DownloadBytes += dependency.DownloadBytes
+	artifactInput.ExpandedBytes += dependency.DownloadBytes
+	artifactInput.ReserveBytes += dependency.DownloadBytes
+	validatedArtifact, err := newArtifactPolicy(artifactInput, OSKindLinux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := newLinuxExecutionPolicy(input, validatedArtifact)
+	if err != nil || len(policy.Packages()) != 8 || policy.Packages()[6].Name() != "libseccomp2" ||
+		policy.Packages()[6].Purpose() != LinuxPackagePurposeDependency {
+		t.Fatalf("dependency closure rejected: packages=%+v error=%v", policy.Packages(), err)
 	}
 }
 
@@ -473,7 +500,7 @@ func linuxPackagesInput() []LinuxPackageInput {
 func linuxPackage(name, version string, purpose LinuxPackagePurpose, size uint64, path string) LinuxPackageInput {
 	host := "download.docker.com"
 	repositoryID := "docker-stable"
-	if purpose == LinuxPackagePurposePrerequisite {
+	if purpose != LinuxPackagePurposeRuntime {
 		host = "archive.ubuntu.com"
 		repositoryID = "ubuntu-noble-updates"
 	}

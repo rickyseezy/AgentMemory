@@ -177,6 +177,8 @@ func linuxAuthorityPackages(packages []runtimecatalog.LinuxPackage) ([]runtimepo
 	for _, pkg := range packages {
 		var purpose runtimeport.PackagePurpose
 		switch pkg.Purpose() {
+		case runtimecatalog.LinuxPackagePurposeDependency:
+			purpose = runtimeport.PackagePurposeDependency
 		case runtimecatalog.LinuxPackagePurposePrerequisite:
 			purpose = runtimeport.PackagePurposePrerequisite
 		case runtimecatalog.LinuxPackagePurposeRuntime:

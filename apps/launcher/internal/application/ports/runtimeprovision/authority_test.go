@@ -2,6 +2,7 @@ package runtimeprovision
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
@@ -74,6 +75,23 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 				t.Fatalf("NewLinuxAuthority(%s) unexpectedly succeeded", test.name)
 			}
 		})
+	}
+}
+
+func TestLinuxAuthorityAcceptsSignedOfflineDependencyClosure(t *testing.T) {
+	t.Parallel()
+	plan := testPlan(t)
+	input := testAuthorityInput(plan)
+	input.Packages = append(input.Packages, PackageInput{
+		Name: "libseccomp2", Version: "2.5.5-1ubuntu3.1", Purpose: PackagePurposeDependency,
+		RepositoryID:        "ubuntu-noble-updates",
+		NativeReceiptDigest: runtimeinstall.Sum([]byte("libseccomp2 receipt")),
+	})
+	slices.SortFunc(input.Packages, func(left, right PackageInput) int { return strings.Compare(left.Name, right.Name) })
+	authority, err := NewLinuxAuthority(input)
+	if err != nil || len(authority.Packages()) != 8 || authority.Packages()[6].Name() != "libseccomp2" ||
+		authority.Packages()[6].Purpose() != PackagePurposeDependency {
+		t.Fatalf("dependency closure rejected: packages=%+v error=%v", authority.Packages(), err)
 	}
 }
 

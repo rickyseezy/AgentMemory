@@ -28,6 +28,9 @@ func (m LinuxPackageManager) valid() bool {
 type LinuxPackagePurpose string
 
 const (
+	// LinuxPackagePurposeDependency identifies one exact transitive package
+	// required to complete a network-disabled native transaction.
+	LinuxPackagePurposeDependency LinuxPackagePurpose = "offline_dependency"
 	// LinuxPackagePurposePrerequisite identifies the rootless identity prerequisite.
 	LinuxPackagePurposePrerequisite LinuxPackagePurpose = "rootless_prerequisite"
 	// LinuxPackagePurposeRuntime identifies one Docker runtime component.
@@ -35,7 +38,8 @@ const (
 )
 
 func (p LinuxPackagePurpose) valid() bool {
-	return p == LinuxPackagePurposePrerequisite || p == LinuxPackagePurposeRuntime
+	return p == LinuxPackagePurposeDependency || p == LinuxPackagePurposePrerequisite ||
+		p == LinuxPackagePurposeRuntime
 }
 
 // LinuxRepositoryArtifactRole identifies one exact native trust-chain input.
@@ -767,7 +771,7 @@ func newLinuxPackages(
 	repositories map[string]LinuxRepository,
 	primaryRepositoryID string,
 ) ([]LinuxPackage, error) {
-	if len(inputs) != 7 || !sort.SliceIsSorted(inputs, func(left, right int) bool {
+	if len(inputs) < 7 || len(inputs) > 512 || !sort.SliceIsSorted(inputs, func(left, right int) bool {
 		return inputs[left].Name < inputs[right].Name
 	}) {
 		return nil, ErrManifestIntegrity
@@ -786,9 +790,11 @@ func newLinuxPackages(
 	result := make([]LinuxPackage, 0, len(inputs))
 	for index, input := range inputs {
 		purpose, present := wanted[input.Name]
+		dependency := input.Purpose == LinuxPackagePurposeDependency && !present
 		repository, repositoryPresent := repositories[input.RepositoryID]
 		source, sourceError := NewSourceLocation(input.Source)
-		if !present || purpose != input.Purpose || !input.Purpose.valid() ||
+		if (!present && !dependency) || present && purpose != input.Purpose || !input.Purpose.valid() ||
+			!validLinuxPackageName(input.Name) ||
 			!repositoryPresent || !validIdentifier(input.RepositoryID) ||
 			(input.Purpose == LinuxPackagePurposeRuntime && input.RepositoryID != primaryRepositoryID) ||
 			(input.Purpose == LinuxPackagePurposePrerequisite && input.RepositoryID == primaryRepositoryID) ||
@@ -801,7 +807,9 @@ func newLinuxPackages(
 			index > 0 && inputs[index-1].Name == input.Name {
 			return nil, ErrManifestIntegrity
 		}
-		delete(wanted, input.Name)
+		if present {
+			delete(wanted, input.Name)
+		}
 		result = append(result, LinuxPackage{
 			name: input.Name, version: input.Version, purpose: input.Purpose, repositoryID: input.RepositoryID,
 			downloadBytes: input.DownloadBytes, sha256: input.SHA256,
@@ -812,6 +820,22 @@ func newLinuxPackages(
 		return nil, ErrManifestIntegrity
 	}
 	return result, nil
+}
+
+func validLinuxPackageName(value string) bool {
+	if value == "" || len(value) > maximumIdentifierLength {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			continue
+		}
+		if index > 0 && strings.ContainsRune("+.-_", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func artifactAuthorizesSource(artifact ArtifactPolicy, requested SourceLocation) bool {

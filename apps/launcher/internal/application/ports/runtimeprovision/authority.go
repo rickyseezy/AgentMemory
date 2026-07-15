@@ -47,6 +47,9 @@ func (m PackageManager) valid() bool { return m == PackageManagerAPT || m == Pac
 type PackagePurpose string
 
 const (
+	// PackagePurposeDependency is one exact transitive package retained so the
+	// native transaction never resolves or downloads mutable dependencies.
+	PackagePurposeDependency PackagePurpose = "offline_dependency"
 	// PackagePurposePrerequisite supplies newuidmap/newgidmap.
 	PackagePurposePrerequisite PackagePurpose = "rootless_prerequisite"
 	// PackagePurposeRuntime is one of the six mandatory Docker packages.
@@ -54,7 +57,7 @@ const (
 )
 
 func (p PackagePurpose) valid() bool {
-	return p == PackagePurposePrerequisite || p == PackagePurposeRuntime
+	return p == PackagePurposeDependency || p == PackagePurposePrerequisite || p == PackagePurposeRuntime
 }
 
 // PackageInput is populated from a decoded, signature-verified Linux runtime
@@ -421,7 +424,7 @@ func validManagerDistribution(manager PackageManager, distribution string) bool 
 }
 
 func newPackages(manager PackageManager, inputs []PackageInput) ([]Package, error) {
-	if len(inputs) != 7 || !slices.IsSortedFunc(inputs, func(left, right PackageInput) int {
+	if len(inputs) < 7 || len(inputs) > 512 || !slices.IsSortedFunc(inputs, func(left, right PackageInput) int {
 		return strings.Compare(left.Name, right.Name)
 	}) {
 		return nil, ErrAuthorityInvalid
@@ -439,12 +442,16 @@ func newPackages(manager PackageManager, inputs []PackageInput) ([]Package, erro
 	packages := make([]Package, 0, len(inputs))
 	for index, input := range inputs {
 		purpose, present := wanted[input.Name]
-		if !present || input.Purpose != purpose || !input.Purpose.valid() || !validIdentity(input.RepositoryID) ||
+		dependency := input.Purpose == PackagePurposeDependency && !present
+		if (!present && !dependency) || present && input.Purpose != purpose || !input.Purpose.valid() ||
+			!validNativePackageName(input.Name) || !validIdentity(input.RepositoryID) ||
 			!validPackageVersion(input.Version) ||
 			input.NativeReceiptDigest.IsZero() || index > 0 && inputs[index-1].Name == input.Name {
 			return nil, ErrAuthorityInvalid
 		}
-		delete(wanted, input.Name)
+		if present {
+			delete(wanted, input.Name)
+		}
 		packages = append(packages, Package{
 			name: input.Name, version: input.Version, purpose: input.Purpose, repositoryID: input.RepositoryID,
 			receipt: input.NativeReceiptDigest,
@@ -454,6 +461,22 @@ func newPackages(manager PackageManager, inputs []PackageInput) ([]Package, erro
 		return nil, ErrAuthorityInvalid
 	}
 	return packages, nil
+}
+
+func validNativePackageName(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			continue
+		}
+		if index > 0 && strings.ContainsRune("+.-_", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validPackageVersion(value string) bool {

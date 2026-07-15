@@ -90,16 +90,18 @@ func repositoryRoot(t testing.TB) string {
 func copyWorkflowFixture(t testing.TB) string {
 	t.Helper()
 	root := t.TempDir()
-	content, err := os.ReadFile(filepath.Join(repositoryRoot(t), filepath.FromSlash(releaseWorkflowPath)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(root, filepath.FromSlash(releaseWorkflowPath))
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, content, 0o644); err != nil { // #nosec G306,G703 -- closed contract path/mode under a private test root.
-		t.Fatal(err)
+	for workflow := range reviewedWorkflows {
+		content, err := os.ReadFile(filepath.Join(repositoryRoot(t), filepath.FromSlash(workflow)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(root, filepath.FromSlash(workflow))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, content, 0o644); err != nil { // #nosec G306,G703 -- closed contract path/mode under a private test root.
+			t.Fatal(err)
+		}
 	}
 	return root
 }

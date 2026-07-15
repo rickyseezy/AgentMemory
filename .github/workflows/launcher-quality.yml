@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/launcher-quality.yml"
       - ".github/workflows/pf001-release.yml"
+      - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"
       - "go.mod"
       - "go.sum"
@@ -22,6 +23,7 @@ on:
     paths:
       - ".github/workflows/launcher-quality.yml"
       - ".github/workflows/pf001-release.yml"
+      - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"
       - "go.mod"
       - "go.sum"

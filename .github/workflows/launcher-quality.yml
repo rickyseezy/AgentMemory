@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/launcher-quality.yml"
+      - ".github/workflows/pf001-release.yml"
       - ".golangci.yml"
       - "go.mod"
       - "go.sum"
@@ -20,6 +21,7 @@ on:
       - "codex/**"
     paths:
       - ".github/workflows/launcher-quality.yml"
+      - ".github/workflows/pf001-release.yml"
       - ".golangci.yml"
       - "go.mod"
       - "go.sum"
@@ -67,6 +69,9 @@ jobs:
 
       - name: Verify closed desktop package contracts
         run: go run ./tools/check_desktop_packages
+
+      - name: Verify immutable release-promotion contract
+        run: go run ./tools/check_release_workflow
 
       - name: Vet launcher and quality tools
         run: go vet ./apps/launcher/... ./tools/...

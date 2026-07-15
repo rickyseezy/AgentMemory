@@ -73,6 +73,12 @@ func nativeLinuxExecutableBindingFor(
 			canonicalID: "rpmkeys", path: authority.RPMKeysPath(), digest: authority.RPMKeysSHA256(),
 			publisher: "package:rpm", receipt: authority.RPMKeysPackageReceiptDigest(),
 		}
+	case argvprocess.ExecutableRolePrivilegeBroker:
+		binding = nativeLinuxExecutableBinding{
+			canonicalID: "pkexec", path: authority.PrivilegeToolPath(), digest: authority.PrivilegeToolSHA256(),
+			publisher: "package:" + authority.PrivilegeToolPackage(),
+			receipt:   authority.PrivilegeToolPackageReceiptDigest(),
+		}
 	case argvprocess.ExecutableRoleAgentMemoryLauncher:
 		return nativeLinuxExecutableBinding{}, errors.New("linux executable role is unsupported")
 	default:

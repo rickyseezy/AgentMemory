@@ -80,35 +80,40 @@ type canonicalPublisher struct {
 }
 
 type canonicalLinuxExecution struct {
-	AcquisitionSafetyBytes      uint64                     `json:"acquisition_safety_bytes"`
-	CapabilityPolicyDigest      string                     `json:"capability_policy_digest"`
-	Codename                    string                     `json:"codename"`
-	ComposePluginPath           string                     `json:"compose_plugin_path"`
-	ComposePluginSHA256         string                     `json:"compose_plugin_sha256"`
-	DockerCLIPath               string                     `json:"docker_cli_path"`
-	DockerCLISHA256             string                     `json:"docker_cli_sha256"`
-	MinimumAvailableMemory      uint64                     `json:"minimum_available_memory"`
-	MinimumKernel               string                     `json:"minimum_kernel"`
-	PackageManager              LinuxPackageManager        `json:"package_manager"`
-	PackageManagerVersion       string                     `json:"package_manager_version"`
-	PackageSetDigest            string                     `json:"package_set_digest"`
-	Packages                    []canonicalLinuxPackage    `json:"packages"`
-	ProbeContractVersion        string                     `json:"probe_contract_version"`
-	ProbeImage                  string                     `json:"probe_image"`
-	ProbeImageDigest            string                     `json:"probe_image_digest"`
-	Repository                  canonicalLinuxRepository   `json:"repository"`
-	VerificationRepositories    []canonicalLinuxRepository `json:"verification_repositories"`
-	RollbackHeadroomBytes       uint64                     `json:"rollback_headroom_bytes"`
-	RPMKeysPackageReceiptDigest string                     `json:"rpm_keys_package_receipt_digest"`
-	RPMKeysPackageVersion       string                     `json:"rpm_keys_package_version"`
-	RPMKeysPath                 string                     `json:"rpm_keys_path"`
-	RPMKeysSHA256               string                     `json:"rpm_keys_sha256"`
-	RootlessToolDigest          string                     `json:"rootless_tool_digest"`
-	RootlessToolPath            string                     `json:"rootless_tool_path"`
-	SELinuxEnforcingSupported   bool                       `json:"selinux_enforcing_supported"`
-	ServiceID                   string                     `json:"service_id"`
-	ServiceUnitDigest           string                     `json:"service_unit_digest"`
-	SubordinateIDCount          uint32                     `json:"subordinate_id_count"`
+	AcquisitionSafetyBytes            uint64                     `json:"acquisition_safety_bytes"`
+	CapabilityPolicyDigest            string                     `json:"capability_policy_digest"`
+	Codename                          string                     `json:"codename"`
+	ComposePluginPath                 string                     `json:"compose_plugin_path"`
+	ComposePluginSHA256               string                     `json:"compose_plugin_sha256"`
+	DockerCLIPath                     string                     `json:"docker_cli_path"`
+	DockerCLISHA256                   string                     `json:"docker_cli_sha256"`
+	MinimumAvailableMemory            uint64                     `json:"minimum_available_memory"`
+	MinimumKernel                     string                     `json:"minimum_kernel"`
+	PackageManager                    LinuxPackageManager        `json:"package_manager"`
+	PackageManagerVersion             string                     `json:"package_manager_version"`
+	PackageSetDigest                  string                     `json:"package_set_digest"`
+	Packages                          []canonicalLinuxPackage    `json:"packages"`
+	PrivilegeToolPackage              string                     `json:"privilege_tool_package"`
+	PrivilegeToolPackageReceiptDigest string                     `json:"privilege_tool_package_receipt_digest"`
+	PrivilegeToolPackageVersion       string                     `json:"privilege_tool_package_version"`
+	PrivilegeToolPath                 string                     `json:"privilege_tool_path"`
+	PrivilegeToolSHA256               string                     `json:"privilege_tool_sha256"`
+	ProbeContractVersion              string                     `json:"probe_contract_version"`
+	ProbeImage                        string                     `json:"probe_image"`
+	ProbeImageDigest                  string                     `json:"probe_image_digest"`
+	Repository                        canonicalLinuxRepository   `json:"repository"`
+	VerificationRepositories          []canonicalLinuxRepository `json:"verification_repositories"`
+	RollbackHeadroomBytes             uint64                     `json:"rollback_headroom_bytes"`
+	RPMKeysPackageReceiptDigest       string                     `json:"rpm_keys_package_receipt_digest"`
+	RPMKeysPackageVersion             string                     `json:"rpm_keys_package_version"`
+	RPMKeysPath                       string                     `json:"rpm_keys_path"`
+	RPMKeysSHA256                     string                     `json:"rpm_keys_sha256"`
+	RootlessToolDigest                string                     `json:"rootless_tool_digest"`
+	RootlessToolPath                  string                     `json:"rootless_tool_path"`
+	SELinuxEnforcingSupported         bool                       `json:"selinux_enforcing_supported"`
+	ServiceID                         string                     `json:"service_id"`
+	ServiceUnitDigest                 string                     `json:"service_unit_digest"`
+	SubordinateIDCount                uint32                     `json:"subordinate_id_count"`
 }
 
 type canonicalLinuxRepository struct {
@@ -245,6 +250,10 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumKernel: policy.minimumKernel,
 			PackageManager: policy.packageManager, PackageManagerVersion: policy.packageManagerVersion,
 			PackageSetDigest: policy.packageSetDigest.Hex(), Packages: packages,
+			PrivilegeToolPackage:              policy.privilegeToolPackage,
+			PrivilegeToolPackageReceiptDigest: policy.privilegeToolPackageReceiptDigest.Hex(),
+			PrivilegeToolPackageVersion:       policy.privilegeToolPackageVersion,
+			PrivilegeToolPath:                 policy.privilegeToolPath, PrivilegeToolSHA256: policy.privilegeToolSHA256.Hex(),
 			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
 			ProbeImageDigest: policy.probeImageDigest.Hex(),
 			Repository: canonicalLinuxRepository{

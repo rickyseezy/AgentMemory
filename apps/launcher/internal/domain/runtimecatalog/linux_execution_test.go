@@ -27,6 +27,9 @@ func TestLinuxExecutionPolicyBindsCompleteRetainedPackageSet(t *testing.T) {
 		policy.ComposePluginPath() != "/usr/libexec/docker/cli-plugins/docker-compose" ||
 		policy.ComposePluginSHA256().IsZero() || policy.RPMKeysPath() != "" || !policy.RPMKeysSHA256().IsZero() ||
 		policy.RPMKeysPackageVersion() != "" || !policy.RPMKeysPackageReceiptDigest().IsZero() ||
+		policy.PrivilegeToolPath() != "/usr/bin/pkexec" || policy.PrivilegeToolSHA256().IsZero() ||
+		policy.PrivilegeToolPackage() != "pkexec" || policy.PrivilegeToolPackageVersion() != "124-2ubuntu1.24.04.3" ||
+		policy.PrivilegeToolPackageReceiptDigest().IsZero() ||
 		policy.ProbeContractVersion() != "1" || !policy.ValidFor(validatedArtifact) {
 		t.Fatal("Linux execution projection is incomplete")
 	}
@@ -101,6 +104,11 @@ func TestLinuxExecutionPolicyRejectsMutableOrIncompleteAuthority(t *testing.T) {
 		{name: "docker cli digest", edit: func(v *LinuxExecutionPolicyInput) { v.DockerCLISHA256 = Digest{} }},
 		{name: "compose path", edit: func(v *LinuxExecutionPolicyInput) { v.ComposePluginPath = "/tmp/docker-compose" }},
 		{name: "compose digest", edit: func(v *LinuxExecutionPolicyInput) { v.ComposePluginSHA256 = Digest{} }},
+		{name: "privilege path", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPath = "/tmp/pkexec" }},
+		{name: "privilege digest", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolSHA256 = Digest{} }},
+		{name: "privilege package", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackage = "polkit" }},
+		{name: "privilege package version", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackageVersion = "latest" }},
+		{name: "privilege package receipt", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackageReceiptDigest = Digest{} }},
 		{name: "apt rpmkeys authority", edit: func(v *LinuxExecutionPolicyInput) {
 			v.RPMKeysPath = "/usr/bin/rpmkeys"
 			v.RPMKeysSHA256 = DigestBytes([]byte("rpmkeys"))
@@ -274,10 +282,13 @@ func linuxExecutionPolicyInput(t testReporter, artifact ArtifactPolicyInput) Lin
 		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: DigestBytes([]byte("docker cli")),
 		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
 		ComposePluginSHA256: DigestBytes([]byte("compose plugin")),
-		RootlessToolPath:    "/usr/bin/dockerd-rootless-setuptool.sh",
-		RootlessToolDigest:  DigestBytes([]byte("rootless setup tool")),
-		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
-		ProbeImageDigest:    DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
+		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: DigestBytes([]byte("pkexec")),
+		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
+		PrivilegeToolPackageReceiptDigest: DigestBytes([]byte("pkexec package receipt")),
+		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh",
+		RootlessToolDigest:                DigestBytes([]byte("rootless setup tool")),
+		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
+		ProbeImageDigest:                  DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: LinuxCapabilityPolicyDigest(linuxCapabilities()),
 	}
 }
@@ -392,7 +403,10 @@ func linuxDNFExecutionPolicyInput() (LinuxExecutionPolicyInput, ArtifactPolicyIn
 		RPMKeysPath:         "/usr/bin/rpmkeys", RPMKeysSHA256: DigestBytes([]byte("rpmkeys")),
 		RPMKeysPackageVersion:       "4.20.1-1.fc42",
 		RPMKeysPackageReceiptDigest: DigestBytes([]byte("rpm package receipt")),
-		RootlessToolPath:            "/usr/bin/dockerd-rootless-setuptool.sh", RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
+		PrivilegeToolPath:           "/usr/bin/pkexec", PrivilegeToolSHA256: DigestBytes([]byte("pkexec")),
+		PrivilegeToolPackage: "polkit", PrivilegeToolPackageVersion: "126-3.fc42.2",
+		PrivilegeToolPackageReceiptDigest: DigestBytes([]byte("polkit package receipt")),
+		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh", RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
 		ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
 		ProbeImageDigest: DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: LinuxCapabilityPolicyDigest(linuxCapabilities()),

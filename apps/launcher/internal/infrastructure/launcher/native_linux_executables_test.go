@@ -38,6 +38,11 @@ func TestPF006LinuxExecutableAuthoritiesBindExactSignedPackageReceipts(t *testin
 			digest: authority.RootlessToolDigest(), publisher: "package:docker-ce-rootless-extras",
 			receipt: launcherLinuxPackage(t, authority, "docker-ce-rootless-extras").NativeReceiptDigest(),
 		},
+		{
+			role: argvprocess.ExecutableRolePrivilegeBroker, path: authority.PrivilegeToolPath(),
+			digest: authority.PrivilegeToolSHA256(), publisher: "package:pkexec",
+			receipt: authority.PrivilegeToolPackageReceiptDigest(),
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -73,6 +78,13 @@ func TestPF006LinuxRPMKeysAuthorityUsesIndependentDistributionReceipt(t *testing
 		executable.PublisherIdentity() != "package:rpm" ||
 		executable.PublisherTrustDigest() != authority.RPMKeysPackageReceiptDigest() {
 		t.Fatalf("rpmkeys authority=%+v error=%v", executable, err)
+	}
+	privilege, err := newNativeLinuxExecutableAuthority(
+		authority, release, argvprocess.ExecutableRolePrivilegeBroker,
+	)
+	if err != nil || privilege.PublisherIdentity() != "package:polkit" ||
+		privilege.PublisherTrustDigest() != authority.PrivilegeToolPackageReceiptDigest() {
+		t.Fatalf("privilege authority=%+v error=%v", privilege, err)
 	}
 }
 
@@ -219,10 +231,13 @@ func launcherLinuxAuthority(t testing.TB, manager runtimeport.PackageManager) ru
 		DockerCLIPath:     "/usr/bin/docker", DockerCLISHA256: runtimeinstall.Sum([]byte("docker CLI")),
 		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
 		ComposePluginSHA256: runtimeinstall.Sum([]byte("compose plugin")),
-		RootlessToolPath:    "/usr/bin/dockerd-rootless-setuptool.sh",
-		RootlessToolDigest:  runtimeinstall.Sum([]byte("rootless setup")),
-		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
-		ProbeImageDigest:    probeDigest, ProbeContractVersion: "1",
+		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: runtimeinstall.Sum([]byte("pkexec")),
+		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
+		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
+		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh",
+		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless setup")),
+		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
+		ProbeImageDigest:                  probeDigest, ProbeContractVersion: "1",
 		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("capability policy")),
 	}
 	if manager == runtimeport.PackageManagerDNF {
@@ -230,6 +245,9 @@ func launcherLinuxAuthority(t testing.TB, manager runtimeport.PackageManager) ru
 		input.RPMKeysSHA256 = runtimeinstall.Sum([]byte("rpmkeys"))
 		input.RPMKeysPackageVersion = "4.20.1-1.fc42"
 		input.RPMKeysPackageReceiptDigest = runtimeinstall.Sum([]byte("rpm package receipt"))
+		input.PrivilegeToolPackage = "polkit"
+		input.PrivilegeToolPackageVersion = "126-3.fc42.2"
+		input.PrivilegeToolPackageReceiptDigest = runtimeinstall.Sum([]byte("polkit package receipt"))
 	}
 	authority, err := runtimeport.NewLinuxAuthority(input)
 	if err != nil {

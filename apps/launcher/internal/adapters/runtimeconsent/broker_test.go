@@ -203,8 +203,11 @@ func brokerLinuxAuthority(t testing.TB) runtimeport.LinuxAuthority {
 		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: runtimeinstall.Sum([]byte("docker-cli")),
 		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
 		ComposePluginSHA256: runtimeinstall.Sum([]byte("compose-plugin")),
-		RootlessToolDigest:  runtimeinstall.Sum([]byte("rootless")),
-		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
+		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: runtimeinstall.Sum([]byte("pkexec")),
+		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
+		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
+		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless")),
+		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
 		ProbeContractVersion: "1", CapabilityPolicyDigest: runtimeinstall.Sum([]byte("policy")),
 	})
 	if err != nil {

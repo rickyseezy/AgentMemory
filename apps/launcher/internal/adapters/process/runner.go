@@ -107,16 +107,24 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 		return argvprocess.Result{}, invocationOrContextError(ctx)
 	}
 	environment := invocation.Environment()
-	if invocation.EnvironmentProfile() == argvprocess.EnvironmentProfileRootlessSetup {
+	switch invocation.EnvironmentProfile() {
+	case argvprocess.EnvironmentProfileRootlessSetup:
 		if r.authority.Role() != argvprocess.ExecutableRoleRootlessSetup || len(environment) != 8 {
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
 		}
 		command.Env = environment
-	} else {
-		if len(environment) != 0 || invocation.EnvironmentProfile() != argvprocess.EnvironmentProfileDefault {
+	case argvprocess.EnvironmentProfilePrivilegeBroker:
+		if r.authority.Role() != argvprocess.ExecutableRolePrivilegeBroker || len(environment) != 0 {
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
 		}
 		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileDefault:
+		if len(environment) != 0 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	default:
+		return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
 	}
 	standardInput := invocation.StandardInput()
 	if len(standardInput) != 0 {

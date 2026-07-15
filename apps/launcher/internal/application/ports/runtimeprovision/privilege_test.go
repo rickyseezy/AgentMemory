@@ -43,6 +43,21 @@ func TestPrivilegeRequestAndReceiptBindNonceExpiryPrincipalMachineAndExactState(
 	if receipt.Matches(request, request.IssuedAt().Add(-time.Microsecond)) {
 		t.Fatal("receipt was accepted before its request issue time")
 	}
+	requestInput := request.TransportInput()
+	requestCopy, err := NewPrivilegeRequest(requestInput)
+	if err != nil || requestCopy.Digest() != request.Digest() {
+		t.Fatalf("request transport copy=%+v error=%v", requestCopy, err)
+	}
+	authorityInput := requestInput.Authority.TransportInput()
+	authorityInput.Packages[0].Name = "mutated"
+	if request.Authority().Packages()[0].Name() != "containerd.io" {
+		t.Fatal("authority transport input retained mutable package storage")
+	}
+	receiptInput := receipt.TransportInput()
+	receiptInput.Signature[0] = 1
+	if receipt.Signature()[0] != 0 {
+		t.Fatal("receipt transport input retained mutable signature storage")
+	}
 
 	mutations := []func(*PrivilegeReceiptInput){
 		func(input *PrivilegeReceiptInput) { input.Nonce[0] ^= 1 },

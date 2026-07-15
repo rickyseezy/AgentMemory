@@ -40,6 +40,11 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 		{name: "docker digest", mutate: func(input *LinuxAuthorityInput) { input.DockerCLISHA256 = runtimeinstall.Hash{} }},
 		{name: "compose path", mutate: func(input *LinuxAuthorityInput) { input.ComposePluginPath = "/tmp/compose" }},
 		{name: "compose digest", mutate: func(input *LinuxAuthorityInput) { input.ComposePluginSHA256 = runtimeinstall.Hash{} }},
+		{name: "privilege path", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPath = "/tmp/pkexec" }},
+		{name: "privilege digest", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolSHA256 = runtimeinstall.Hash{} }},
+		{name: "privilege package", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackage = "polkit" }},
+		{name: "privilege package version", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackageVersion = "latest" }},
+		{name: "privilege receipt", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackageReceiptDigest = runtimeinstall.Hash{} }},
 		{name: "apt rpmkeys", mutate: func(input *LinuxAuthorityInput) {
 			input.RPMKeysPath = "/usr/bin/rpmkeys"
 			input.RPMKeysSHA256 = runtimeinstall.Sum([]byte("rpmkeys"))
@@ -134,6 +139,11 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 		authority.RPMKeysPath() != input.RPMKeysPath || authority.RPMKeysSHA256() != input.RPMKeysSHA256 ||
 		authority.RPMKeysPackageVersion() != input.RPMKeysPackageVersion ||
 		authority.RPMKeysPackageReceiptDigest() != input.RPMKeysPackageReceiptDigest ||
+		authority.PrivilegeToolPath() != input.PrivilegeToolPath ||
+		authority.PrivilegeToolSHA256() != input.PrivilegeToolSHA256 ||
+		authority.PrivilegeToolPackage() != input.PrivilegeToolPackage ||
+		authority.PrivilegeToolPackageVersion() != input.PrivilegeToolPackageVersion ||
+		authority.PrivilegeToolPackageReceiptDigest() != input.PrivilegeToolPackageReceiptDigest ||
 		authority.ProbeImage() != input.ProbeImage || authority.ProbeImageDigest() != input.ProbeImageDigest ||
 		authority.ProbeContractVersion() != input.ProbeContractVersion ||
 		authority.CapabilityPolicyDigest() != input.CapabilityPolicyDigest {
@@ -159,6 +169,9 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 	dnf.RPMKeysPath, dnf.RPMKeysSHA256 = "/usr/bin/rpmkeys", runtimeinstall.Sum([]byte("rpmkeys"))
 	dnf.RPMKeysPackageVersion = "4.20.1-1.fc42"
 	dnf.RPMKeysPackageReceiptDigest = runtimeinstall.Sum([]byte("rpm package receipt"))
+	dnf.PrivilegeToolPackage = "polkit"
+	dnf.PrivilegeToolPackageVersion = "126-3.fc42.2"
+	dnf.PrivilegeToolPackageReceiptDigest = runtimeinstall.Sum([]byte("polkit package receipt"))
 	if dnfAuthority, dnfError := NewLinuxAuthority(dnf); dnfError != nil || dnfAuthority.PackageManager() != PackageManagerDNF {
 		t.Fatalf("valid DNF authority rejected: %v", dnfError)
 	}
@@ -264,13 +277,18 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 		SubordinateIDCount: 65536, SELinuxEnforcing: true, ServiceID: "docker.service",
 		ServiceUnitDigest: runtimeinstall.Sum([]byte("unit")), RootlessToolPath: "/usr/bin/dockerd-rootless-setuptool.sh",
 		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: runtimeinstall.Sum([]byte("docker-cli")),
-		ComposePluginPath:      "/usr/libexec/docker/cli-plugins/docker-compose",
-		ComposePluginSHA256:    runtimeinstall.Sum([]byte("compose-plugin")),
-		RootlessToolDigest:     runtimeinstall.Sum([]byte("rootless-tool")),
-		ProbeImage:             "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
-		ProbeImageDigest:       probeDigest,
-		ProbeContractVersion:   "1",
-		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("capability-policy")),
+		ComposePluginPath:                 "/usr/libexec/docker/cli-plugins/docker-compose",
+		ComposePluginSHA256:               runtimeinstall.Sum([]byte("compose-plugin")),
+		PrivilegeToolPath:                 "/usr/bin/pkexec",
+		PrivilegeToolSHA256:               runtimeinstall.Sum([]byte("pkexec")),
+		PrivilegeToolPackage:              "pkexec",
+		PrivilegeToolPackageVersion:       "124-2ubuntu1.24.04.3",
+		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
+		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless-tool")),
+		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
+		ProbeImageDigest:                  probeDigest,
+		ProbeContractVersion:              "1",
+		CapabilityPolicyDigest:            runtimeinstall.Sum([]byte("capability-policy")),
 	}
 }
 

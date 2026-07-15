@@ -120,7 +120,9 @@ the plan digest and argument allowlist:
 
 - macOS uses Authorization Services/vendor installer authorization;
 - Windows uses `ShellExecuteEx` `runas` and a `WinVerifyTrust`-verified helper;
-- certified graphical Linux uses Polkit/`pkexec` with a verified helper.
+- certified graphical Linux uses the exact signed `/usr/bin/pkexec` package receipt with
+  `--disable-internal-agent` and the fixed verified AgentMemory helper. The helper request is bounded
+  canonical stdin; no password, shell string, arbitrary program, or caller environment is accepted.
 
 The helper validates caller UID/SID, executable and plan hashes, artifact descriptor/hash, IPC owner/
 ACL, nonce, expiry, operation state, and typed parameters. It starts from a trusted directory and

@@ -144,57 +144,62 @@ func (r Repository) MetadataDigest() runtimeinstall.Hash { return r.metadataDige
 // execution projection. AuthorityResolver, not an inbound caller, owns this
 // construction input in production.
 type LinuxAuthorityInput struct {
-	PlanDigest                  runtimeinstall.Hash
-	CatalogDigest               runtimeinstall.Hash
-	TermsDigest                 runtimeinstall.Hash
-	TermsID                     string
-	TermsVersion                string
-	TermsURL                    string
-	TermsPresentation           string
-	ArtifactDigest              runtimeinstall.Hash
-	SigningKeyID                string
-	Architecture                runtimeinstall.Architecture
-	Distribution                string
-	VersionID                   string
-	Codename                    string
-	MinimumKernel               string
-	MinimumCPUs                 uint16
-	MinimumTotalMemory          uint64
-	MinimumAvailableMemory      uint64
-	MinimumFreeDisk             uint64
-	PackageManager              PackageManager
-	PackageManagerVersion       string
-	Repository                  RepositoryInput
-	Packages                    []PackageInput
-	RuntimeVersion              string
-	ComposeVersion              string
-	UnrelatedWorkloads          uint32
-	InvokingUID                 uint32
-	InvokingGID                 uint32
-	AccountName                 string
-	PrincipalID                 string
-	MachineDigest               runtimeinstall.Hash
-	HomeDirectory               string
-	RuntimeDirectory            string
-	Endpoint                    string
-	SubordinateIDCount          uint32
-	SELinuxEnforcing            bool
-	ServiceID                   string
-	ServiceUnitDigest           runtimeinstall.Hash
-	DockerCLIPath               string
-	DockerCLISHA256             runtimeinstall.Hash
-	ComposePluginPath           string
-	ComposePluginSHA256         runtimeinstall.Hash
-	RPMKeysPath                 string
-	RPMKeysSHA256               runtimeinstall.Hash
-	RPMKeysPackageVersion       string
-	RPMKeysPackageReceiptDigest runtimeinstall.Hash
-	RootlessToolPath            string
-	RootlessToolDigest          runtimeinstall.Hash
-	ProbeImage                  string
-	ProbeImageDigest            runtimeinstall.Hash
-	ProbeContractVersion        string
-	CapabilityPolicyDigest      runtimeinstall.Hash
+	PlanDigest                        runtimeinstall.Hash
+	CatalogDigest                     runtimeinstall.Hash
+	TermsDigest                       runtimeinstall.Hash
+	TermsID                           string
+	TermsVersion                      string
+	TermsURL                          string
+	TermsPresentation                 string
+	ArtifactDigest                    runtimeinstall.Hash
+	SigningKeyID                      string
+	Architecture                      runtimeinstall.Architecture
+	Distribution                      string
+	VersionID                         string
+	Codename                          string
+	MinimumKernel                     string
+	MinimumCPUs                       uint16
+	MinimumTotalMemory                uint64
+	MinimumAvailableMemory            uint64
+	MinimumFreeDisk                   uint64
+	PackageManager                    PackageManager
+	PackageManagerVersion             string
+	Repository                        RepositoryInput
+	Packages                          []PackageInput
+	RuntimeVersion                    string
+	ComposeVersion                    string
+	UnrelatedWorkloads                uint32
+	InvokingUID                       uint32
+	InvokingGID                       uint32
+	AccountName                       string
+	PrincipalID                       string
+	MachineDigest                     runtimeinstall.Hash
+	HomeDirectory                     string
+	RuntimeDirectory                  string
+	Endpoint                          string
+	SubordinateIDCount                uint32
+	SELinuxEnforcing                  bool
+	ServiceID                         string
+	ServiceUnitDigest                 runtimeinstall.Hash
+	DockerCLIPath                     string
+	DockerCLISHA256                   runtimeinstall.Hash
+	ComposePluginPath                 string
+	ComposePluginSHA256               runtimeinstall.Hash
+	RPMKeysPath                       string
+	RPMKeysSHA256                     runtimeinstall.Hash
+	RPMKeysPackageVersion             string
+	RPMKeysPackageReceiptDigest       runtimeinstall.Hash
+	PrivilegeToolPath                 string
+	PrivilegeToolSHA256               runtimeinstall.Hash
+	PrivilegeToolPackage              string
+	PrivilegeToolPackageVersion       string
+	PrivilegeToolPackageReceiptDigest runtimeinstall.Hash
+	RootlessToolPath                  string
+	RootlessToolDigest                runtimeinstall.Hash
+	ProbeImage                        string
+	ProbeImageDigest                  runtimeinstall.Hash
+	ProbeContractVersion              string
+	CapabilityPolicyDigest            runtimeinstall.Hash
 }
 
 // LinuxAuthority is the immutable, digest-bound execution projection. Its
@@ -261,14 +266,18 @@ func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 func validLinuxExecutableAuthority(input LinuxAuthorityInput) bool {
 	if input.DockerCLIPath != "/usr/bin/docker" || input.DockerCLISHA256.IsZero() ||
 		input.ComposePluginPath != "/usr/libexec/docker/cli-plugins/docker-compose" ||
-		input.ComposePluginSHA256.IsZero() {
+		input.ComposePluginSHA256.IsZero() || input.PrivilegeToolPath != "/usr/bin/pkexec" ||
+		input.PrivilegeToolSHA256.IsZero() || !validPackageVersion(input.PrivilegeToolPackageVersion) ||
+		input.PrivilegeToolPackageReceiptDigest.IsZero() {
 		return false
 	}
 	if input.PackageManager == PackageManagerAPT {
-		return input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
+		return input.PrivilegeToolPackage == "pkexec" &&
+			input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
 			input.RPMKeysPackageVersion == "" && input.RPMKeysPackageReceiptDigest.IsZero()
 	}
-	return input.PackageManager == PackageManagerDNF && input.RPMKeysPath == "/usr/bin/rpmkeys" &&
+	return input.PackageManager == PackageManagerDNF && input.PrivilegeToolPackage == "polkit" &&
+		input.RPMKeysPath == "/usr/bin/rpmkeys" &&
 		!input.RPMKeysSHA256.IsZero() && validPackageVersion(input.RPMKeysPackageVersion) &&
 		!input.RPMKeysPackageReceiptDigest.IsZero()
 }
@@ -480,6 +489,11 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		Packages              []canonicalPackage `json:"packages"`
 		Plan                  string             `json:"plan_digest"`
 		Principal             string             `json:"principal"`
+		PrivilegePackage      string             `json:"privilege_tool_package"`
+		PrivilegeReceipt      string             `json:"privilege_tool_package_receipt_digest"`
+		PrivilegeVersion      string             `json:"privilege_tool_package_version"`
+		PrivilegePath         string             `json:"privilege_tool_path"`
+		PrivilegeSHA          string             `json:"privilege_tool_sha256"`
 		Repository            RepositoryInput    `json:"repository"`
 		RPMKeysPath           string             `json:"rpm_keys_path"`
 		RPMKeysPackageVersion string             `json:"rpm_keys_package_version"`
@@ -518,7 +532,12 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		ManagerVer: a.input.PackageManagerVersion, MinimumCPUs: a.input.MinimumCPUs,
 		MinimumDisk: a.input.MinimumFreeDisk, MinimumFree: a.input.MinimumAvailableMemory,
 		MinimumTotal: a.input.MinimumTotalMemory, Packages: packages, Plan: a.input.PlanDigest.String(),
-		Principal: a.input.PrincipalID, Repository: a.input.Repository,
+		Principal:        a.input.PrincipalID,
+		PrivilegePackage: a.input.PrivilegeToolPackage,
+		PrivilegeReceipt: a.input.PrivilegeToolPackageReceiptDigest.String(),
+		PrivilegeVersion: a.input.PrivilegeToolPackageVersion,
+		PrivilegePath:    a.input.PrivilegeToolPath, PrivilegeSHA: a.input.PrivilegeToolSHA256.String(),
+		Repository:  a.input.Repository,
 		RPMKeysPath: a.input.RPMKeysPath, RPMKeysSHA: a.input.RPMKeysSHA256.String(),
 		RPMKeysPackageVersion: a.input.RPMKeysPackageVersion,
 		RPMKeysPackageReceipt: a.input.RPMKeysPackageReceiptDigest.String(),
@@ -616,6 +635,15 @@ func (a LinuxAuthority) Repository() Repository { return a.repository }
 // Packages returns a defensive copy of every exact package receipt.
 func (a LinuxAuthority) Packages() []Package { return append([]Package(nil), a.packages...) }
 
+// TransportInput returns a defensive DTO for the authenticated helper wire.
+// Receivers must reconstruct it through NewLinuxAuthority and independently
+// rejoin it to signed catalog authority before any privileged side effect.
+func (a LinuxAuthority) TransportInput() LinuxAuthorityInput {
+	input := a.input
+	input.Packages = append([]PackageInput(nil), a.input.Packages...)
+	return input
+}
+
 // RuntimeVersion returns the expected Docker Engine API product version.
 func (a LinuxAuthority) RuntimeVersion() string { return a.input.RuntimeVersion }
 
@@ -685,6 +713,25 @@ func (a LinuxAuthority) RPMKeysPackageVersion() string { return a.input.RPMKeysP
 // RPMKeysPackageReceiptDigest returns the signed native package receipt binding for rpmkeys.
 func (a LinuxAuthority) RPMKeysPackageReceiptDigest() runtimeinstall.Hash {
 	return a.input.RPMKeysPackageReceiptDigest
+}
+
+// PrivilegeToolPath returns the exact native Polkit execution path.
+func (a LinuxAuthority) PrivilegeToolPath() string { return a.input.PrivilegeToolPath }
+
+// PrivilegeToolSHA256 returns the exact installed pkexec byte digest.
+func (a LinuxAuthority) PrivilegeToolSHA256() runtimeinstall.Hash { return a.input.PrivilegeToolSHA256 }
+
+// PrivilegeToolPackage returns the distribution package that owns pkexec.
+func (a LinuxAuthority) PrivilegeToolPackage() string { return a.input.PrivilegeToolPackage }
+
+// PrivilegeToolPackageVersion returns the exact installed native package version.
+func (a LinuxAuthority) PrivilegeToolPackageVersion() string {
+	return a.input.PrivilegeToolPackageVersion
+}
+
+// PrivilegeToolPackageReceiptDigest returns the signed native receipt for the pkexec package.
+func (a LinuxAuthority) PrivilegeToolPackageReceiptDigest() runtimeinstall.Hash {
+	return a.input.PrivilegeToolPackageReceiptDigest
 }
 
 // RootlessToolPath returns the packaged setup tool's fixed path.

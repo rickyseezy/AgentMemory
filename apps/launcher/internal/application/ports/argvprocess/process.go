@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const maximumStandardInputBytes = 1024 * 1024
+const (
+	maximumStandardInputBytes    = 1024 * 1024
+	maximumPrivilegeRequestBytes = 16 * 1024 * 1024
+)
 
 // ErrInvalidInvocation rejects an unsafe executable or argument contract.
 var ErrInvalidInvocation = errors.New("invalid argv process invocation")
@@ -36,6 +39,9 @@ const (
 	// EnvironmentProfileRootlessSetup supplies only the fixed variables needed
 	// by Docker's packaged per-user setup tool.
 	EnvironmentProfileRootlessSetup
+	// EnvironmentProfilePrivilegeBroker marks the fixed pkexec/helper stdin
+	// contract. The process runner admits it only for the privilege-broker role.
+	EnvironmentProfilePrivilegeBroker
 )
 
 // NewInvocation validates bounded, NUL-free argv values. The outbound adapter
@@ -89,6 +95,29 @@ func NewRootlessSetupInvocation(
 		"PATH=/usr/bin:/bin",
 		"XDG_RUNTIME_DIR=" + runtimeDirectory,
 	}
+	return invocation, nil
+}
+
+// NewPrivilegeBrokerInvocation constructs the only authorized Polkit
+// elevation shape. The request is bounded machine-readable stdin; neither a
+// password nor caller-controlled argv/environment crosses this boundary.
+func NewPrivilegeBrokerInvocation(
+	pkexecPath string,
+	helperPath string,
+	request []byte,
+) (Invocation, error) {
+	if pkexecPath != "/usr/bin/pkexec" ||
+		helperPath != "/usr/libexec/agentmemory/agentmemory-runtime-helper" ||
+		len(request) == 0 || len(request) > maximumPrivilegeRequestBytes {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	invocation, err := newInvocation(pkexecPath, []string{
+		"--disable-internal-agent", helperPath, "--request-stdin",
+	}, request)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfilePrivilegeBroker
 	return invocation, nil
 }
 

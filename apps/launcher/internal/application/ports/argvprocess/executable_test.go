@@ -58,6 +58,14 @@ func TestPF001ExecutableAuthorityIsRoleAndSignedPlanBound(t *testing.T) {
 		rpmKeys.Role() != ExecutableRoleRPMKeys {
 		t.Fatalf("RPM keys authority rejected: %v", rpmKeysError)
 	}
+	privilegeInput := input
+	privilegeInput.CanonicalID = "pkexec"
+	privilegeInput.CanonicalPath = "/verified/pkexec"
+	privilegeInput.Role = ExecutableRolePrivilegeBroker
+	if privilege, privilegeError := NewExecutableAuthority(privilegeInput); privilegeError != nil ||
+		!privilege.Valid() || privilege.Role() != ExecutableRolePrivilegeBroker {
+		t.Fatalf("privilege broker authority rejected: %v", privilegeError)
+	}
 	launcherInput := input
 	launcherInput.CanonicalID = "agentmemory-launcher"
 	launcherInput.CanonicalPath = "/verified/agentmemory"

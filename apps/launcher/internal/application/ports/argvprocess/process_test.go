@@ -111,3 +111,38 @@ func TestPF006RootlessSetupInvocationHasOnlyClosedSanitizedEnvironment(t *testin
 		}
 	}
 }
+
+func TestPF006PrivilegeBrokerInvocationIsFixedAndStdinOnly(t *testing.T) {
+	t.Parallel()
+	request := []byte(`{"schemaVersion":1,"request":"signed"}`)
+	invocation, err := NewPrivilegeBrokerInvocation(
+		"/usr/bin/pkexec", "/usr/libexec/agentmemory/agentmemory-runtime-helper", request,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request[0] = 'X'
+	wantedArguments := []string{
+		"--disable-internal-agent", "/usr/libexec/agentmemory/agentmemory-runtime-helper", "--request-stdin",
+	}
+	if invocation.Executable() != "/usr/bin/pkexec" ||
+		!slices.Equal(invocation.Arguments(), wantedArguments) ||
+		invocation.EnvironmentProfile() != EnvironmentProfilePrivilegeBroker ||
+		len(invocation.Environment()) != 0 || invocation.StandardInput()[0] != '{' {
+		t.Fatalf("privilege invocation=%+v", invocation)
+	}
+	for _, input := range []struct {
+		pkexec string
+		helper string
+		body   []byte
+	}{
+		{pkexec: "pkexec", helper: "/usr/libexec/agentmemory/agentmemory-runtime-helper", body: []byte("x")},
+		{pkexec: "/usr/bin/pkexec", helper: "/tmp/helper", body: []byte("x")},
+		{pkexec: "/usr/bin/pkexec", helper: "/usr/libexec/agentmemory/agentmemory-runtime-helper"},
+		{pkexec: "/usr/bin/pkexec", helper: "/usr/libexec/agentmemory/agentmemory-runtime-helper", body: make([]byte, maximumPrivilegeRequestBytes+1)},
+	} {
+		if _, err := NewPrivilegeBrokerInvocation(input.pkexec, input.helper, input.body); !errors.Is(err, ErrInvalidInvocation) {
+			t.Fatalf("unsafe privilege invocation=%+v error=%v", input, err)
+		}
+	}
+}

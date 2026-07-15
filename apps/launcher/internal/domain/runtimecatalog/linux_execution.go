@@ -412,68 +412,78 @@ func (p LinuxPackage) Source() SourceLocation { return p.source }
 // projection. Host identity and observations are deliberately supplied later
 // by a native probe and cannot be declared by the catalog.
 type LinuxExecutionPolicyInput struct {
-	PackageManager              LinuxPackageManager
-	PackageManagerVersion       string
-	Codename                    string
-	MinimumKernel               string
-	MinimumAvailableMemory      uint64
-	Repository                  LinuxRepositoryInput
-	VerificationRepositories    []LinuxRepositoryInput
-	Packages                    []LinuxPackageInput
-	PackageSetDigest            Digest
-	RollbackHeadroomBytes       uint64
-	AcquisitionSafetyBytes      uint64
-	SubordinateIDCount          uint32
-	SELinuxEnforcingSupported   bool
-	ServiceID                   string
-	ServiceUnitDigest           Digest
-	DockerCLIPath               string
-	DockerCLISHA256             Digest
-	ComposePluginPath           string
-	ComposePluginSHA256         Digest
-	RPMKeysPath                 string
-	RPMKeysSHA256               Digest
-	RPMKeysPackageVersion       string
-	RPMKeysPackageReceiptDigest Digest
-	RootlessToolPath            string
-	RootlessToolDigest          Digest
-	ProbeImage                  string
-	ProbeImageDigest            Digest
-	ProbeContractVersion        string
-	CapabilityPolicyDigest      Digest
+	PackageManager                    LinuxPackageManager
+	PackageManagerVersion             string
+	Codename                          string
+	MinimumKernel                     string
+	MinimumAvailableMemory            uint64
+	Repository                        LinuxRepositoryInput
+	VerificationRepositories          []LinuxRepositoryInput
+	Packages                          []LinuxPackageInput
+	PackageSetDigest                  Digest
+	RollbackHeadroomBytes             uint64
+	AcquisitionSafetyBytes            uint64
+	SubordinateIDCount                uint32
+	SELinuxEnforcingSupported         bool
+	ServiceID                         string
+	ServiceUnitDigest                 Digest
+	DockerCLIPath                     string
+	DockerCLISHA256                   Digest
+	ComposePluginPath                 string
+	ComposePluginSHA256               Digest
+	RPMKeysPath                       string
+	RPMKeysSHA256                     Digest
+	RPMKeysPackageVersion             string
+	RPMKeysPackageReceiptDigest       Digest
+	PrivilegeToolPath                 string
+	PrivilegeToolSHA256               Digest
+	PrivilegeToolPackage              string
+	PrivilegeToolPackageVersion       string
+	PrivilegeToolPackageReceiptDigest Digest
+	RootlessToolPath                  string
+	RootlessToolDigest                Digest
+	ProbeImage                        string
+	ProbeImageDigest                  Digest
+	ProbeContractVersion              string
+	CapabilityPolicyDigest            Digest
 }
 
 // LinuxExecutionPolicy is present only in a Linux catalog cell.
 type LinuxExecutionPolicy struct {
-	packageManager              LinuxPackageManager
-	packageManagerVersion       string
-	codename                    string
-	minimumKernel               string
-	minimumAvailableMemory      uint64
-	repository                  LinuxRepository
-	verificationRepositories    []LinuxRepository
-	packages                    []LinuxPackage
-	packageSetDigest            Digest
-	rollbackHeadroomBytes       uint64
-	acquisitionSafetyBytes      uint64
-	subordinateIDCount          uint32
-	selinuxEnforcingSupported   bool
-	serviceID                   string
-	serviceUnitDigest           Digest
-	dockerCLIPath               string
-	dockerCLISHA256             Digest
-	composePluginPath           string
-	composePluginSHA256         Digest
-	rpmKeysPath                 string
-	rpmKeysSHA256               Digest
-	rpmKeysPackageVersion       string
-	rpmKeysPackageReceiptDigest Digest
-	rootlessToolPath            string
-	rootlessToolDigest          Digest
-	probeImage                  string
-	probeImageDigest            Digest
-	probeContractVersion        string
-	capabilityPolicyDigest      Digest
+	packageManager                    LinuxPackageManager
+	packageManagerVersion             string
+	codename                          string
+	minimumKernel                     string
+	minimumAvailableMemory            uint64
+	repository                        LinuxRepository
+	verificationRepositories          []LinuxRepository
+	packages                          []LinuxPackage
+	packageSetDigest                  Digest
+	rollbackHeadroomBytes             uint64
+	acquisitionSafetyBytes            uint64
+	subordinateIDCount                uint32
+	selinuxEnforcingSupported         bool
+	serviceID                         string
+	serviceUnitDigest                 Digest
+	dockerCLIPath                     string
+	dockerCLISHA256                   Digest
+	composePluginPath                 string
+	composePluginSHA256               Digest
+	rpmKeysPath                       string
+	rpmKeysSHA256                     Digest
+	rpmKeysPackageVersion             string
+	rpmKeysPackageReceiptDigest       Digest
+	privilegeToolPath                 string
+	privilegeToolSHA256               Digest
+	privilegeToolPackage              string
+	privilegeToolPackageVersion       string
+	privilegeToolPackageReceiptDigest Digest
+	rootlessToolPath                  string
+	rootlessToolDigest                Digest
+	probeImage                        string
+	probeImageDigest                  Digest
+	probeContractVersion              string
+	capabilityPolicyDigest            Digest
 }
 
 func newLinuxExecutionPolicy(
@@ -534,9 +544,14 @@ func newLinuxExecutionPolicy(
 		dockerCLIPath: input.DockerCLIPath, dockerCLISHA256: input.DockerCLISHA256,
 		composePluginPath: input.ComposePluginPath, composePluginSHA256: input.ComposePluginSHA256,
 		rpmKeysPath: input.RPMKeysPath, rpmKeysSHA256: input.RPMKeysSHA256,
-		rpmKeysPackageVersion:       input.RPMKeysPackageVersion,
-		rpmKeysPackageReceiptDigest: input.RPMKeysPackageReceiptDigest,
-		rootlessToolPath:            input.RootlessToolPath, rootlessToolDigest: input.RootlessToolDigest,
+		rpmKeysPackageVersion:             input.RPMKeysPackageVersion,
+		rpmKeysPackageReceiptDigest:       input.RPMKeysPackageReceiptDigest,
+		privilegeToolPath:                 input.PrivilegeToolPath,
+		privilegeToolSHA256:               input.PrivilegeToolSHA256,
+		privilegeToolPackage:              input.PrivilegeToolPackage,
+		privilegeToolPackageVersion:       input.PrivilegeToolPackageVersion,
+		privilegeToolPackageReceiptDigest: input.PrivilegeToolPackageReceiptDigest,
+		rootlessToolPath:                  input.RootlessToolPath, rootlessToolDigest: input.RootlessToolDigest,
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest,
@@ -546,14 +561,18 @@ func newLinuxExecutionPolicy(
 func validLinuxExecutableAuthority(input LinuxExecutionPolicyInput) bool {
 	if input.DockerCLIPath != "/usr/bin/docker" || input.DockerCLISHA256.IsZero() ||
 		input.ComposePluginPath != "/usr/libexec/docker/cli-plugins/docker-compose" ||
-		input.ComposePluginSHA256.IsZero() {
+		input.ComposePluginSHA256.IsZero() || input.PrivilegeToolPath != "/usr/bin/pkexec" ||
+		input.PrivilegeToolSHA256.IsZero() || !validLinuxPackageVersion(input.PrivilegeToolPackageVersion) ||
+		input.PrivilegeToolPackageReceiptDigest.IsZero() {
 		return false
 	}
 	if input.PackageManager == LinuxPackageManagerAPT {
-		return input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
+		return input.PrivilegeToolPackage == "pkexec" &&
+			input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
 			input.RPMKeysPackageVersion == "" && input.RPMKeysPackageReceiptDigest.IsZero()
 	}
-	return input.PackageManager == LinuxPackageManagerDNF && input.RPMKeysPath == "/usr/bin/rpmkeys" &&
+	return input.PackageManager == LinuxPackageManagerDNF && input.PrivilegeToolPackage == "polkit" &&
+		input.RPMKeysPath == "/usr/bin/rpmkeys" &&
 		!input.RPMKeysSHA256.IsZero() && validLinuxPackageVersion(input.RPMKeysPackageVersion) &&
 		!input.RPMKeysPackageReceiptDigest.IsZero()
 }
@@ -1011,6 +1030,25 @@ func (p LinuxExecutionPolicy) RPMKeysPackageReceiptDigest() Digest {
 	return p.rpmKeysPackageReceiptDigest
 }
 
+// PrivilegeToolPath returns the fixed native Polkit execution path.
+func (p LinuxExecutionPolicy) PrivilegeToolPath() string { return p.privilegeToolPath }
+
+// PrivilegeToolSHA256 returns the exact installed pkexec byte digest.
+func (p LinuxExecutionPolicy) PrivilegeToolSHA256() Digest { return p.privilegeToolSHA256 }
+
+// PrivilegeToolPackage returns the distribution package that owns pkexec.
+func (p LinuxExecutionPolicy) PrivilegeToolPackage() string { return p.privilegeToolPackage }
+
+// PrivilegeToolPackageVersion returns the exact installed native package version.
+func (p LinuxExecutionPolicy) PrivilegeToolPackageVersion() string {
+	return p.privilegeToolPackageVersion
+}
+
+// PrivilegeToolPackageReceiptDigest returns the signed package receipt binding for pkexec.
+func (p LinuxExecutionPolicy) PrivilegeToolPackageReceiptDigest() Digest {
+	return p.privilegeToolPackageReceiptDigest
+}
+
 // RootlessToolPath returns the fixed packaged setup-tool path.
 func (p LinuxExecutionPolicy) RootlessToolPath() string { return p.rootlessToolPath }
 
@@ -1098,9 +1136,14 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 		DockerCLIPath: p.dockerCLIPath, DockerCLISHA256: p.dockerCLISHA256,
 		ComposePluginPath: p.composePluginPath, ComposePluginSHA256: p.composePluginSHA256,
 		RPMKeysPath: p.rpmKeysPath, RPMKeysSHA256: p.rpmKeysSHA256,
-		RPMKeysPackageVersion:       p.rpmKeysPackageVersion,
-		RPMKeysPackageReceiptDigest: p.rpmKeysPackageReceiptDigest,
-		RootlessToolPath:            p.rootlessToolPath, RootlessToolDigest: p.rootlessToolDigest,
+		RPMKeysPackageVersion:             p.rpmKeysPackageVersion,
+		RPMKeysPackageReceiptDigest:       p.rpmKeysPackageReceiptDigest,
+		PrivilegeToolPath:                 p.privilegeToolPath,
+		PrivilegeToolSHA256:               p.privilegeToolSHA256,
+		PrivilegeToolPackage:              p.privilegeToolPackage,
+		PrivilegeToolPackageVersion:       p.privilegeToolPackageVersion,
+		PrivilegeToolPackageReceiptDigest: p.privilegeToolPackageReceiptDigest,
+		RootlessToolPath:                  p.rootlessToolPath, RootlessToolDigest: p.rootlessToolDigest,
 		ProbeImage: p.probeImage, ProbeImageDigest: p.probeImageDigest,
 		ProbeContractVersion:   p.probeContractVersion,
 		CapabilityPolicyDigest: p.capabilityPolicyDigest,

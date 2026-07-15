@@ -144,6 +144,12 @@ package version, and authenticated native package-receipt digest. These are
 release inputs derived from the certified native packages; the launcher does
 not discover or synthesize them from a user's machine.
 
+Each Linux cell must also supply the exact `/usr/bin/pkexec` bytes and owning
+distribution package receipt: package `pkexec` on Ubuntu/Debian and package
+`polkit` on Fedora/CentOS. Release packaging must install the signed AgentMemory
+helper at `/usr/libexec/agentmemory/agentmemory-runtime-helper` and the matching
+Polkit action policy; a PATH-discovered or caller-selected helper is forbidden.
+
 ## Native certification hosts
 
 The release owner must provide pristine, supported, non-virtualized or

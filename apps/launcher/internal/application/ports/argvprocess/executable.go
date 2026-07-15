@@ -22,6 +22,9 @@ const (
 	// ExecutableRoleRPMKeys authorizes only publisher-verified RPM signature
 	// verification in an isolated, operation-owned key database.
 	ExecutableRoleRPMKeys ExecutableRole = "rpmkeys"
+	// ExecutableRolePrivilegeBroker authorizes only the signed `/usr/bin/pkexec`
+	// transport that launches AgentMemory's immutable typed Linux helper.
+	ExecutableRolePrivilegeBroker ExecutableRole = "privilege-broker"
 	// ExecutableRoleAgentMemoryLauncher authorizes only the signed host launcher.
 	ExecutableRoleAgentMemoryLauncher ExecutableRole = "agentmemory-launcher"
 )
@@ -29,6 +32,7 @@ const (
 func (r ExecutableRole) valid() bool {
 	return r == ExecutableRoleDockerCLI || r == ExecutableRoleComposePlugin ||
 		r == ExecutableRoleRootlessSetup || r == ExecutableRoleRPMKeys ||
+		r == ExecutableRolePrivilegeBroker ||
 		r == ExecutableRoleAgentMemoryLauncher
 }
 

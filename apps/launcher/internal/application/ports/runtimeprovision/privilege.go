@@ -190,6 +190,16 @@ func (r PrivilegeRequest) OperationKey() runtimeinstall.Hash { return r.operatio
 // Digest binds every request field.
 func (r PrivilegeRequest) Digest() runtimeinstall.Hash { return r.digest }
 
+// TransportInput returns a defensive constructor DTO for the canonical
+// helper wire. It is data, not proof of signed authority.
+func (r PrivilegeRequest) TransportInput() PrivilegeRequestInput {
+	return PrivilegeRequestInput{
+		OperationID: r.operationID, Attempt: r.attempt, Operation: r.operation,
+		Authority: r.authority, Nonce: r.nonce, IssuedAt: r.issuedAt,
+		ExpiresAt: r.expiresAt, ExpectedState: r.expectedState,
+	}
+}
+
 // ExpectedPrivilegeState derives the only valid postcondition for one helper
 // capability directly from signed authority.
 func ExpectedPrivilegeState(authority LinuxAuthority, operation PrivilegeOperation) (runtimeinstall.Hash, error) {
@@ -489,6 +499,14 @@ func (r PrivilegeReceipt) AuthenticationPayload() []byte {
 
 // Signature returns a caller-owned copy for the authenticated verifier.
 func (r PrivilegeReceipt) Signature() []byte { return append([]byte(nil), r.input.Signature...) }
+
+// TransportInput returns a defensive constructor DTO for canonical receipt
+// encoding. Consumers must still verify the helper signature and request match.
+func (r PrivilegeReceipt) TransportInput() PrivilegeReceiptInput {
+	input := r.input
+	input.Signature = append([]byte(nil), r.input.Signature...)
+	return input
+}
 
 // HelperDigest returns the exact signed immutable helper binary binding.
 func (r PrivilegeReceipt) HelperDigest() runtimeinstall.Hash { return r.input.HelperDigest }

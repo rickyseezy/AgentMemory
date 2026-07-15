@@ -211,6 +211,14 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
 	}
+	privilegeToolDigest, err := ParseDigest(document.PrivilegeToolSHA256)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	privilegeToolPackageReceipt, err := ParseDigest(document.PrivilegeToolPackageReceiptDigest)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
 	var rpmKeysDigest Digest
 	if document.RPMKeysSHA256 != "" {
 		rpmKeysDigest, err = ParseDigest(document.RPMKeysSHA256)
@@ -275,7 +283,11 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 		ServiceID:                 document.ServiceID, ServiceUnitDigest: serviceUnitDigest,
 		DockerCLIPath: document.DockerCLIPath, DockerCLISHA256: dockerCLIDigest,
 		ComposePluginPath: document.ComposePluginPath, ComposePluginSHA256: composePluginDigest,
-		RPMKeysPath: document.RPMKeysPath, RPMKeysSHA256: rpmKeysDigest,
+		PrivilegeToolPath: document.PrivilegeToolPath, PrivilegeToolSHA256: privilegeToolDigest,
+		PrivilegeToolPackage:              document.PrivilegeToolPackage,
+		PrivilegeToolPackageVersion:       document.PrivilegeToolPackageVersion,
+		PrivilegeToolPackageReceiptDigest: privilegeToolPackageReceipt,
+		RPMKeysPath:                       document.RPMKeysPath, RPMKeysSHA256: rpmKeysDigest,
 		RPMKeysPackageVersion:       document.RPMKeysPackageVersion,
 		RPMKeysPackageReceiptDigest: rpmKeysPackageReceipt,
 		RootlessToolPath:            document.RootlessToolPath, RootlessToolDigest: rootlessToolDigest,

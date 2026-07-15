@@ -10,10 +10,11 @@ import (
 )
 
 type nativeLinuxRunnerSet struct {
-	docker   *process.Runner
-	compose  *process.Runner
-	rootless *process.Runner
-	rpmkeys  *process.Runner
+	docker    *process.Runner
+	compose   *process.Runner
+	rootless  *process.Runner
+	rpmkeys   *process.Runner
+	privilege *process.Runner
 }
 
 func newNativeLinuxRunnerSet(
@@ -53,7 +54,11 @@ func newNativeLinuxRunnerSet(
 	if err != nil {
 		return nativeLinuxRunnerSet{}, err
 	}
-	result := nativeLinuxRunnerSet{docker: docker, compose: compose, rootless: rootless}
+	privilege, err := construct(argvprocess.ExecutableRolePrivilegeBroker)
+	if err != nil {
+		return nativeLinuxRunnerSet{}, err
+	}
+	result := nativeLinuxRunnerSet{docker: docker, compose: compose, rootless: rootless, privilege: privilege}
 	if authority.PackageManager() == runtimeport.PackageManagerDNF {
 		result.rpmkeys, err = construct(argvprocess.ExecutableRoleRPMKeys)
 		if err != nil {

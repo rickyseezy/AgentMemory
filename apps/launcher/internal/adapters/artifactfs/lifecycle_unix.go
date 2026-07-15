@@ -42,7 +42,7 @@ func (f *BundleFetcher) beginOperation() bool {
 		return false
 	}
 	f.lifecycle.RLock()
-	if f.closed || !safeDirectoryDescriptor(f.rootDirectory) {
+	if f.closed || !safeBundleDirectoryDescriptor(f.rootDirectory, f.accessPolicy) {
 		f.lifecycle.RUnlock()
 		return false
 	}

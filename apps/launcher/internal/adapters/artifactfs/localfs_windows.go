@@ -36,7 +36,14 @@ func localFilesystem(path string) (bool, string, error) {
 }
 
 func localFilesystemDescriptor(directory *os.File) (bool, string, error) {
-	descriptor, err := inspectWindowsVolume(directory)
+	return localBundleFilesystemDescriptor(directory, bundleAccessOwnerPrivate)
+}
+
+func localBundleFilesystemDescriptor(
+	directory *os.File,
+	policy bundleAccessPolicy,
+) (bool, string, error) {
+	descriptor, err := inspectWindowsBundleVolume(directory, policy)
 	if err != nil {
 		return false, "", err
 	}
@@ -79,7 +86,14 @@ func availableBytesDescriptor(directory *os.File) (uint64, error) {
 }
 
 func inspectWindowsVolume(directory *os.File) (windowsVolumeDescriptor, error) {
-	if directory == nil || !safeDirectoryDescriptor(directory) ||
+	return inspectWindowsBundleVolume(directory, bundleAccessOwnerPrivate)
+}
+
+func inspectWindowsBundleVolume(
+	directory *os.File,
+	policy bundleAccessPolicy,
+) (windowsVolumeDescriptor, error) {
+	if directory == nil || !safeBundleDirectoryDescriptor(directory, policy) ||
 		windowssecurity.ValidateLocalPath(directory.Name()) != nil || filepath.Clean(directory.Name()) != directory.Name() {
 		return windowsVolumeDescriptor{}, artifactapp.ErrStoreIntegrity
 	}

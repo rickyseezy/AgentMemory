@@ -18,9 +18,10 @@ import (
 )
 
 type secureFile struct {
-	file      *os.File
-	directory *os.File
-	leaf      string
+	file         *os.File
+	directory    *os.File
+	leaf         string
+	bundlePolicy bundleAccessPolicy
 }
 
 func (f *secureFile) close() {
@@ -374,7 +375,8 @@ func (f *secureFile) verifyPathIdentity() error {
 	var descriptor, path unix.Stat_t
 	if unix.Fstat(int(f.file.Fd()), &descriptor) != nil ||
 		unix.Fstatat(int(f.directory.Fd()), f.leaf, &path, unix.AT_SYMLINK_NOFOLLOW) != nil ||
-		!safeUnixFileStat(&descriptor) || !safeUnixFileStat(&path) || descriptor.Dev != path.Dev || descriptor.Ino != path.Ino {
+		!safeBundleFileStat(&descriptor, f.bundlePolicy) || !safeBundleFileStat(&path, f.bundlePolicy) ||
+		descriptor.Dev != path.Dev || descriptor.Ino != path.Ino {
 		return artifactapp.ErrStoreIntegrity
 	}
 	return nil
@@ -385,7 +387,7 @@ func (f *secureFile) verifyExactSize(size uint64) error {
 		return err
 	}
 	info, err := f.file.Stat()
-	if err != nil || !safeFileInfo(info, size) {
+	if err != nil || !safeBundleFileInfo(info, size, f.bundlePolicy) {
 		return artifactapp.ErrStoreIntegrity
 	}
 	return nil
@@ -495,6 +497,45 @@ func safeUnixFileStat(stat *unix.Stat_t) bool {
 	effective, valid := effectiveUserID()
 	return stat != nil && stat.Mode&unix.S_IFMT == unix.S_IFREG && stat.Mode&0o077 == 0 &&
 		valid && stat.Uid == effective && stat.Nlink == 1
+}
+
+func safeBundleFileStat(stat *unix.Stat_t, policy bundleAccessPolicy) bool {
+	if policy == bundleAccessOwnerPrivate {
+		return safeUnixFileStat(stat)
+	}
+	if stat == nil {
+		return false
+	}
+	return safeInstalledBundleFileValues(uint32(stat.Mode), stat.Uid, uint64(stat.Nlink), policy)
+}
+
+func safeInstalledBundleFileValues(mode uint32, owner uint32, links uint64, policy bundleAccessPolicy) bool {
+	if policy != bundleAccessInstalledReadOnly || mode&unix.S_IFMT != unix.S_IFREG ||
+		links != 1 || mode&(unix.S_ISUID|unix.S_ISGID|unix.S_ISVTX) != 0 {
+		return false
+	}
+	effective, valid := effectiveUserID()
+	if !valid {
+		return false
+	}
+	if owner == effective && effective != 0 {
+		return mode&0o077 == 0
+	}
+	return owner == 0 && mode&0o022 == 0 && mode&0o444 == 0o444
+}
+
+func safeBundleFileInfo(info os.FileInfo, size uint64, policy bundleAccessPolicy) bool {
+	if policy == bundleAccessOwnerPrivate {
+		return safeFileInfo(info, size)
+	}
+	if info == nil || info.Size() < 0 || uint64(info.Size()) != size { // #nosec G115 -- negativity is checked first.
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return safeInstalledBundleFileValues(uint32(stat.Mode), stat.Uid, uint64(stat.Nlink), policy)
 }
 
 func safeDirectoryInfo(info os.FileInfo) bool {

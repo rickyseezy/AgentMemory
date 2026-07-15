@@ -37,9 +37,10 @@ const forbiddenWindowsFileAttributes = windows.FILE_ATTRIBUTE_DIRECTORY |
 var reopenFileW = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReOpenFile")
 
 type secureFile struct {
-	file      *os.File
-	directory *os.File
-	leaf      string
+	file         *os.File
+	directory    *os.File
+	leaf         string
+	bundlePolicy bundleAccessPolicy
 }
 
 type windowsFileDispositionInfo struct {
@@ -400,11 +401,18 @@ func secureChildDirectoryIdentity(parent *os.File, leaf string, child *os.File) 
 
 //nolint:contextcheck,nolintlint // Path/handle identity and DACL verification must complete atomically even when a request is canceled.
 func (f *secureFile) verifyPathIdentity() error {
-	if f == nil || f.file == nil || f.directory == nil || !safeLeaf(f.leaf) || !safeDirectoryDescriptor(f.directory) {
+	if f == nil || f.file == nil || f.directory == nil || !safeLeaf(f.leaf) ||
+		!safeBundleDirectoryDescriptor(f.directory, f.bundlePolicy) {
 		return artifactapp.ErrStoreIntegrity
 	}
 	ctx := windowsArtifactContext()
-	descriptorIdentity, err := windowssecurity.VerifyOpened(ctx, f.file, false, true)
+	var descriptorIdentity windowssecurity.FileIdentity
+	var err error
+	if f.bundlePolicy == bundleAccessInstalledReadOnly {
+		descriptorIdentity, err = windowssecurity.VerifyInstalledReadOnlyOpened(ctx, f.file, false)
+	} else {
+		descriptorIdentity, err = windowssecurity.VerifyOpened(ctx, f.file, false, true)
+	}
 	if err != nil || !windowsSafeRegularFile(f.file) {
 		return artifactapp.ErrStoreIntegrity
 	}
@@ -414,7 +422,13 @@ func (f *secureFile) verifyPathIdentity() error {
 		return artifactapp.ErrStoreIntegrity
 	}
 	defer func() { _ = guard.Close() }()
-	pathFile, pathIdentity, err := windowssecurity.OpenVerified(ctx, targetPath, false, false, true)
+	var pathFile *os.File
+	var pathIdentity windowssecurity.FileIdentity
+	if f.bundlePolicy == bundleAccessInstalledReadOnly {
+		pathFile, pathIdentity, err = windowssecurity.OpenInstalledReadOnly(ctx, targetPath, false)
+	} else {
+		pathFile, pathIdentity, err = windowssecurity.OpenVerified(ctx, targetPath, false, false, true)
+	}
 	if err != nil {
 		return err
 	}

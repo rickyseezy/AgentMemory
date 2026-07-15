@@ -37,7 +37,7 @@ func (f *BundleFetcher) ReadDistributionEnvelope(ctx context.Context) ([]byte, e
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(artifactapp.ErrFetchUnavailable, err)
 	}
-	file, err := openSecureRelativeBundleFile(f.rootDirectory, distributionEnvelopePath)
+	file, err := openSecureRelativeBundleFile(f.rootDirectory, distributionEnvelopePath, f.accessPolicy)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, artifactapp.ErrFetchUnavailable
 	}
@@ -81,7 +81,7 @@ func (f *BundleFetcher) Fetch(
 	if relative == "" || strings.HasPrefix(relative, "/") || strings.HasSuffix(relative, "/") || strings.Contains(relative, "//") {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	file, err := openSecureRelativeBundleFile(f.rootDirectory, relative)
+	file, err := openSecureRelativeBundleFile(f.rootDirectory, relative, f.accessPolicy)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, artifactapp.ErrFetchUnavailable
 	}
@@ -113,12 +113,12 @@ func (f *BundleFetcher) Fetch(
 	return value, nil
 }
 
-func openSecureRelativeBundleFile(root *os.File, relative string) (*secureFile, error) {
+func openSecureRelativeBundleFile(root *os.File, relative string, policy bundleAccessPolicy) (*secureFile, error) {
 	components := strings.Split(relative, "/")
 	if len(components) == 0 || len(components) > 64 {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	current, err := duplicateSecureDirectory(root)
+	current, err := duplicateBundleDirectory(root, policy)
 	if err != nil {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
@@ -127,14 +127,14 @@ func openSecureRelativeBundleFile(root *os.File, relative string) (*secureFile, 
 			_ = current.Close()
 			return nil, artifactapp.ErrFetchIntegrity
 		}
-		next, openError := openSecureChildDirectoryAt(current, component, false)
+		next, openError := openBundleChildDirectoryAt(current, component, policy)
 		_ = current.Close()
 		if openError != nil {
 			return nil, openError
 		}
 		current = next
 	}
-	file, err := openSecureReadLeafAt(current, components[len(components)-1])
+	file, err := openBundleReadLeafAt(current, components[len(components)-1], policy)
 	_ = current.Close()
 	return file, err
 }
@@ -182,7 +182,7 @@ func (f *BundleFetcher) openExactResource(
 		strings.Contains(relative, "//") {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	file, err := openSecureRelativeBundleFile(f.rootDirectory, relative)
+	file, err := openSecureRelativeBundleFile(f.rootDirectory, relative, f.accessPolicy)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, artifactapp.ErrFetchUnavailable
 	}

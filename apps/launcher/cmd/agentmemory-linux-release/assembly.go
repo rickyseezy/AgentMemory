@@ -304,8 +304,8 @@ func copyRegularFile(source string, target string, expected os.FileInfo, epoch t
 	if err := output.Close(); err != nil {
 		return err
 	}
-	// #nosec G302 -- 0644 is the deliberate root-owned package payload mode; the source is public release material.
-	if err := os.Chmod(target, 0o644); err != nil {
+	// #nosec G302 -- verification input stays owner-private until the complete production stack accepts it.
+	if err := os.Chmod(target, 0o600); err != nil {
 		return err
 	}
 	if err := os.Chtimes(target, epoch, epoch); err != nil {
@@ -394,10 +394,26 @@ func normalizeDirectoryTree(root string, epoch time.Time) error {
 		if err != nil || info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("staging tree contains an invalid entry")
 		}
-		if entry.IsDir() {
+		switch {
+		case entry.IsDir():
 			directories = append(directories, path)
-		} else if !info.Mode().IsRegular() {
+		case !info.Mode().IsRegular():
 			return errors.New("staging tree contains a special entry")
+		default:
+			relative, relativeErr := filepath.Rel(root, path)
+			if relativeErr != nil {
+				return relativeErr
+			}
+			if relative == "bundle" || strings.HasPrefix(relative, "bundle"+string(filepath.Separator)) {
+				// #nosec G122,G302 -- the path is beneath the private symlink-rejected stage; verified public resources become package payloads.
+				if err := os.Chmod(path, 0o644); err != nil {
+					return err
+				}
+				// #nosec G122 -- the path is beneath the private symlink-rejected stage.
+				if err := os.Chtimes(path, epoch, epoch); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}); err != nil {

@@ -47,25 +47,52 @@ func NewStore(root string) (*Store, error) {
 // BundleFetcher reads exact ranges from a previously verified offline bundle.
 type BundleFetcher struct {
 	rootDirectory *os.File
+	accessPolicy  bundleAccessPolicy
 	lifecycle     sync.RWMutex
 	closed        bool
 }
 
+type bundleAccessPolicy uint8
+
+const (
+	bundleAccessOwnerPrivate bundleAccessPolicy = iota
+	bundleAccessInstalledReadOnly
+)
+
 // NewBundleFetcher accepts only a proven local owner-controlled bundle root.
 func NewBundleFetcher(root string) (*BundleFetcher, error) {
+	return newBundleFetcher(root, bundleAccessOwnerPrivate)
+}
+
+// NewInstalledBundleFetcher accepts a descriptor-retained package bundle that
+// is either invoking-user private or protected by the platform's installed
+// system-software ownership and write-access policy.
+func NewInstalledBundleFetcher(root string) (*BundleFetcher, error) {
+	return newBundleFetcher(root, bundleAccessInstalledReadOnly)
+}
+
+func newBundleFetcher(root string, policy bundleAccessPolicy) (*BundleFetcher, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	rootDirectory, err := openSecureDirectory(root)
+	if policy != bundleAccessOwnerPrivate && policy != bundleAccessInstalledReadOnly {
+		return nil, artifactapp.ErrFetchIntegrity
+	}
+	actualPolicy := policy
+	rootDirectory, err := openBundleDirectory(root, policy)
+	if err != nil && policy == bundleAccessInstalledReadOnly {
+		rootDirectory, err = openBundleDirectory(root, bundleAccessOwnerPrivate)
+		actualPolicy = bundleAccessOwnerPrivate
+	}
 	if err != nil {
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	local, _, err := localFilesystemDescriptor(rootDirectory)
+	local, _, err := localBundleFilesystemDescriptor(rootDirectory, actualPolicy)
 	if err != nil || !local {
 		_ = rootDirectory.Close()
 		return nil, artifactapp.ErrFetchIntegrity
 	}
-	return &BundleFetcher{rootDirectory: rootDirectory}, nil
+	return &BundleFetcher{rootDirectory: rootDirectory, accessPolicy: actualPolicy}, nil
 }
 
 func safeToken(value string, prefix string) bool {

@@ -25,6 +25,14 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 		validated = encoded
 		return nil
 	}, func(_ context.Context, root string, trust string, operatingSystem string, architecture string, verifiedAt time.Time) (verifiedNativePackage, error) {
+		for _, relative := range []string{
+			"bootstrap/distribution-manifest.json", "native/linux/arm64/agentmemory",
+		} {
+			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(relative)))
+			if err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("verification input %s mode=%v error=%v, want private 0600", relative, info, err)
+			}
+		}
 		bundleValidation = bundleValidationCall{
 			root: root, trust: trust, operatingSystem: operatingSystem,
 			architecture: architecture, verifiedAt: verifiedAt,

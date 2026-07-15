@@ -21,7 +21,14 @@ func localFilesystem(path string) (bool, string, error) {
 }
 
 func localFilesystemDescriptor(directory *os.File) (bool, string, error) {
-	if !safeDirectoryDescriptor(directory) {
+	return localBundleFilesystemDescriptor(directory, bundleAccessOwnerPrivate)
+}
+
+func localBundleFilesystemDescriptor(
+	directory *os.File,
+	policy bundleAccessPolicy,
+) (bool, string, error) {
+	if !safeBundleDirectoryDescriptor(directory, policy) {
 		return false, "", artifactapp.ErrStoreIntegrity
 	}
 	var stat unix.Statfs_t

@@ -58,7 +58,7 @@ func newNativeReleaseAuthority(
 	if err != nil || root == "" {
 		return nil, firststartapp.ErrUnavailable
 	}
-	source, err := artifactfs.NewBundleFetcher(root)
+	source, err := artifactfs.NewInstalledBundleFetcher(root)
 	if err != nil {
 		return nil, firststartapp.ErrUnavailable
 	}

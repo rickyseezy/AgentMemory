@@ -43,7 +43,7 @@ func ValidateDocumentFor(host AgentHost, contents []byte) error {
 	if !host.Valid() {
 		return ErrInvalidTarget
 	}
-	if host == AgentHostCodex {
+	if host == AgentHostCodex || host == AgentHostCustom {
 		return ErrInvalidTarget
 	}
 	return ValidateDocument(contents)

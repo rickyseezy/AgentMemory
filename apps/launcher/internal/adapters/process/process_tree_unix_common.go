@@ -22,6 +22,7 @@ func superviseUnixProcessGroup(
 		exited, err := leaderExited(20 * time.Millisecond)
 		if err != nil {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			closeConversationInput(command)
 			_ = command.Wait()
 			return err
 		}
@@ -29,9 +30,11 @@ func superviseUnixProcessGroup(
 			// The leader remains unreaped here, so pid/PGID reuse is impossible
 			// while surviving group members are made non-executable.
 			if err := terminateReservedProcessGroup(pid); err != nil {
+				closeConversationInput(command)
 				_ = command.Wait()
 				return err
 			}
+			closeConversationInput(command)
 			return command.Wait()
 		}
 		if ctx.Err() != nil && !terminationStarted {
@@ -39,12 +42,14 @@ func superviseUnixProcessGroup(
 			terminationDeadline = time.Now().Add(processTreeTerminationGrace)
 			if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 				_ = terminateReservedProcessGroup(pid)
+				closeConversationInput(command)
 				_ = command.Wait()
 				return err
 			}
 		}
 		if terminationStarted && time.Now().After(terminationDeadline) {
 			if err := terminateReservedProcessGroup(pid); err != nil {
+				closeConversationInput(command)
 				_ = command.Wait()
 				return err
 			}

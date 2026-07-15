@@ -71,6 +71,41 @@ func TestPF001ArgvInvocationCarriesOnlyBoundedCopiedStandardInput(t *testing.T) 
 	}
 }
 
+func TestPF001LineConversationIsBoundedValidatedAndImmutable(t *testing.T) {
+	t.Parallel()
+	initialize := []byte("initialize\n")
+	first, err := NewConversationStep(initialize, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialized, err := NewConversationStep([]byte("initialized\n"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := NewLineConversation([]ConversationStep{first, initialized})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialize[0] = 'X'
+	steps := conversation.Steps()
+	steps[0].request[0] = 'Y'
+	if actual := string(conversation.Steps()[0].Request()); actual != "initialize\n" ||
+		!conversation.Steps()[0].AwaitResponse() || conversation.Steps()[1].AwaitResponse() {
+		t.Fatalf("immutable conversation=%q", actual)
+	}
+	for _, invalid := range [][]byte{nil, []byte("x"), []byte("x\r\n"), []byte("x\ny\n")} {
+		if _, err := NewConversationStep(invalid, true); !errors.Is(err, ErrInvalidInvocation) {
+			t.Fatalf("invalid step %q error=%v", invalid, err)
+		}
+	}
+	if _, err := NewLineConversation(nil); !errors.Is(err, ErrInvalidInvocation) {
+		t.Fatalf("empty conversation error=%v", err)
+	}
+	if _, err := NewLineConversation([]ConversationStep{initialized}); !errors.Is(err, ErrInvalidInvocation) {
+		t.Fatalf("response-free conversation error=%v", err)
+	}
+}
+
 func TestPF006RootlessSetupInvocationHasOnlyClosedSanitizedEnvironment(t *testing.T) {
 	t.Parallel()
 	invocation, err := NewRootlessSetupInvocation(

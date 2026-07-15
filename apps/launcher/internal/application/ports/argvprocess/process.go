@@ -11,6 +11,7 @@ import (
 
 const (
 	maximumStandardInputBytes    = 1024 * 1024
+	maximumConversationSteps     = 32
 	maximumPrivilegeRequestBytes = 64 * 1024 * 1024
 	maximumInvocationArguments   = 1024
 	maximumPackageArtifacts      = 512
@@ -22,6 +23,10 @@ var ErrInvalidInvocation = errors.New("invalid argv process invocation")
 
 // ErrOutputLimit means output exceeded the bounded diagnostic capture.
 var ErrOutputLimit = errors.New("argv process output exceeded limit")
+
+// ErrConversation means a lifecycle-ordered local protocol exchange ended,
+// framed, or responded unexpectedly.
+var ErrConversation = errors.New("argv process conversation failed")
 
 // Invocation contains an exact executable, argv, and optional bounded standard
 // input. It intentionally contains no shell string, environment map, inherited
@@ -518,10 +523,82 @@ type Result struct {
 	OutputTruncated bool
 }
 
+// ConversationStep is one immutable newline-delimited request or
+// notification in a sequential local protocol exchange. AwaitResponse keeps
+// lifecycle ordering in the process adapter instead of pre-buffering later
+// requests before the peer's response.
+type ConversationStep struct {
+	request       []byte
+	awaitResponse bool
+}
+
+// NewConversationStep validates one complete, non-secret machine-readable
+// line. Embedded newlines are forbidden so response boundaries stay exact.
+func NewConversationStep(request []byte, awaitResponse bool) (ConversationStep, error) {
+	if len(request) < 2 || len(request) > maximumStandardInputBytes || request[len(request)-1] != '\n' ||
+		strings.ContainsAny(string(request[:len(request)-1]), "\r\n") {
+		return ConversationStep{}, ErrInvalidInvocation
+	}
+	return ConversationStep{request: append([]byte(nil), request...), awaitResponse: awaitResponse}, nil
+}
+
+// Request returns a caller-owned exact protocol line.
+func (s ConversationStep) Request() []byte { return append([]byte(nil), s.request...) }
+
+// AwaitResponse reports whether the next request is gated on one complete
+// response line from this step.
+func (s ConversationStep) AwaitResponse() bool { return s.awaitResponse }
+
+// LineConversation is an immutable bounded sequence for request/response
+// protocols such as MCP stdio.
+type LineConversation struct {
+	steps []ConversationStep
+}
+
+// NewLineConversation rejects empty, response-free, oversized, or forged
+// steps and copy-owns every request.
+func NewLineConversation(steps []ConversationStep) (LineConversation, error) {
+	if len(steps) == 0 || len(steps) > maximumConversationSteps {
+		return LineConversation{}, ErrInvalidInvocation
+	}
+	total, awaits := 0, false
+	copied := make([]ConversationStep, len(steps))
+	for index, step := range steps {
+		request := step.Request()
+		validated, err := NewConversationStep(request, step.AwaitResponse())
+		if err != nil || total > maximumStandardInputBytes-len(request) {
+			return LineConversation{}, ErrInvalidInvocation
+		}
+		total += len(request)
+		awaits = awaits || validated.awaitResponse
+		copied[index] = validated
+	}
+	if !awaits {
+		return LineConversation{}, ErrInvalidInvocation
+	}
+	return LineConversation{steps: copied}, nil
+}
+
+// Steps returns a deep caller-owned copy of the sequence.
+func (c LineConversation) Steps() []ConversationStep {
+	result := make([]ConversationStep, len(c.steps))
+	for index, step := range c.steps {
+		result[index] = ConversationStep{request: step.Request(), awaitResponse: step.awaitResponse}
+	}
+	return result
+}
+
 // Runner executes one constrained unprivileged local process.
 type Runner interface {
 	// ExecutableAuthority returns the immutable signed authority this runner is
 	// incapable of exceeding. Callers use it to bind cooperating executables.
 	ExecutableAuthority() ExecutableAuthority
 	Run(context.Context, Invocation) (Result, error)
+}
+
+// ConversationRunner executes a lifecycle-ordered newline protocol exchange
+// through the same immutable executable authority as Runner.
+type ConversationRunner interface {
+	Runner
+	RunLineConversation(context.Context, Invocation, LineConversation) (Result, error)
 }

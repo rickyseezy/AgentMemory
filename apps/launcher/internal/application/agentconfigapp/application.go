@@ -48,6 +48,7 @@ func New(store port.Store, verifier port.InvocationVerifier, policies ...port.Do
 		for _, host := range []domain.AgentHost{
 			domain.AgentHostGeneric, domain.AgentHostCodex, domain.AgentHostClaude,
 			domain.AgentHostGemini, domain.AgentHostCursor, domain.AgentHostGLM,
+			domain.AgentHostCustom,
 		} {
 			if policy.Supports(host) {
 				if matched != "" || host != domain.AgentHostCodex {
@@ -123,11 +124,17 @@ func (r MergeResult) Receipt() port.ApplyReceipt { return r.receipt }
 // Merge executes read/validate/plan/CAS-write/verify with automatic safe
 // compensation after a post-write failure.
 func (a *Application) Merge(ctx context.Context, request MergeRequest) (MergeResult, error) {
+	if ctx == nil {
+		return MergeResult{}, port.ErrInvalidArgument
+	}
 	if err := ctx.Err(); err != nil {
 		return MergeResult{}, err
 	}
 	if request.Location.String() == "" || request.Target.Command() == "" {
 		return MergeResult{}, port.ErrInvalidArgument
+	}
+	if request.Target.Host() == domain.AgentHostCustom {
+		return a.verifyCustomRegistration(ctx, request)
 	}
 	detection, err := a.Detect(ctx, request.Location)
 	if err != nil {
@@ -182,6 +189,27 @@ func (a *Application) Merge(ctx context.Context, request MergeRequest) (MergeRes
 	return result, nil
 }
 
+func (a *Application) verifyCustomRegistration(
+	ctx context.Context,
+	request MergeRequest,
+) (MergeResult, error) {
+	if !request.ExpectedManagedEntryDigest.IsZero() {
+		return MergeResult{}, port.ErrInvalidArgument
+	}
+	plan, err := domain.PlanCustomRegistration(request.Target)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	result := MergeResult{plan: plan}
+	if err := a.verifier.Verify(ctx, request.Target); err != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return result, contextError
+		}
+		return result, ErrInvocationVerification
+	}
+	return result, nil
+}
+
 func restoreMatchesPlan(receipt port.RestoreReceipt, plan domain.MergePlan) bool {
 	if !receipt.Valid() || receipt.Exists() != plan.OriginalExisted() {
 		return false
@@ -228,6 +256,12 @@ func (a *Application) ApplyAtomic(ctx context.Context, location port.ConfigLocat
 // VerifyInvocation first proves the exact owned entry remains configured and
 // then delegates the bounded no-shell launcher handshake.
 func (a *Application) VerifyInvocation(ctx context.Context, location port.ConfigLocation, target domain.Target) error {
+	if ctx == nil || location.String() == "" || target.Command() == "" {
+		return port.ErrInvalidArgument
+	}
+	if target.Host() == domain.AgentHostCustom {
+		return a.verifier.Verify(ctx, target)
+	}
 	snapshot, err := a.store.Read(ctx, location)
 	if err != nil {
 		return err
@@ -246,6 +280,9 @@ func (a *Application) documentPolicy(host domain.AgentHost) (port.DocumentPolicy
 	if !host.Valid() {
 		return nil, port.ErrInvalidArgument
 	}
+	if host == domain.AgentHostCustom {
+		return nil, port.ErrUnsupportedPlatform
+	}
 	if host == domain.AgentHostCodex {
 		policy := a.policies[host]
 		if nilInterface(policy) {
@@ -259,7 +296,7 @@ func (a *Application) documentPolicy(host domain.AgentHost) (port.DocumentPolicy
 type hostNeutralDocumentPolicy struct{}
 
 func (hostNeutralDocumentPolicy) Supports(host domain.AgentHost) bool {
-	return host.Valid() && host != domain.AgentHostCodex
+	return host.Valid() && host != domain.AgentHostCodex && host != domain.AgentHostCustom
 }
 
 func (hostNeutralDocumentPolicy) Validate(contents []byte) error {

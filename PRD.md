@@ -176,10 +176,11 @@ Required canonical event families include:
 - Adapter failure must not prevent the host agent from continuing.
 - Offline buffering, reconnection, retry, deduplication, and clock-skew handling are mandatory.
 - A public conformance suite must validate schema, ordering, cancellation, failure, redaction, and context-injection behavior.
+- Any MCP-capable host without a separately certified configuration adapter must be supported through the path-neutral `agentmemory.custom-agent-registration.v1` contract. The host or its plugin/marketplace installer owns its registration and invokes the absolute signed launcher with exactly `mcp --agent custom`; AgentMemory must verify the signed-launcher MCP handshake without discovering, reading, writing, backing up, or deleting an undocumented host configuration.
 
 ### 4.3 Certified adapter coverage
 
-The production product must ship adapters for the major supported coding-agent hosts, including Claude Code, Codex, Gemini CLI, Cursor-compatible environments, and a generic host integration. GLM and other model families inherit the adapter of the host through which they operate. New hosts must be addable without modifying memory, graph, provider, or retrieval code.
+The production product must ship adapters for the major supported coding-agent hosts, including Claude Code, Codex, Gemini CLI, Cursor-compatible environments, and the path-neutral custom-host integration. GLM and other model families inherit the adapter of the host through which they operate. New hosts must be addable without modifying memory, graph, provider, retrieval, or installer orchestration code.
 
 ## 5. Brain, project, and repository identity
 

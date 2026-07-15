@@ -203,12 +203,21 @@ func validAgentConfigurationResult(
 	result agentconfigapp.MergeResult,
 ) bool {
 	actual := result.Plan()
-	expected, err := agentconfigdomain.PlanMerge(
-		actual.BeforeContent(),
-		actual.OriginalExisted(),
-		projection.target,
-		projection.expectedManagedEntryDigest,
-	)
+	var expected agentconfigdomain.MergePlan
+	var err error
+	if projection.target.Host() == agentconfigdomain.AgentHostCustom {
+		if !projection.expectedManagedEntryDigest.IsZero() {
+			return false
+		}
+		expected, err = agentconfigdomain.PlanCustomRegistration(projection.target)
+	} else {
+		expected, err = agentconfigdomain.PlanMerge(
+			actual.BeforeContent(),
+			actual.OriginalExisted(),
+			projection.target,
+			projection.expectedManagedEntryDigest,
+		)
+	}
 	if err != nil || result.Changed() != actual.Changed() ||
 		!sameAgentConfigurationMergePlan(actual, expected) {
 		return false

@@ -17,6 +17,7 @@ import (
 const (
 	maximumHandshakeOutputBytes = 1024 * 1024
 	maximumHandshakeMessages    = 32
+	preferredHandshakeVersion   = "2025-11-25"
 )
 
 var supportedHandshakeVersions = map[string]struct{}{
@@ -29,11 +30,11 @@ var supportedHandshakeVersions = map[string]struct{}{
 // InvocationVerifier proves that the exact signed launcher can complete a
 // real MCP initialize and tool-discovery exchange without a command shell.
 type InvocationVerifier struct {
-	runner argvprocess.Runner
+	runner argvprocess.ConversationRunner
 }
 
 // NewInvocationVerifier accepts only an immutable launcher-role authority.
-func NewInvocationVerifier(runner argvprocess.Runner) (*InvocationVerifier, error) {
+func NewInvocationVerifier(runner argvprocess.ConversationRunner) (*InvocationVerifier, error) {
 	if nilRunner(runner) || !runner.ExecutableAuthority().Valid() ||
 		runner.ExecutableAuthority().Role() != argvprocess.ExecutableRoleAgentMemoryLauncher {
 		return nil, port.ErrInvalidArgument
@@ -52,16 +53,15 @@ func (v *InvocationVerifier) Verify(ctx context.Context, target domain.Target) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	transcript := []byte(
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agentmemory-installer-verifier","version":"1"}}}` + "\n" +
-			`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
-			`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n",
-	)
-	invocation, err := argvprocess.NewInvocationWithStandardInput(target.Command(), target.Arguments(), transcript)
+	conversation, err := bootstrapHandshakeConversation()
 	if err != nil {
 		return port.ErrInvalidArgument
 	}
-	result, err := v.runner.Run(ctx, invocation)
+	invocation, err := argvprocess.NewInvocation(target.Command(), target.Arguments())
+	if err != nil {
+		return port.ErrInvalidArgument
+	}
+	result, err := v.runner.RunLineConversation(ctx, invocation, conversation)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -76,6 +76,29 @@ func (v *InvocationVerifier) Verify(ctx context.Context, target domain.Target) e
 		return port.ErrIntegrity
 	}
 	return nil
+}
+
+func bootstrapHandshakeConversation() (argvprocess.LineConversation, error) {
+	requests := []struct {
+		message       string
+		awaitResponse bool
+	}{
+		{
+			message:       `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + preferredHandshakeVersion + `","capabilities":{},"clientInfo":{"name":"agentmemory-installer-verifier","version":"1"}}}` + "\n",
+			awaitResponse: true,
+		},
+		{message: `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n"},
+		{message: `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n", awaitResponse: true},
+	}
+	steps := make([]argvprocess.ConversationStep, 0, len(requests))
+	for _, request := range requests {
+		step, err := argvprocess.NewConversationStep([]byte(request.message), request.awaitResponse)
+		if err != nil {
+			return argvprocess.LineConversation{}, err
+		}
+		steps = append(steps, step)
+	}
+	return argvprocess.NewLineConversation(steps)
 }
 
 type handshakeEnvelope struct {
@@ -201,7 +224,7 @@ func exactBootstrapTools(tools []listedTool) bool {
 	return true
 }
 
-func nilRunner(runner argvprocess.Runner) bool {
+func nilRunner(runner argvprocess.ConversationRunner) bool {
 	if runner == nil {
 		return true
 	}

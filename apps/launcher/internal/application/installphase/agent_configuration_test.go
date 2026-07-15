@@ -73,6 +73,38 @@ func TestPF001AgentConfigurationPhaseAcceptsVerifiedIdempotentResult(t *testing.
 	}
 }
 
+func TestPF001AgentConfigurationPhaseAcceptsPathNeutralCustomRegistration(t *testing.T) {
+	t.Parallel()
+	request, projection := agentConfigurationPhaseFixture(t)
+	customTarget, err := agentconfigdomain.NewTargetForAgent(
+		agentconfigdomain.AgentHostCustom,
+		agentConfigurationInstallationID,
+		agentConfigurationEntryID,
+		"/opt/agentmemory/bin/agentmemory",
+		agentconfigdomain.DigestBytes([]byte("signed launcher")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection.target = customTarget
+	projection.expectedManagedEntryDigest = agentconfigdomain.Digest{}
+	projection.parentBindingDigest = agentConfigurationParentBinding(projection)
+	result := agentConfigurationMergeResult(t, customTarget, nil, false, agentconfigdomain.Digest{})
+	phase, err := NewAgentConfigurationPhase(
+		&agentConfigurationPlanQuery{projection: projection},
+		&agentConfigurationMerger{result: result},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := phase.MergeAgentConfiguration(t.Context(), request)
+	if err != nil || output.Outcome() != installapp.PhaseOutcomeCompleted || result.Changed() ||
+		result.Plan().Action() != agentconfigdomain.MergeActionVerifyCustom ||
+		!output.OutputDigest().Equal(install.DigestBytes(result.Plan().AfterContent())) {
+		t.Fatalf("custom MergeAgentConfiguration()=%+v,%v plan=%+v", output, err, result.Plan())
+	}
+}
+
 func TestPF001AgentConfigurationPhaseAcceptsExistingFileBackupReceipt(t *testing.T) {
 	t.Parallel()
 

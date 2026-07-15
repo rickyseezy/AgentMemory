@@ -34,6 +34,7 @@ func TestPF001AgentMemoryCommandAcceptsOnlyClosedHostAndArgumentGrammar(t *testi
 	for _, host := range []agentconfig.AgentHost{
 		agentconfig.AgentHostGeneric, agentconfig.AgentHostCodex, agentconfig.AgentHostClaude,
 		agentconfig.AgentHostGemini, agentconfig.AgentHostCursor, agentconfig.AgentHostGLM,
+		agentconfig.AgentHostCustom,
 	} {
 		parsed, ok := parseMCPCommand([]string{"mcp", "--agent", string(host)})
 		if !ok || parsed != host {

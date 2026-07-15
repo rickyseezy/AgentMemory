@@ -403,6 +403,7 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 		job.job,
 		job.completionPort,
 	)
+	closeConversationInput(command)
 	copyError := collectWindowsBrokerCopies(copyResults)
 	resourceCloseError := job.close()
 	operationalError := errors.Join(
@@ -441,8 +442,11 @@ func validateWindowsBrokerCommand(ctx context.Context, command *exec.Cmd) error 
 		return os.ErrInvalid
 	}
 	if command.Stdin != nil {
-		input, ok := command.Stdin.(*bytes.Reader)
-		if !ok || input == nil || input.Len() <= 0 || input.Len() > maximumWindowsBrokerInputBytes {
+		input, buffered := command.Stdin.(*bytes.Reader)
+		conversation, interactive := command.Stdin.(*conversationPipeReader)
+		if buffered && (input == nil || input.Len() <= 0 || input.Len() > maximumWindowsBrokerInputBytes) ||
+			interactive && (conversation == nil || conversation.PipeReader == nil) ||
+			!buffered && !interactive {
 			return os.ErrInvalid
 		}
 	}

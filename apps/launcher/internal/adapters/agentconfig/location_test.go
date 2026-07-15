@@ -22,6 +22,7 @@ func TestPF001AgentLocationResolverUsesDocumentedUserScopeFiles(t *testing.T) {
 		domain.AgentHostClaude: filepath.Join(home, ".claude.json"),
 		domain.AgentHostGemini: filepath.Join(home, ".gemini", "settings.json"),
 		domain.AgentHostCursor: filepath.Join(home, ".cursor", "mcp.json"),
+		domain.AgentHostCustom: filepath.Join(home, ".agentmemory", "registrations", "custom-v1"),
 	}
 	for host, path := range expected {
 		host, path := host, path

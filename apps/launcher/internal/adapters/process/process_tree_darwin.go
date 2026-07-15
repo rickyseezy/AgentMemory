@@ -30,12 +30,14 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 	pid := command.Process.Pid
 	if pid <= 0 {
 		_ = command.Process.Kill()
+		closeConversationInput(command)
 		_ = command.Wait()
 		return os.ErrInvalid
 	}
 	queue, err := unix.Kqueue()
 	if err != nil {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		closeConversationInput(command)
 		_ = command.Wait()
 		return err
 	}
@@ -54,6 +56,7 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 		// status instead of misreporting an observation failure.
 		if errors.Is(err, syscall.ESRCH) {
 			settlementError := terminateReservedProcessGroup(pid)
+			closeConversationInput(command)
 			waitError := command.Wait()
 			if settlementError != nil {
 				return errors.Join(err, settlementError)
@@ -61,6 +64,7 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 			return waitError
 		}
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		closeConversationInput(command)
 		_ = command.Wait()
 		return err
 	}

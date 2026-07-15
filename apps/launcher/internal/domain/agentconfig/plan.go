@@ -1,6 +1,11 @@
 package agentconfig
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/binary"
+)
+
+const customRegistrationBindingDomain = "agentmemory.custom-agent-registration.v1"
 
 // MergeAction is the closed mutation vocabulary for one host configuration.
 type MergeAction uint8
@@ -15,6 +20,9 @@ const (
 	// MergeActionReplaceManaged replaces only an entry bound to a protected
 	// previous managed-entry digest.
 	MergeActionReplaceManaged
+	// MergeActionVerifyCustom records a verified signed-launcher handshake for
+	// a path-neutral custom host without mutating unknown host configuration.
+	MergeActionVerifyCustom
 )
 
 // String returns the stable journal-safe action name.
@@ -28,9 +36,42 @@ func (a MergeAction) String() string {
 		return "no_change"
 	case MergeActionReplaceManaged:
 		return "replace_managed"
+	case MergeActionVerifyCustom:
+		return "verify_custom"
 	default:
 		return "unknown"
 	}
+}
+
+// PlanCustomRegistration creates deterministic phase evidence for a custom
+// MCP host that already owns registration of the signed launcher. The bytes
+// are a binding record, never a host configuration document or write target.
+func PlanCustomRegistration(target Target) (MergePlan, error) {
+	if target.Host() != AgentHostCustom || target.InstallationID() == "" || target.EntryID() == "" ||
+		target.Command() == "" || target.LauncherDigest().IsZero() {
+		return MergePlan{}, ErrInvalidTarget
+	}
+	canonical := make([]byte, 0, 512)
+	for _, field := range []string{
+		customRegistrationBindingDomain,
+		string(target.Host()),
+		target.InstallationID(),
+		target.EntryID(),
+		target.Command(),
+		target.LauncherDigest().String(),
+	} {
+		canonical = appendCustomRegistrationField(canonical, field)
+	}
+	for _, argument := range target.Arguments() {
+		canonical = appendCustomRegistrationField(canonical, argument)
+	}
+	digest := DigestBytes(canonical)
+	return newMergePlan(MergeActionVerifyCustom, false, nil, canonical, digest, target), nil
+}
+
+func appendCustomRegistrationField(destination []byte, value string) []byte {
+	destination = binary.BigEndian.AppendUint64(destination, uint64(len(value)))
+	return append(destination, value...)
 }
 
 // MergePlan binds an exact observed configuration to one validated result.
@@ -55,7 +96,7 @@ func PlanMerge(
 	if target.Command() == "" || target.LauncherDigest().IsZero() {
 		return MergePlan{}, ErrInvalidTarget
 	}
-	if target.Host() == AgentHostCodex {
+	if target.Host() == AgentHostCodex || target.Host() == AgentHostCustom {
 		return MergePlan{}, ErrInvalidTarget
 	}
 	if !target.Host().Valid() {
@@ -147,6 +188,7 @@ func NewMergePlan(
 ) (MergePlan, error) {
 	if (action != MergeActionAdd && action != MergeActionNoChange && action != MergeActionReplaceManaged) ||
 		!target.Host().Valid() || target.Command() == "" || target.LauncherDigest().IsZero() ||
+		target.Host() == AgentHostCustom ||
 		len(after) == 0 || len(after) > MaxDocumentBytes || managedEntryDigest.IsZero() ||
 		(!originalExisted && len(before) != 0) ||
 		(action == MergeActionNoChange && !bytes.Equal(before, after)) ||
@@ -158,7 +200,7 @@ func NewMergePlan(
 
 // VerifyManagedEntry proves that the one named entry exactly matches target.
 func VerifyManagedEntry(contents []byte, target Target) error {
-	if target.Host() == AgentHostCodex {
+	if target.Host() == AgentHostCodex || target.Host() == AgentHostCustom {
 		return ErrInvalidTarget
 	}
 	if !target.Host().Valid() {

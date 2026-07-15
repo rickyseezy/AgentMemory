@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -183,6 +184,126 @@ func TestPF001ArgvRunnerUsesOnlyExplicitBoundedStandardInput(t *testing.T) {
 	}
 }
 
+func TestPF001ArgvRunnerSequencesLineConversationAfterEachResponse(t *testing.T) {
+	t.Parallel()
+	executable := testCurrentExecutable(t)
+	invocation, err := argvprocess.NewInvocation(executable, []string{
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "conversation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation := mustLineConversation(t,
+		conversationInput{line: "initialize\n", await: true},
+		conversationInput{line: "initialized\n", await: false},
+		conversationInput{line: "tools/list\n", await: true},
+	)
+	result, err := mustTestRunner(t, executable).RunLineConversation(t.Context(), invocation, conversation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual := string(result.StandardOutput); actual != "initialize-ok\ntools-ok\n" || result.ExitCode != 0 {
+		t.Fatalf("conversation output/exit=%q/%d", actual, result.ExitCode)
+	}
+}
+
+func TestPF001ArgvRunnerConversationFailsClosedOnFramingBoundsAndCancellation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		command string
+		want    error
+		limit   int
+	}{
+		{name: "unterminated response", command: "conversation-unterminated", want: argvprocess.ErrConversation},
+		{name: "oversized response", command: "conversation-large", want: argvprocess.ErrOutputLimit, limit: 128},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			executable := testCurrentExecutable(t)
+			invocation, err := argvprocess.NewInvocation(executable, []string{
+				"-test.run=^TestPF001ArgvRunnerHelper$", "--", test.command,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := mustTestRunner(t, executable)
+			if test.limit != 0 {
+				runner.outputLimit = test.limit
+			}
+			result, err := runner.RunLineConversation(
+				t.Context(), invocation,
+				mustLineConversation(t, conversationInput{line: "initialize\n", await: true}),
+			)
+			if !errors.Is(err, test.want) || errors.Is(test.want, argvprocess.ErrOutputLimit) && !result.OutputTruncated {
+				t.Fatalf("conversation result/error=%+v/%v want=%v", result, err, test.want)
+			}
+		})
+	}
+
+	executable := testCurrentExecutable(t)
+	invocation, err := argvprocess.NewInvocation(executable, []string{
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "conversation-wait",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := mustTestRunner(t, executable).RunLineConversation(
+		ctx, invocation, mustLineConversation(t, conversationInput{line: "initialize\n", await: true}),
+	); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("conversation cancellation error=%v", err)
+	}
+}
+
+func TestPF001ArgvRunnerConversationRejectsAmbientOrInvalidInput(t *testing.T) {
+	t.Parallel()
+	executable := testCurrentExecutable(t)
+	conversation := mustLineConversation(t, conversationInput{line: "initialize\n", await: true})
+	preloaded, err := argvprocess.NewInvocationWithStandardInput(executable, []string{
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "conversation",
+	}, []byte("preloaded"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := mustTestRunner(t, executable)
+	if _, err := runner.RunLineConversation(t.Context(), preloaded, conversation); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
+		t.Fatalf("preloaded conversation error=%v", err)
+	}
+	invocation, _ := argvprocess.NewInvocation(executable, nil)
+	//lint:ignore SA1012 Deliberate nil-context process boundary test.
+	if _, err := runner.RunLineConversation(nil, invocation, conversation); !errors.Is(err, argvprocess.ErrInvalidInvocation) { //nolint:staticcheck
+		t.Fatalf("nil-context conversation error=%v", err)
+	}
+	if _, err := runner.RunLineConversation(t.Context(), invocation, argvprocess.LineConversation{}); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
+		t.Fatalf("zero conversation error=%v", err)
+	}
+}
+
+type conversationInput struct {
+	line  string
+	await bool
+}
+
+func mustLineConversation(t testing.TB, inputs ...conversationInput) argvprocess.LineConversation {
+	t.Helper()
+	steps := make([]argvprocess.ConversationStep, 0, len(inputs))
+	for _, input := range inputs {
+		step, err := argvprocess.NewConversationStep([]byte(input.line), input.await)
+		if err != nil {
+			t.Fatal(err)
+		}
+		steps = append(steps, step)
+	}
+	conversation, err := argvprocess.NewLineConversation(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conversation
+}
+
 type testPublisherVerifier struct{}
 
 func (testPublisherVerifier) VerifyExecutablePublisher(
@@ -237,6 +358,34 @@ func TestPF001ArgvRunnerHelper(_ *testing.T) {
 		time.Sleep(10 * time.Second)
 	case "copy-input":
 		_, _ = os.Stdout.ReadFrom(os.Stdin)
+	case "conversation":
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() || scanner.Text() != "initialize" {
+			os.Exit(21)
+		}
+		_, _ = os.Stdout.WriteString("initialize-ok\n")
+		if !scanner.Scan() || scanner.Text() != "initialized" || !scanner.Scan() || scanner.Text() != "tools/list" {
+			os.Exit(22)
+		}
+		_, _ = os.Stdout.WriteString("tools-ok\n")
+	case "conversation-unterminated":
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			os.Exit(23)
+		}
+		_, _ = os.Stdout.WriteString("unterminated")
+	case "conversation-large":
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			os.Exit(24)
+		}
+		_, _ = os.Stdout.WriteString(strings.Repeat("o", 512) + "\n")
+	case "conversation-wait":
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			os.Exit(25)
+		}
+		time.Sleep(10 * time.Second)
 	case "ignore-termination":
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals)

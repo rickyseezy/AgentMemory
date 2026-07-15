@@ -33,6 +33,7 @@ func runCommandInProcessTree(ctx context.Context, command *exec.Cmd) error {
 	pidfd, err := unix.PidfdOpen(pid, 0)
 	if err != nil {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		closeConversationInput(command)
 		_ = command.Wait()
 		return err
 	}

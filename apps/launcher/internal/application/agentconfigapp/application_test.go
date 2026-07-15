@@ -3,6 +3,7 @@ package agentconfigapp
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/agentconfig"
@@ -24,9 +25,12 @@ type fakeStore struct {
 	restoreErr    error
 	applyCalls    int
 	restoreCalls  int
+	detectCalls   int
+	readCalls     int
 }
 
 func (f *fakeStore) Detect(context.Context, agentconfig.ConfigLocation) (agentconfig.Detection, error) {
+	f.detectCalls++
 	if f.detectErr != nil {
 		return agentconfig.Detection{}, f.detectErr
 	}
@@ -34,6 +38,7 @@ func (f *fakeStore) Detect(context.Context, agentconfig.ConfigLocation) (agentco
 }
 
 func (f *fakeStore) Read(context.Context, agentconfig.ConfigLocation) (agentconfig.Snapshot, error) {
+	f.readCalls++
 	if f.readErr != nil {
 		return agentconfig.Snapshot{}, f.readErr
 	}
@@ -41,6 +46,53 @@ func (f *fakeStore) Read(context.Context, agentconfig.ConfigLocation) (agentconf
 		return agentconfig.Snapshot{}, agentconfig.ErrNotFound
 	}
 	return f.snapshot, nil
+}
+
+func TestPF001CustomHostRegistrationVerifiesWithoutTouchingUnknownHostConfiguration(t *testing.T) {
+	t.Parallel()
+	target, err := domain.NewTargetForAgent(
+		domain.AgentHostCustom,
+		testInstallationID,
+		testEntryID,
+		"/opt/agentmemory/bin/agentmemory",
+		domain.DigestBytes([]byte("signed launcher")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{snapshot: mustSnapshot(true, []byte(`{"must":"remain untouched"}`))}
+	verifier := &fakeVerifier{}
+	application, err := New(store, verifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, _ := agentconfig.NewConfigLocation("/home/user/.agentmemory/registrations/custom-v1")
+	//lint:ignore SA1012 Deliberate absent-context boundary test.
+	if _, mergeErr := application.Merge(nil, MergeRequest{Location: location, Target: target}); !errors.Is(mergeErr, agentconfig.ErrInvalidArgument) { //nolint:staticcheck
+		t.Fatalf("custom nil-context error=%v", mergeErr)
+	}
+	result, err := application.Merge(t.Context(), MergeRequest{Location: location, Target: target})
+	if err != nil || result.Changed() || result.Plan().Action() != domain.MergeActionVerifyCustom ||
+		store.detectCalls != 0 || store.readCalls != 0 || store.applyCalls != 0 || store.restoreCalls != 0 ||
+		verifier.calls != 1 || result.Receipt().Valid() {
+		t.Fatalf("custom registration result=%+v error=%v store=%+v verifier=%d", result, err, store, verifier.calls)
+	}
+
+	verifier.err = errors.New("private handshake failure")
+	if _, err := application.Merge(t.Context(), MergeRequest{Location: location, Target: target}); !errors.Is(err, ErrInvocationVerification) || strings.Contains(err.Error(), "private handshake failure") {
+		t.Fatalf("custom verification error=%v", err)
+	}
+	if _, err := application.Merge(t.Context(), MergeRequest{
+		Location: location, Target: target,
+		ExpectedManagedEntryDigest: domain.DigestBytes([]byte("forged managed document")),
+	}); !errors.Is(err, agentconfig.ErrInvalidArgument) {
+		t.Fatalf("custom managed-document substitution error=%v", err)
+	}
+	verifier.err = nil
+	if err := application.VerifyInvocation(t.Context(), location, target); err != nil ||
+		store.detectCalls != 0 || store.readCalls != 0 || store.applyCalls != 0 || store.restoreCalls != 0 {
+		t.Fatalf("custom direct verification error=%v store=%+v", err, store)
+	}
 }
 
 func (f *fakeStore) ApplyAtomic(_ context.Context, _ agentconfig.ConfigLocation, plan domain.MergePlan) (agentconfig.ApplyReceipt, error) {
@@ -376,10 +428,23 @@ func TestPF001PortableDocumentPolicyExposesOnlySupportedHostSyntax(t *testing.T)
 			t.Fatalf("portable policy rejected %s", host)
 		}
 	}
-	for _, host := range []domain.AgentHost{domain.AgentHostCodex, domain.AgentHost("foreign")} {
+	for _, host := range []domain.AgentHost{domain.AgentHostCodex, domain.AgentHostCustom, domain.AgentHost("foreign")} {
 		if policy.Supports(host) {
 			t.Fatalf("portable policy accepted %s", host)
 		}
+	}
+	customTarget, targetErr := domain.NewTargetForAgent(
+		domain.AgentHostCustom,
+		testInstallationID,
+		testEntryID,
+		"/opt/agentmemory/bin/agentmemory",
+		domain.DigestBytes([]byte("signed launcher")),
+	)
+	if targetErr != nil {
+		t.Fatal(targetErr)
+	}
+	if _, planErr := application.PlanMerge(nil, false, customTarget, domain.Digest{}); !errors.Is(planErr, agentconfig.ErrUnsupportedPlatform) {
+		t.Fatalf("custom host entered document planning: %v", planErr)
 	}
 }
 

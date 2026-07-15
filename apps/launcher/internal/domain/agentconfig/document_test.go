@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -248,12 +249,79 @@ func TestPF001MergeActionStringsAreStable(t *testing.T) {
 		MergeActionAdd:            "add",
 		MergeActionNoChange:       "no_change",
 		MergeActionReplaceManaged: "replace_managed",
+		MergeActionVerifyCustom:   "verify_custom",
 		MergeAction(255):          "unknown",
 	}
 	for action, expected := range tests {
 		if actual := action.String(); actual != expected {
 			t.Fatalf("MergeAction(%d).String() = %q, want %q", action, actual, expected)
 		}
+	}
+}
+
+func TestPF001CustomHostRegistrationIsPathNeutralAndDigestBound(t *testing.T) {
+	t.Parallel()
+	target, err := NewTargetForAgent(
+		AgentHostCustom,
+		testInstallationID,
+		testEntryID,
+		"/opt/agentmemory/bin/agentmemory",
+		DigestBytes([]byte("signed custom-host launcher")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanCustomRegistration(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Action() != MergeActionVerifyCustom || plan.Changed() || plan.OriginalExisted() ||
+		plan.BeforeContent() != nil || plan.BeforeDigest() != (Digest{}) ||
+		!plan.AfterDigest().Equal(DigestBytes(plan.AfterContent())) ||
+		!plan.ManagedEntryDigest().Equal(plan.AfterDigest()) || plan.Target().Host() != AgentHostCustom {
+		t.Fatalf("custom registration plan=%+v", plan)
+	}
+	if actual := target.Arguments(); !slices.Equal(actual, []string{"mcp", "--agent", "custom"}) {
+		t.Fatalf("custom launcher arguments=%q", actual)
+	}
+	first := plan.AfterContent()
+	second, err := PlanCustomRegistration(target)
+	if err != nil || !bytes.Equal(first, second.AfterContent()) {
+		t.Fatal("custom registration proof is not deterministic")
+	}
+	first[0] ^= 0xff
+	if bytes.Equal(first, plan.AfterContent()) {
+		t.Fatal("custom registration proof exposed mutable bytes")
+	}
+	changedTarget, err := NewTargetForAgent(
+		AgentHostCustom,
+		testInstallationID,
+		testEntryID,
+		"/opt/agentmemory/bin/agentmemory-v2",
+		DigestBytes([]byte("signed custom-host launcher v2")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := PlanCustomRegistration(changedTarget)
+	if err != nil || changed.AfterDigest().Equal(plan.AfterDigest()) {
+		t.Fatal("custom registration proof did not bind launcher path and digest")
+	}
+	if _, err := PlanCustomRegistration(testTarget(t, strings.Repeat("7", 64))); !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("non-custom registration error=%v", err)
+	}
+	if _, err := PlanMerge(nil, false, target, Digest{}); !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("custom host entered document merge: %v", err)
+	}
+	if _, err := NewMergePlan(
+		MergeActionAdd,
+		false,
+		nil,
+		[]byte(`{"mcpServers":{}}`),
+		DigestBytes([]byte("managed")),
+		target,
+	); !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("custom host accepted syntax-adapter plan: %v", err)
 	}
 }
 
@@ -264,7 +332,7 @@ func TestPF001HostSpecificValidationAndAdapterPlansRemainClosed(t *testing.T) {
 			t.Fatalf("ValidateDocumentFor(%s) error = %v", host, err)
 		}
 	}
-	for _, host := range []AgentHost{AgentHostCodex, AgentHost("foreign")} {
+	for _, host := range []AgentHost{AgentHostCodex, AgentHostCustom, AgentHost("foreign")} {
 		if err := ValidateDocumentFor(host, []byte(`{}`)); !errors.Is(err, ErrInvalidTarget) {
 			t.Fatalf("ValidateDocumentFor(%s) error = %v", host, err)
 		}

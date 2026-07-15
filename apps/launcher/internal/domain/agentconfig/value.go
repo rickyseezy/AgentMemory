@@ -38,12 +38,18 @@ const (
 	// AgentHostGLM is reserved for a certified GLM-native host exposing the
 	// portable JSON MCP contract; GLM used inside Claude/Codex selects that host.
 	AgentHostGLM AgentHost = "glm"
+	// AgentHostCustom is the path-neutral MCP registration contract. The host
+	// or plugin marketplace owns its configuration and invokes the exact signed
+	// launcher; AgentMemory verifies the handshake without guessing or mutating
+	// a host configuration file.
+	AgentHostCustom AgentHost = "custom"
 )
 
 // Valid reports whether the host has a closed configuration policy.
 func (h AgentHost) Valid() bool {
 	switch h {
-	case AgentHostGeneric, AgentHostCodex, AgentHostClaude, AgentHostGemini, AgentHostCursor, AgentHostGLM:
+	case AgentHostGeneric, AgentHostCodex, AgentHostClaude, AgentHostGemini, AgentHostCursor, AgentHostGLM,
+		AgentHostCustom:
 		return true
 	default:
 		return false

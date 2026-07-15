@@ -2,11 +2,14 @@
 package process
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"reflect"
 	"runtime"
 
@@ -74,94 +77,15 @@ func NewRunner(
 // or caller-controlled working directory. Optional stdin is copied from the
 // bounded invocation contract.
 func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (argvprocess.Result, error) {
-	if r == nil || ctx == nil || !r.authority.Valid() || nilPublisherVerifier(r.publisher) {
-		return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-	}
-	if err := ctx.Err(); err != nil {
+	command, lease, err := r.prepareCommand(ctx, invocation)
+	if err != nil {
 		return argvprocess.Result{}, err
 	}
-	if invocation.Executable() != r.authority.CanonicalPath() {
-		return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-	}
-	arguments := invocation.Arguments()
-	lease, err := acquireExecutableLease(ctx, r.authority, r.testOnlyAllowMutablePath)
-	if err != nil {
-		return argvprocess.Result{}, invocationOrContextError(ctx)
-	}
 	defer lease.close()
-	if err := lease.verify(ctx, r.authority); err != nil {
-		return argvprocess.Result{}, invocationOrContextError(ctx)
-	}
-	evidence := lease.evidence(r.authority)
-	if err := r.publisher.VerifyExecutablePublisher(ctx, r.authority, evidence); err != nil {
-		return argvprocess.Result{}, invocationOrContextError(ctx)
-	}
-	// Publisher validation can be comparatively expensive and may invoke native
-	// trust services. Re-prove every held object after it returns and before any
-	// process can observe a side effect.
-	if err := lease.verify(ctx, r.authority); err != nil {
-		return argvprocess.Result{}, invocationOrContextError(ctx)
-	}
-	command, err := lease.command(ctx, arguments)
-	if err != nil {
-		return argvprocess.Result{}, invocationOrContextError(ctx)
-	}
-	environment := invocation.Environment()
-	switch invocation.EnvironmentProfile() {
-	case argvprocess.EnvironmentProfileAPTTransaction:
-		if r.authority.Role() != argvprocess.ExecutableRoleAPTTransaction || len(environment) != 5 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = environment
-	case argvprocess.EnvironmentProfileDNFTransaction:
-		if r.authority.Role() != argvprocess.ExecutableRoleDNFTransaction || len(environment) != 4 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = environment
-	case argvprocess.EnvironmentProfilePackageQuery:
-		if r.authority.Role() != argvprocess.ExecutableRoleDPKGQuery &&
-			r.authority.Role() != argvprocess.ExecutableRoleRPMQuery || len(environment) != 0 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = []string{"LANG=C", "LC_ALL=C"}
-	case argvprocess.EnvironmentProfileLoginCTL:
-		if r.authority.Role() != argvprocess.ExecutableRoleLoginCTL || len(environment) != 0 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = []string{"LANG=C", "LC_ALL=C"}
-	case argvprocess.EnvironmentProfileSystemCTL:
-		if r.authority.Role() != argvprocess.ExecutableRoleSystemCTL || len(environment) != 0 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = []string{"LANG=C", "LC_ALL=C", "SYSTEMD_PAGERSECURE=1"}
-	case argvprocess.EnvironmentProfileRootlessSetup:
-		if r.authority.Role() != argvprocess.ExecutableRoleRootlessSetup || len(environment) != 8 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = environment
-	case argvprocess.EnvironmentProfilePrivilegeBroker:
-		if r.authority.Role() != argvprocess.ExecutableRolePrivilegeBroker || len(environment) != 0 {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = []string{"LANG=C", "LC_ALL=C"}
-	case argvprocess.EnvironmentProfileDefault:
-		if len(environment) != 0 || r.authority.Role() == argvprocess.ExecutableRoleAPTTransaction ||
-			r.authority.Role() == argvprocess.ExecutableRoleDNFTransaction ||
-			r.authority.Role() == argvprocess.ExecutableRoleDPKGQuery ||
-			r.authority.Role() == argvprocess.ExecutableRoleRPMQuery ||
-			r.authority.Role() == argvprocess.ExecutableRoleLoginCTL ||
-			r.authority.Role() == argvprocess.ExecutableRoleSystemCTL {
-			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-		}
-		command.Env = []string{"LANG=C", "LC_ALL=C"}
-	default:
-		return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
-	}
 	standardInput := invocation.StandardInput()
 	if len(standardInput) != 0 {
 		command.Stdin = bytes.NewReader(standardInput)
 	}
-	command.Dir = lease.trustedWorkingDirectory()
 
 	stdout := newBoundedBuffer(r.outputLimit)
 	stderr := newBoundedBuffer(r.outputLimit)
@@ -187,6 +111,274 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 		return result, fmt.Errorf("argv process exited unsuccessfully: %w", runError)
 	}
 	return result, nil
+}
+
+func (r *Runner) prepareCommand(
+	ctx context.Context,
+	invocation argvprocess.Invocation,
+) (*exec.Cmd, *executableLease, error) {
+	if r == nil || ctx == nil || !r.authority.Valid() || nilPublisherVerifier(r.publisher) {
+		return nil, nil, argvprocess.ErrInvalidInvocation
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if invocation.Executable() != r.authority.CanonicalPath() {
+		return nil, nil, argvprocess.ErrInvalidInvocation
+	}
+	arguments := invocation.Arguments()
+	lease, err := acquireExecutableLease(ctx, r.authority, r.testOnlyAllowMutablePath)
+	if err != nil {
+		return nil, nil, invocationOrContextError(ctx)
+	}
+	failed := true
+	defer func() {
+		if failed {
+			lease.close()
+		}
+	}()
+	if err := lease.verify(ctx, r.authority); err != nil {
+		return nil, nil, invocationOrContextError(ctx)
+	}
+	evidence := lease.evidence(r.authority)
+	if err := r.publisher.VerifyExecutablePublisher(ctx, r.authority, evidence); err != nil {
+		return nil, nil, invocationOrContextError(ctx)
+	}
+	// Publisher validation can be comparatively expensive and may invoke native
+	// trust services. Re-prove every held object after it returns and before any
+	// process can observe a side effect.
+	if err := lease.verify(ctx, r.authority); err != nil {
+		return nil, nil, invocationOrContextError(ctx)
+	}
+	command, err := lease.command(ctx, arguments)
+	if err != nil {
+		return nil, nil, invocationOrContextError(ctx)
+	}
+	environment := invocation.Environment()
+	switch invocation.EnvironmentProfile() {
+	case argvprocess.EnvironmentProfileAPTTransaction:
+		if r.authority.Role() != argvprocess.ExecutableRoleAPTTransaction || len(environment) != 5 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = environment
+	case argvprocess.EnvironmentProfileDNFTransaction:
+		if r.authority.Role() != argvprocess.ExecutableRoleDNFTransaction || len(environment) != 4 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = environment
+	case argvprocess.EnvironmentProfilePackageQuery:
+		if r.authority.Role() != argvprocess.ExecutableRoleDPKGQuery &&
+			r.authority.Role() != argvprocess.ExecutableRoleRPMQuery || len(environment) != 0 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileLoginCTL:
+		if r.authority.Role() != argvprocess.ExecutableRoleLoginCTL || len(environment) != 0 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileSystemCTL:
+		if r.authority.Role() != argvprocess.ExecutableRoleSystemCTL || len(environment) != 0 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C", "SYSTEMD_PAGERSECURE=1"}
+	case argvprocess.EnvironmentProfileRootlessSetup:
+		if r.authority.Role() != argvprocess.ExecutableRoleRootlessSetup || len(environment) != 8 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = environment
+	case argvprocess.EnvironmentProfilePrivilegeBroker:
+		if r.authority.Role() != argvprocess.ExecutableRolePrivilegeBroker || len(environment) != 0 {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileDefault:
+		if len(environment) != 0 || r.authority.Role() == argvprocess.ExecutableRoleAPTTransaction ||
+			r.authority.Role() == argvprocess.ExecutableRoleDNFTransaction ||
+			r.authority.Role() == argvprocess.ExecutableRoleDPKGQuery ||
+			r.authority.Role() == argvprocess.ExecutableRoleRPMQuery ||
+			r.authority.Role() == argvprocess.ExecutableRoleLoginCTL ||
+			r.authority.Role() == argvprocess.ExecutableRoleSystemCTL {
+			return nil, nil, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	default:
+		return nil, nil, argvprocess.ErrInvalidInvocation
+	}
+	command.Dir = lease.trustedWorkingDirectory()
+	failed = false
+	return command, lease, nil
+}
+
+type conversationPipeReader struct{ *io.PipeReader }
+type conversationPipeWriter struct{ *io.PipeWriter }
+
+// RunLineConversation executes one bounded request/response sequence. It
+// writes the next gated request only after one newline-delimited response has
+// been received, preserving protocols whose initialization is stateful.
+func (r *Runner) RunLineConversation(
+	ctx context.Context,
+	invocation argvprocess.Invocation,
+	conversation argvprocess.LineConversation,
+) (argvprocess.Result, error) {
+	steps := conversation.Steps()
+	validated, err := argvprocess.NewLineConversation(steps)
+	if ctx == nil || err != nil || len(invocation.StandardInput()) != 0 {
+		return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+	}
+	sessionContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	command, lease, err := r.prepareCommand(sessionContext, invocation)
+	if err != nil {
+		return argvprocess.Result{}, err
+	}
+	defer lease.close()
+
+	childInput, requestWriter := io.Pipe()
+	responseReader, childOutput := io.Pipe()
+	command.Stdin = &conversationPipeReader{PipeReader: childInput}
+	command.Stdout = &conversationPipeWriter{PipeWriter: childOutput}
+	stderr := newBoundedBuffer(r.outputLimit)
+	command.Stderr = stderr
+	stopPipeWatch := make(chan struct{})
+	pipeWatchComplete := make(chan struct{})
+	go func() {
+		defer close(pipeWatchComplete)
+		select {
+		case <-sessionContext.Done():
+			_ = requestWriter.CloseWithError(sessionContext.Err())
+			_ = responseReader.CloseWithError(sessionContext.Err())
+		case <-stopPipeWatch:
+		}
+	}()
+	defer func() {
+		close(stopPipeWatch)
+		<-pipeWatchComplete
+	}()
+	completed := make(chan error, 1)
+	go func() {
+		runError := runCommandInProcessTree(sessionContext, command)
+		_ = childInput.CloseWithError(runError)
+		_ = childOutput.Close()
+		completed <- runError
+	}()
+
+	stdout := newBoundedBuffer(r.outputLimit)
+	reader := bufio.NewReaderSize(responseReader, 4096)
+	conversationError := runLineConversation(requestWriter, reader, stdout, validated.Steps(), r.outputLimit)
+	if conversationError != nil {
+		cancel()
+		_ = requestWriter.CloseWithError(conversationError)
+		_ = responseReader.CloseWithError(conversationError)
+	} else {
+		_ = requestWriter.Close()
+	}
+	runError := <-completed
+	_ = responseReader.Close()
+	result := argvprocess.Result{
+		ExitCode:        exitCode(runError),
+		StandardOutput:  stdout.Bytes(),
+		StandardError:   stderr.Bytes(),
+		OutputTruncated: stdout.Truncated() || stderr.Truncated(),
+	}
+	if verifyError := lease.verify(context.WithoutCancel(ctx), r.authority); verifyError != nil {
+		return result, argvprocess.ErrInvalidInvocation
+	}
+	if result.OutputTruncated || errors.Is(conversationError, argvprocess.ErrOutputLimit) {
+		result.OutputTruncated = true
+		return result, argvprocess.ErrOutputLimit
+	}
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if conversationError != nil {
+		return result, argvprocess.ErrConversation
+	}
+	if runError != nil {
+		return result, fmt.Errorf("argv process exited unsuccessfully: %w", runError)
+	}
+	return result, nil
+}
+
+func runLineConversation(
+	requestWriter *io.PipeWriter,
+	reader *bufio.Reader,
+	stdout *boundedBuffer,
+	steps []argvprocess.ConversationStep,
+	limit int,
+) error {
+	if requestWriter == nil || reader == nil || stdout == nil || len(steps) == 0 || limit <= 0 {
+		return argvprocess.ErrInvalidInvocation
+	}
+	for _, step := range steps {
+		if _, err := requestWriter.Write(step.Request()); err != nil {
+			return argvprocess.ErrConversation
+		}
+		if !step.AwaitResponse() {
+			continue
+		}
+		line, err := readBoundedProtocolLine(reader, limit)
+		if err != nil {
+			return err
+		}
+		_, _ = stdout.Write(line)
+		if stdout.Truncated() {
+			return argvprocess.ErrOutputLimit
+		}
+	}
+	if err := requestWriter.Close(); err != nil {
+		return argvprocess.ErrConversation
+	}
+	for {
+		line, err := readBoundedProtocolLine(reader, limit)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, _ = stdout.Write(line)
+		if stdout.Truncated() {
+			return argvprocess.ErrOutputLimit
+		}
+	}
+}
+
+func readBoundedProtocolLine(reader *bufio.Reader, limit int) ([]byte, error) {
+	if reader == nil || limit <= 0 {
+		return nil, argvprocess.ErrInvalidInvocation
+	}
+	line := make([]byte, 0, min(limit, 4096))
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(fragment) > limit-len(line) {
+			return nil, argvprocess.ErrOutputLimit
+		}
+		line = append(line, fragment...)
+		switch {
+		case err == nil:
+			return line, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF) && len(line) == 0:
+			return nil, io.EOF
+		case errors.Is(err, io.EOF):
+			return nil, argvprocess.ErrConversation
+		default:
+			return nil, argvprocess.ErrConversation
+		}
+	}
+}
+
+var _ argvprocess.ConversationRunner = (*Runner)(nil)
+
+func closeConversationInput(command *exec.Cmd) {
+	if command == nil {
+		return
+	}
+	if input, ok := command.Stdin.(*conversationPipeReader); ok && input != nil && input.PipeReader != nil {
+		_ = input.Close()
+	}
 }
 
 func invocationOrContextError(ctx context.Context) error {

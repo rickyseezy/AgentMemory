@@ -26,8 +26,9 @@ type osHomeDirectory struct{}
 func (osHomeDirectory) UserHomeDir() (string, error) { return os.UserHomeDir() }
 
 // LocationResolver projects documented user-scope configuration locations for
-// host formats that have been independently certified. Generic and GLM model
-// selection are not filesystem formats and therefore fail closed.
+// host formats that have been independently certified. The custom-host value
+// is an AgentMemory-owned binding namespace, not a guessed host configuration
+// path. Generic and GLM model selection are not filesystem formats.
 type LocationResolver struct{ home HomeDirectoryProvider }
 
 // NewLocationResolver constructs the production invoking-user resolver.
@@ -68,6 +69,8 @@ func (r *LocationResolver) Resolve(
 		path = filepath.Join(home, ".gemini", "settings.json")
 	case domain.AgentHostCursor:
 		path = filepath.Join(home, ".cursor", "mcp.json")
+	case domain.AgentHostCustom:
+		path = filepath.Join(home, ".agentmemory", "registrations", "custom-v1")
 	case domain.AgentHostGeneric, domain.AgentHostGLM:
 		return port.ConfigLocation{}, ErrLocationUnsupported
 	default:

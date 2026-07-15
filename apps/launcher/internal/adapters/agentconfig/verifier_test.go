@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,9 +31,33 @@ func TestPF001InvocationVerifierCompletesExactBootstrapHandshake(t *testing.T) {
 	}
 	if runner.calls != 1 || runner.invocation.Executable() != target.Command() ||
 		strings.Join(runner.invocation.Arguments(), "\x00") != strings.Join(target.Arguments(), "\x00") ||
-		!strings.Contains(string(runner.invocation.StandardInput()), `"method":"initialize"`) ||
-		!strings.Contains(string(runner.invocation.StandardInput()), `"method":"tools/list"`) {
+		len(runner.invocation.StandardInput()) != 0 || !validVerifierConversation(runner.conversation) {
 		t.Fatal("verifier did not execute the exact bounded MCP exchange")
+	}
+}
+
+func TestPF001InvocationVerifierUsesExactCustomHostLauncherArguments(t *testing.T) {
+	t.Parallel()
+	runner, genericTarget := verifierFixture(t)
+	target, err := domain.NewTargetForAgent(
+		domain.AgentHostCustom,
+		verifierInstallationID,
+		verifierEntryID,
+		genericTarget.Command(),
+		genericTarget.LauncherDigest(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := NewInvocationVerifier(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.Verify(t.Context(), target); err != nil {
+		t.Fatalf("Verify(custom) error=%v", err)
+	}
+	if actual := runner.invocation.Arguments(); !slices.Equal(actual, []string{"mcp", "--agent", "custom"}) {
+		t.Fatalf("custom invocation arguments=%q", actual)
 	}
 }
 
@@ -42,7 +67,7 @@ func TestPF001InvocationVerifierRejectsTranscriptSubstitution(t *testing.T) {
 		"raw stdout":        "starting\n",
 		"not terminated":    validVerifierOutput()[:len(validVerifierOutput())-1],
 		"wrong identity":    strings.Replace(validVerifierOutput(), `"name":"agentmemory"`, `"name":"attacker"`, 1),
-		"wrong version":     strings.Replace(validVerifierOutput(), `"protocolVersion":"2025-06-18"`, `"protocolVersion":"future"`, 1),
+		"wrong version":     strings.Replace(validVerifierOutput(), `"protocolVersion":"`+preferredHandshakeVersion+`"`, `"protocolVersion":"future"`, 1),
 		"missing tool":      strings.Replace(validVerifierOutput(), `,{"name":"installation_cancel","inputSchema":{"type":"object"}}`, "", 1),
 		"duplicate tool":    strings.Replace(validVerifierOutput(), "installation_cancel", "installation_status", 1),
 		"foreign tool":      strings.Replace(validVerifierOutput(), "installation_cancel", "memory_delete", 1),
@@ -104,19 +129,42 @@ func TestPF001InvocationVerifierRejectsAuthorityAndExecutionFailures(t *testing.
 }
 
 type verifierRunner struct {
-	authority  argvprocess.ExecutableAuthority
-	result     argvprocess.Result
-	runError   error
-	calls      int
-	invocation argvprocess.Invocation
+	authority    argvprocess.ExecutableAuthority
+	result       argvprocess.Result
+	runError     error
+	calls        int
+	invocation   argvprocess.Invocation
+	conversation argvprocess.LineConversation
 }
 
 func (r *verifierRunner) ExecutableAuthority() argvprocess.ExecutableAuthority { return r.authority }
 
 func (r *verifierRunner) Run(_ context.Context, invocation argvprocess.Invocation) (argvprocess.Result, error) {
+	return r.run(invocation)
+}
+
+func (r *verifierRunner) RunLineConversation(
+	_ context.Context,
+	invocation argvprocess.Invocation,
+	conversation argvprocess.LineConversation,
+) (argvprocess.Result, error) {
+	r.conversation = conversation
+	return r.run(invocation)
+}
+
+func (r *verifierRunner) run(invocation argvprocess.Invocation) (argvprocess.Result, error) {
 	r.calls++
 	r.invocation = invocation
 	return r.result, r.runError
+}
+
+func validVerifierConversation(conversation argvprocess.LineConversation) bool {
+	steps := conversation.Steps()
+	return len(steps) == 3 && steps[0].AwaitResponse() && !steps[1].AwaitResponse() && steps[2].AwaitResponse() &&
+		strings.Contains(string(steps[0].Request()), `"method":"initialize"`) &&
+		strings.Contains(string(steps[0].Request()), `"protocolVersion":"`+preferredHandshakeVersion+`"`) &&
+		strings.Contains(string(steps[1].Request()), `"method":"notifications/initialized"`) &&
+		strings.Contains(string(steps[2].Request()), `"method":"tools/list"`)
 }
 
 func verifierFixture(t *testing.T) (*verifierRunner, domain.Target) {
@@ -160,6 +208,6 @@ func verifierAuthority(t *testing.T, role argvprocess.ExecutableRole) argvproces
 }
 
 func validVerifierOutput() string {
-	return `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"agentmemory","version":"1.0.0"}}}` + "\n" +
+	return `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"` + preferredHandshakeVersion + `","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"agentmemory","version":"1.0.0"}}}` + "\n" +
 		`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"installation_status","inputSchema":{"type":"object"}},{"name":"installation_open_setup","inputSchema":{"type":"object"}},{"name":"installation_cancel","inputSchema":{"type":"object"}}]}}` + "\n"
 }

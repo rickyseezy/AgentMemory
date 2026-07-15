@@ -32,8 +32,10 @@ var (
 	ErrUnsupportedPlatform = errors.New("agent configuration platform is unsupported")
 )
 
-// ConfigLocation is an explicitly addressed host configuration file. Concrete
-// adapters perform platform-specific absolute-path and owner validation.
+// ConfigLocation is an explicitly addressed host configuration file or the
+// AgentMemory-owned binding locator for path-neutral custom registration.
+// Concrete filesystem adapters perform platform-specific path validation;
+// custom registration never passes its binding locator to a filesystem store.
 type ConfigLocation struct{ value string }
 
 // NewConfigLocation validates transport-neutral path safety.

@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
@@ -45,9 +46,18 @@ func TestPF006NativeDesktopRunnerPairRejectsIncompleteAuthority(t *testing.T) {
 	); err == nil || authority.Valid() {
 		t.Fatalf("incomplete executable authority=%+v error=%v", authority, err)
 	}
-	if pair, err := newNativeDesktopRunnerPair(
-		launcherDesktopAuthority(t, runtimeinstall.PlatformDarwin), release,
-	); err != nil || pair.docker == nil || pair.compose == nil ||
+	platform := runtimeinstall.PlatformDarwin
+	if runtime.GOOS == "windows" {
+		platform = runtimeinstall.PlatformWindows
+	}
+	pair, err := newNativeDesktopRunnerPair(launcherDesktopAuthority(t, platform), release)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		if err == nil || pair.docker != nil || pair.compose != nil {
+			t.Fatalf("foreign desktop runner pair=%+v error=%v", pair, err)
+		}
+		return
+	}
+	if err != nil || pair.docker == nil || pair.compose == nil ||
 		!pair.docker.ExecutableAuthority().SameSignedPlan(pair.compose.ExecutableAuthority()) {
 		t.Fatalf("complete runner pair=%+v error=%v", pair, err)
 	}

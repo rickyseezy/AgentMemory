@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -146,7 +146,7 @@ func exactPrivilegePackagePaths(
 	artifacts PrivilegeArtifactSet,
 ) ([]string, error) {
 	authority := request.Authority()
-	wantedRoot := filepath.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
+	wantedRoot := path.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
 	if !authority.Valid() || artifacts.Root() != wantedRoot {
 		return nil, runtimeport.ErrPrivilegeIntegrity
 	}
@@ -159,8 +159,8 @@ func exactPrivilegePackagePaths(
 	for _, pkg := range packages {
 		artifact, present := artifacts.Artifact(pkg.Name())
 		if !present || !artifact.IsPackage() || artifact.ArtifactID() != pkg.Name() ||
-			artifact.SHA256().IsZero() || artifact.Size() == 0 || filepath.Dir(artifact.TargetPath()) != wantedRoot ||
-			filepath.Base(artifact.TargetPath()) != pkg.Name()+"-"+artifact.SHA256().String()+extension {
+			artifact.SHA256().IsZero() || artifact.Size() == 0 || path.Dir(artifact.TargetPath()) != wantedRoot ||
+			path.Base(artifact.TargetPath()) != pkg.Name()+"-"+artifact.SHA256().String()+extension {
 			return nil, runtimeport.ErrPrivilegeIntegrity
 		}
 		paths = append(paths, artifact.TargetPath())

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 			"bootstrap/distribution-manifest.json", "native/linux/arm64/agentmemory",
 		} {
 			info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(relative)))
-			if err != nil || info.Mode().Perm() != 0o600 {
+			if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 				t.Fatalf("verification input %s mode=%v error=%v, want private 0600", relative, info, err)
 			}
 		}
@@ -78,7 +79,7 @@ func TestPF001LinuxReleaseAssemblyPublishesNormalizedClosedStage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", relative, err)
 		}
-		if info.Mode().Perm() != wantMode || info.ModTime().Unix() != epoch.Unix() {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != wantMode || info.ModTime().Unix() != epoch.Unix() {
 			t.Errorf("%s mode=%04o mtime=%d, want %04o/%d", relative, info.Mode().Perm(), info.ModTime().Unix(), wantMode, epoch.Unix())
 		}
 	}

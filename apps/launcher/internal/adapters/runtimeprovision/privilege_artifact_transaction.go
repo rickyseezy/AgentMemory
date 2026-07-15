@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 
@@ -123,7 +123,7 @@ func (s *RootPrivilegeArtifactStore) PreparePrivilegeArtifacts(
 	if err := ctx.Err(); err != nil {
 		return PrivilegeArtifactTransaction{}, err
 	}
-	root := filepath.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
+	root := path.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
 	packages := make(map[string]struct{}, len(authority.Packages()))
 	for _, pkg := range authority.Packages() {
 		packages[pkg.Name()] = struct{}{}
@@ -142,7 +142,7 @@ func (s *RootPrivilegeArtifactStore) PreparePrivilegeArtifacts(
 		}
 		artifacts = append(artifacts, PrivilegeTransactionArtifact{
 			artifactID: binding.artifactID, sourcePath: binding.path,
-			targetPath: filepath.Join(root, binding.artifactID+"-"+binding.sha256.String()+extension),
+			targetPath: path.Join(root, binding.artifactID+"-"+binding.sha256.String()+extension),
 			sha256:     binding.sha256, size: binding.size, packageSet: packageSet,
 		})
 	}

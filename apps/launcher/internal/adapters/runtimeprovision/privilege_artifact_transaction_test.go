@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"slices"
 	"testing"
 
@@ -20,7 +20,7 @@ func TestPF006RootPrivilegeArtifactStoreMaterializesClosedTransaction(t *testing
 		t.Fatal(err)
 	}
 	transaction, err := store.PreparePrivilegeArtifacts(t.Context(), request, bindings)
-	wantRoot := filepath.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
+	wantRoot := path.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
 	paths := transaction.PackagePaths()
 	if err != nil || transaction.Root() != wantRoot || len(transaction.Artifacts()) != len(bindings) ||
 		len(paths) != len(authority.Packages()) || !slices.IsSorted(paths) || copier.calls != 1 ||
@@ -34,7 +34,7 @@ func TestPF006RootPrivilegeArtifactStoreMaterializesClosedTransaction(t *testing
 	}
 	first := transaction.Artifacts()[0]
 	if first.ArtifactID() != bindings[0].ArtifactID() || first.SourcePath() != bindings[0].Path() ||
-		first.TargetPath() != filepath.Join(
+		first.TargetPath() != path.Join(
 			wantRoot, bindings[0].ArtifactID()+"-"+bindings[0].SHA256().String()+".deb",
 		) || first.SHA256() != bindings[0].SHA256() || first.Size() != bindings[0].Size() {
 		t.Fatalf("first transaction artifact=%+v", first)

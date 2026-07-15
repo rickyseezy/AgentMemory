@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,8 @@ func TestPF001NativeBuildPublishesOnlyReproducibleManifestInputs(t *testing.T) {
 		path := filepath.Join(fixture.output, name)
 		content, err := os.ReadFile(path) // #nosec G304 -- closed test-owned filename set.
 		info, statErr := os.Lstat(path)
-		if err != nil || statErr != nil || string(content) != want || info.Mode().Perm() != 0o755 ||
+		if err != nil || statErr != nil || string(content) != want ||
+			(runtime.GOOS != "windows" && info.Mode().Perm() != 0o755) ||
 			info.ModTime().Unix() != epoch.Unix() {
 			t.Fatalf("%s content=%q info=%+v read=%v stat=%v", name, content, info, err, statErr)
 		}

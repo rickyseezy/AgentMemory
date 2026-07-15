@@ -177,7 +177,16 @@ func privilegeUserServiceFixture(
 	input.PrincipalID = "linux:uid:" + strconv.FormatUint(uint64(uid), 10)
 	input.RuntimeDirectory = "/run/user/" + strconv.FormatUint(uint64(uid), 10)
 	input.Endpoint = "unix://" + input.RuntimeDirectory + "/docker.sock"
-	input.HomeDirectory = t.TempDir()
+	homeRoot, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testHome, err := os.MkdirTemp(homeRoot, ".agentmemory-user-service-")
+	if err != nil {
+		t.Skipf("a safe owner-controlled home fixture is unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(testHome) })
+	input.HomeDirectory = testHome
 	input.ServiceUnitDigest = runtimeinstall.Sum(unit)
 	authority, err := runtimeport.NewLinuxAuthority(input)
 	if err != nil {

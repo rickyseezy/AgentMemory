@@ -2,7 +2,7 @@ package nativepackage
 
 import (
 	"context"
-	"path/filepath"
+	"path"
 	"runtime"
 	"strings"
 )
@@ -80,9 +80,9 @@ func validNativeCommand(operatingSystem string, command Command) bool {
 	}
 }
 
-func validPackagePath(path string, suffix string) bool {
-	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path &&
-		strings.HasSuffix(path, suffix) && !strings.ContainsRune(path, 0)
+func validPackagePath(value string, suffix string) bool {
+	return value != "" && path.IsAbs(value) && path.Clean(value) == value &&
+		strings.HasSuffix(value, suffix) && !strings.ContainsRune(value, 0)
 }
 
 func validWindowsPackagePath(path string) bool {

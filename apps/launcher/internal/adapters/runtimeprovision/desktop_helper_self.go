@@ -33,6 +33,7 @@ func NewNativeDesktopHelperExecutableVerifier(
 	return &NativeDesktopHelperExecutableVerifier{certificates: copyCertificates}, nil
 }
 
+//lint:ignore U1000 platform-specific native verifier implementations call this method
 func (v *NativeDesktopHelperExecutableVerifier) expectedCertificate(
 	resource releaseinventory.Resource,
 	authority runtimeport.DesktopAuthority,

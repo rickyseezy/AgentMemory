@@ -65,9 +65,10 @@ func TestPF001FileLoginRegistrarPublishesIdempotentlyAndRemoves(t *testing.T) {
 	}
 	path := registrar.path(record.OperationID())
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode().Perm() != 0o600 || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("entry metadata = (%v, %v)", info, err)
 	}
+	verifyLoginEntryPrivate(t, path)
 	if err := registrar.Remove(t.Context(), record.OperationID()); err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +157,7 @@ func TestPF001FileLoginRegistrarRejectsUnsafeExistingEntryAndRemovalFailure(t *t
 	if err := registrar.Register(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(registrar.path(record.OperationID()), 0o644); err != nil { // #nosec G302 -- deliberately unsafe login-entry rejection fixture.
-		t.Fatal(err)
-	}
+	makeLoginEntryUnsafe(t, registrar.path(record.OperationID()))
 	if err := registrar.Register(t.Context(), record); !errors.Is(err, rebootapp.ErrIntegrity) {
 		t.Fatalf("unsafe entry error = %v", err)
 	}

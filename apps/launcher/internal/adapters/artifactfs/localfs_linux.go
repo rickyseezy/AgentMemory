@@ -83,10 +83,8 @@ func provenLocalBlockDevice(directory *os.File) bool {
 		return false
 	}
 	for _, component := range strings.Split(resolved, string(filepath.Separator)) {
-		for _, unsafe := range []string{"loop", "nbd", "rbd", "drbd", "zram", "ram", "virtio"} {
-			if strings.HasPrefix(component, unsafe) {
-				return false
-			}
+		if unsafeLinuxBlockDeviceComponent(component) {
+			return false
 		}
 	}
 	// At least one block-device ancestor must explicitly attest non-removable.
@@ -99,6 +97,17 @@ func provenLocalBlockDevice(directory *os.File) bool {
 		parent := filepath.Dir(current)
 		if parent == current {
 			break
+		}
+	}
+	return false
+}
+
+func unsafeLinuxBlockDeviceComponent(component string) bool {
+	// Virtio is the ordinary non-removable block boundary for supported VM
+	// cells. Network, memory, and loop devices remain non-certifiable.
+	for _, unsafe := range []string{"loop", "nbd", "rbd", "drbd", "zram", "ram"} {
+		if strings.HasPrefix(component, unsafe) {
+			return true
 		}
 	}
 	return false

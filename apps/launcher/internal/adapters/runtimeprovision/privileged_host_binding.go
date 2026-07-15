@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 
@@ -20,7 +20,7 @@ type privilegedLinuxIdentity struct {
 
 func (i privilegedLinuxIdentity) valid() bool {
 	return i.uid != 0 && i.gid != 0 && validPrivilegedLinuxAccount(i.account) &&
-		i.home != "" && filepath.IsAbs(i.home) && filepath.Clean(i.home) == i.home &&
+		i.home != "" && path.IsAbs(i.home) && path.Clean(i.home) == i.home &&
 		!strings.ContainsAny(i.home, "\x00\r\n")
 }
 

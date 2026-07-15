@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -18,13 +19,14 @@ func TestPF001NativeDesktopMutationHelperCompositionBuildsCompleteVerifiedApplic
 	t.Parallel()
 	fixture := nativeReleaseStackFixture(t)
 	binding := &nativeDesktopHelperCompositionBindingStub{}
+	principal := nativeDesktopCompositionTestPrincipal()
 	authority := nativeDesktopMutationHelperCompositionAuthority{
 		elevated:   func() bool { return true },
 		bundleRoot: func() (string, error) { return nativeReleaseAuthorityBundleRoot(t), nil },
 		trust:      func() (nativeReleaseTrustMaterial, error) { return fixture.Trust, nil },
-		binding: func(principal string) (runtimeprovision.DesktopHostBindingProvider, error) {
-			if principal != "uid:501" {
-				t.Fatalf("principal=%q", principal)
+		binding: func(candidate string) (runtimeprovision.DesktopHostBindingProvider, error) {
+			if candidate != principal {
+				t.Fatalf("principal=%q", candidate)
 			}
 			return binding, nil
 		},
@@ -33,8 +35,15 @@ func TestPF001NativeDesktopMutationHelperCompositionBuildsCompleteVerifiedApplic
 		},
 	}
 	application, release, closers, err := newNativeDesktopMutationHelperApplicationWithAuthority(
-		t.Context(), t.TempDir(), "uid:501", authority,
+		t.Context(), t.TempDir(), principal, authority,
 	)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		if application != nil || release != nil || len(closers) != 0 ||
+			!errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+			t.Fatalf("foreign desktop application=%T release=%T closers=%d error=%v", application, release, len(closers), err)
+		}
+		return
+	}
 	if err != nil || application == nil || release == nil {
 		t.Fatalf("application=%T release=%T closers=%d error=%v", application, release, len(closers), err)
 	}
@@ -47,10 +56,17 @@ func TestPF001NativeDesktopMutationHelperCompositionBuildsCompleteVerifiedApplic
 
 	authority.elevated = nil
 	if application, release, closers, err := newNativeDesktopMutationHelperApplicationWithAuthority(
-		t.Context(), t.TempDir(), "uid:501", authority,
+		t.Context(), t.TempDir(), principal, authority,
 	); application != nil || release != nil || len(closers) != 0 || !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("incomplete authority application=%T release=%T closers=%d error=%v", application, release, len(closers), err)
 	}
+}
+
+func nativeDesktopCompositionTestPrincipal() string {
+	if runtime.GOOS == "windows" {
+		return "sid:S-1-5-21-1000-1001-1002-1003"
+	}
+	return "uid:501"
 }
 
 func TestPF001NativeDesktopMutationHelperCompositionContainsAuthorityFailures(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,7 +28,8 @@ func TestPF001PublicationAssemblerHashesClosedCandidateTree(t *testing.T) {
 		t.Fatalf("DecodeV1() error=%v", err)
 	}
 	info, err := os.Lstat(fixture.options.Output)
-	if err != nil || info.Mode().Perm() != 0o600 || info.ModTime().Unix() != fixture.options.SourceEpoch {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) ||
+		info.ModTime().Unix() != fixture.options.SourceEpoch {
 		t.Fatalf("output info=%+v error=%v", info, err)
 	}
 	if publication.ReleaseID() != fixture.options.ReleaseID || publication.Version() != fixture.options.Version ||

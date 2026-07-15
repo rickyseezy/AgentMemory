@@ -119,6 +119,7 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 			HostPolicyKeys:     map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
 			RuntimeCatalogKeys: map[string]ed25519.PublicKey{"runtime-catalog-root": manifestPublic},
 			RuntimeHelperPublisherCertificates: map[string]releaseinventory.Digest{
+				"runtime-helper-darwin-amd64":  releaseinventory.DigestBytes([]byte("helper publisher certificate darwin")),
 				"runtime-helper-darwin-arm64":  releaseinventory.DigestBytes([]byte("helper publisher certificate darwin")),
 				"runtime-helper-windows-amd64": releaseinventory.DigestBytes([]byte("helper publisher certificate windows")),
 			},

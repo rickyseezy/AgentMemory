@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -344,13 +344,13 @@ func privilegePackageTransaction(
 	request runtimeport.PrivilegeRequest,
 ) PrivilegeArtifactTransaction {
 	t.Helper()
-	root := filepath.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
+	root := path.Join(linuxPrivilegeTransactionRoot, request.Digest().String())
 	packages := request.Authority().Packages()
 	artifacts := make([]PrivilegeTransactionArtifact, 0, len(packages))
 	for _, pkg := range packages {
 		digest := runtimeinstall.Sum([]byte(pkg.Name()))
 		artifacts = append(artifacts, PrivilegeTransactionArtifact{
-			artifactID: pkg.Name(), targetPath: filepath.Join(root, pkg.Name()+"-"+digest.String()+".deb"),
+			artifactID: pkg.Name(), targetPath: path.Join(root, pkg.Name()+"-"+digest.String()+".deb"),
 			sha256: digest, size: 1, packageSet: true,
 		})
 	}

@@ -43,6 +43,7 @@ func resolveNativeReleaseBundleRoot(
 	switch operatingSystem {
 	case "darwin":
 		root = "/Library/Application Support/AgentMemory/resources/bundle"
+		return root, nil
 	case "linux", "windows":
 		root = filepath.Join(directory, "resources", "bundle")
 	default:

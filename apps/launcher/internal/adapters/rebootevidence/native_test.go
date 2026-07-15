@@ -17,12 +17,8 @@ func TestPF001NativeObjectVerifierHashesOwnerControlledLauncherAndJournal(t *tes
 	journalPath := filepath.Join(root, "install-operation.json")
 	launcherBytes := []byte("signed launcher bytes")
 	journalBytes := []byte("authenticated journal bytes")
-	if err := os.WriteFile(launcherPath, launcherBytes, 0o700); err != nil { // #nosec G306 -- executable-mode fixture verifies launcher admission.
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(journalPath, journalBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeNativeObjectFixture(t, launcherPath, launcherBytes, true)
+	writeNativeObjectFixture(t, journalPath, journalBytes, false)
 	verifier, err := newNativeObjectVerifier(func() (string, error) { return launcherPath, nil })
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +38,8 @@ func TestPF001NativeObjectVerifierRejectsSymlinksPermissionsAndInvalidCalls(t *t
 	root := t.TempDir()
 	launcherPath := filepath.Join(root, "launcher")
 	journalPath := filepath.Join(root, "journal")
-	_ = os.WriteFile(launcherPath, []byte("launcher"), 0o700) // #nosec G306 -- executable-mode rejection fixture.
-	_ = os.WriteFile(journalPath, []byte("journal"), 0o600)
+	writeNativeObjectFixture(t, launcherPath, []byte("launcher"), true)
+	writeNativeObjectFixture(t, journalPath, []byte("journal"), false)
 	verifier, _ := newNativeObjectVerifier(func() (string, error) { return launcherPath, nil })
 	//lint:ignore SA1012 Deliberate nil-context trust-boundary regression fixture.
 	if _, err := verifier.VerifyJournal(nil, journalPath); !errors.Is(err, rebootapp.ErrIntegrity) { //nolint:staticcheck // SA1012: owner=security expiry=2027-07-15.
@@ -52,19 +48,15 @@ func TestPF001NativeObjectVerifierRejectsSymlinksPermissionsAndInvalidCalls(t *t
 	if _, err := verifier.VerifyJournal(t.Context(), "relative"); !errors.Is(err, rebootapp.ErrIntegrity) {
 		t.Fatalf("relative journal error = %v", err)
 	}
-	if err := os.Chmod(journalPath, 0o644); err != nil { // #nosec G302 -- deliberately unsafe permission rejection fixture.
-		t.Fatal(err)
-	}
+	makeNativeObjectUnsafe(t, journalPath)
 	if _, err := verifier.VerifyJournal(t.Context(), journalPath); !errors.Is(err, rebootapp.ErrIntegrity) {
 		t.Fatalf("unsafe journal mode error = %v", err)
 	}
-	if err := os.Chmod(launcherPath, 0o722); err != nil { // #nosec G302 -- deliberately writable executable rejection fixture.
-		t.Fatal(err)
-	}
+	makeNativeObjectUnsafe(t, launcherPath)
 	if _, err := verifier.VerifyLauncher(t.Context()); !errors.Is(err, rebootapp.ErrIntegrity) {
 		t.Fatalf("writable launcher error = %v", err)
 	}
-	_ = os.Chmod(journalPath, 0o600)
+	restoreNativeObjectFixture(t, journalPath, []byte("journal"), false)
 	link := filepath.Join(root, "journal-link")
 	_ = os.Symlink(journalPath, link)
 	if _, err := verifier.VerifyJournal(t.Context(), link); !errors.Is(err, rebootapp.ErrIntegrity) {

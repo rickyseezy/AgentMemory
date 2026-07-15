@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,8 @@ func TestPF001ReleaseEnvelopePublishesOnlyCompilerAcceptedCanonicalBytes(t *test
 	}
 	content, err := os.ReadFile(fixture.output)
 	info, statErr := os.Lstat(fixture.output)
-	if err != nil || statErr != nil || !bytes.Equal(content, want) || info.Mode().Perm() != 0o600 ||
+	if err != nil || statErr != nil || !bytes.Equal(content, want) ||
+		(runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) ||
 		info.ModTime().Unix() != fixture.options.SourceEpoch {
 		t.Fatalf("output=%q info=%+v errors=(%v,%v)", content, info, err, statErr)
 	}

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
+	"path"
 	"testing"
 	"time"
 
@@ -83,7 +83,7 @@ func privilegeCodecArtifactStager(authority runtimeport.LinuxAuthority) *privile
 		digest := runtimeinstall.Sum([]byte(pkg.Name()))
 		bindings = append(bindings, PrivilegeArtifactBinding{
 			artifactID: pkg.Name(),
-			path: filepath.Join(
+			path: path.Join(
 				"/home/agentmemory/.agentmemory", authority.Digest().String(),
 				pkg.Name()+"-"+digest.String()+".deb",
 			),
@@ -241,10 +241,10 @@ func TestPF006CanonicalPrivilegeCodecRejectsArtifactHandoffSubstitution(t *testi
 			document.Artifacts[1].ArtifactID = document.Artifacts[0].ArtifactID
 		},
 		"substituted parent": func(document *canonicalPrivilegeEnvelope) {
-			document.Artifacts[0].Path = filepath.Join(
-				filepath.Dir(filepath.Dir(document.Artifacts[0].Path)),
+			document.Artifacts[0].Path = path.Join(
+				path.Dir(path.Dir(document.Artifacts[0].Path)),
 				runtimeinstall.Sum([]byte("foreign-authority")).String(),
-				filepath.Base(document.Artifacts[0].Path),
+				path.Base(document.Artifacts[0].Path),
 			)
 		},
 		"digest filename mismatch": func(document *canonicalPrivilegeEnvelope) {

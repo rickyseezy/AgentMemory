@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -344,12 +344,12 @@ func validPrivilegeArtifactBindings(
 		if binding.sha256.IsZero() || binding.size == 0 || !validPrivilegeWireID(binding.artifactID) ||
 			!validPrivilegeArtifactPath(binding.path) ||
 			index > 0 && bindings[index-1].artifactID == binding.artifactID ||
-			filepath.Dir(binding.path) != filepath.Join(
+			path.Dir(binding.path) != path.Join(
 				authority.HomeDirectory(), ".agentmemory", authority.Digest().String(),
 			) {
 			return false
 		}
-		extension := filepath.Ext(binding.path)
+		extension := path.Ext(binding.path)
 		if _, packageArtifact := packages[binding.artifactID]; packageArtifact {
 			wanted := ".deb"
 			if authority.PackageManager() == runtimeport.PackageManagerDNF {
@@ -362,7 +362,7 @@ func validPrivilegeArtifactBindings(
 		} else if !strings.HasPrefix(binding.artifactID, "repo-") || extension != ".metadata" {
 			return false
 		}
-		if strings.TrimSuffix(filepath.Base(binding.path), extension) !=
+		if strings.TrimSuffix(path.Base(binding.path), extension) !=
 			binding.artifactID+"-"+binding.sha256.String() {
 			return false
 		}
@@ -371,7 +371,7 @@ func validPrivilegeArtifactBindings(
 }
 
 func validPrivilegeArtifactPath(value string) bool {
-	return value != "" && len(value) <= 4096 && filepath.IsAbs(value) && filepath.Clean(value) == value &&
+	return value != "" && len(value) <= 4096 && path.IsAbs(value) && path.Clean(value) == value &&
 		!strings.ContainsAny(value, "\x00\r\n")
 }
 

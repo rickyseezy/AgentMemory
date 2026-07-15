@@ -16,7 +16,11 @@ import (
 
 func TestPF001NativeAgentConfigurationBindsExactPlanTarget(t *testing.T) {
 	t.Parallel()
-	location, err := agentconfigport.NewConfigLocation("/tmp/agentmemory/config.json")
+	configurationPath := "/tmp/agentmemory/config.json"
+	if runtime.GOOS == "windows" {
+		configurationPath = `C:\Users\Agent User\AppData\Roaming\AgentMemory\config.json`
+	}
+	location, err := agentconfigport.NewConfigLocation(configurationPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,11 +129,15 @@ func TestPF001NativeLauncherResourceAndRunnerRequireExactVerifiedDescriptor(t *t
 func nativeAgentTarget(t testing.TB, host agentconfigdomain.AgentHost) agentconfigdomain.Target {
 	t.Helper()
 	digest := agentconfigdomain.DigestBytes([]byte("signed launcher " + string(host)))
+	command := "/opt/agentmemory/bin/agentmemory"
+	if runtime.GOOS == "windows" {
+		command = `C:\Program Files\AgentMemory\bin\agentmemory.exe`
+	}
 	target, err := agentconfigdomain.NewTargetForAgent(
 		host,
 		"019f5f20-1234-7abc-8123-0123456789ab",
 		"019f5f22-5678-7def-9123-abcdef012346",
-		"/opt/agentmemory/bin/agentmemory",
+		command,
 		digest,
 	)
 	if err != nil {

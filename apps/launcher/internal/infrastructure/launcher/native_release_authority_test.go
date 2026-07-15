@@ -3,8 +3,6 @@ package launcher
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
@@ -114,13 +112,9 @@ func TestPF001NativeReleaseAuthorityFailsClosedBeforePublishingCapability(t *tes
 
 func nativeReleaseAuthorityBundleRoot(t testing.TB) string {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "bundle")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := filepath.EvalSymlinks(root)
+	root, err := createNativePrivateTestDirectory(t.TempDir(), "bundle")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resolved
+	return root
 }

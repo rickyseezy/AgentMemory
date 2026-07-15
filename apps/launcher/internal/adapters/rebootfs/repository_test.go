@@ -113,9 +113,7 @@ func TestPF001ContinuationRepositoryRejectsUnsafeRootsAndObjects(t *testing.T) {
 	if err := repository.Publish(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(repository.activePath(record.OperationID()), 0o644); err != nil { // #nosec G302 -- unsafe-mode rejection fixture.
-		t.Fatal(err)
-	}
+	makeProtectedFixtureUnsafe(t, repository.activePath(record.OperationID()))
 	if _, err := repository.Load(t.Context(), record.OperationID()); !errors.Is(err, rebootapp.ErrRecordIntegrity) {
 		t.Fatalf("unsafe record mode error = %v", err)
 	}
@@ -152,9 +150,7 @@ func TestPF001ContinuationRepositoryReconcilesInterruptedClaimAndRejectsDivergen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(repository.claimedPath(record.OperationID()), raw, 0o600); err != nil { // #nosec G703 -- digest-derived path under the test's private root.
-		t.Fatal(err)
-	}
+	writeProtectedFixtureFile(t, repository.claimedPath(record.OperationID()), raw)
 	if loaded, err := repository.Load(t.Context(), record.OperationID()); err != nil || !sameRecord(loaded, record) {
 		t.Fatalf("interrupted claim recovery = (%+v, %v)", loaded, err)
 	}
@@ -238,15 +234,15 @@ func TestPF001ContinuationRepositoryReportsUnremovableAndCorruptClaimState(t *te
 	if err := repository.Claim(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(repository.claimedPath(record.OperationID()), 0o644); err != nil { // #nosec G302 -- deliberately unsafe claimed-file rejection fixture.
-		t.Fatal(err)
+	claimedRaw, encodeError := encodeRecord(record)
+	if encodeError != nil {
+		t.Fatal(encodeError)
 	}
+	makeProtectedFixtureUnsafe(t, repository.claimedPath(record.OperationID()))
 	if err := repository.Claim(t.Context(), record); !errors.Is(err, rebootapp.ErrRecordIntegrity) {
 		t.Fatalf("corrupt claimed state error = %v", err)
 	}
-	if err := os.Chmod(repository.claimedPath(record.OperationID()), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	restoreProtectedFixtureFile(t, repository.claimedPath(record.OperationID()), claimedRaw)
 	if err := os.Mkdir(repository.activePath(record.OperationID()), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -271,9 +267,7 @@ func TestPF001ContinuationTokenLookupRejectsDivergentCrashState(t *testing.T) {
 		Nonce: rebootcontinuation.NonceBytes([]byte("divergent claim nonce")),
 	}, now)
 	otherRaw, _ := encodeRecord(other)
-	if err := os.WriteFile(repository.claimedPath(record.OperationID()), otherRaw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeProtectedFixtureFile(t, repository.claimedPath(record.OperationID()), otherRaw)
 	token, _ := rebootcontinuation.TokenFor(record.OperationID())
 	if _, err := repository.LoadByToken(t.Context(), token); !errors.Is(err, rebootapp.ErrRecordIntegrity) {
 		t.Fatalf("divergent token state error = %v", err)
@@ -311,6 +305,23 @@ func TestPF001ContinuationEntropyValidatesSizeAndContext(t *testing.T) {
 
 func repositoryRecordFixture(t testing.TB) rebootcontinuation.Record {
 	return repositoryRecordFixtureWithID(t, "019f5f23-5678-7def-9123-abcdef012347")
+}
+
+func writeProtectedFixtureFile(t testing.TB, path string, content []byte) {
+	t.Helper()
+	file, err := platformCreateProtectedFile(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.Write(content); err == nil {
+		err = file.Sync()
+	}
+	if closeError := file.Close(); err == nil {
+		err = closeError
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func repositoryRecordFixtureWithID(t testing.TB, rawID string) rebootcontinuation.Record {

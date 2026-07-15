@@ -1051,9 +1051,11 @@ func TestPF001NativeNilClassificationCoversEveryNilableKind(t *testing.T) {
 }
 
 func nativeTestRoots(root string) NativeRoots {
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
+	protected, err := protectNativeTestRoot(root)
+	if err != nil {
+		panic("protect native test root: " + err.Error())
 	}
+	root = protected
 	return NativeRoots{
 		OperationState: filepath.Join(root, "operation"), BootstrapPointer: filepath.Join(root, "pointer"),
 		SetupDecisions: filepath.Join(root, "decisions"), PreparationState: filepath.Join(root, "preparation"),

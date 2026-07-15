@@ -153,6 +153,13 @@ func TestLinuxNativeHostProbeCollectsTheInvokingPrincipal(t *testing.T) {
 		})
 	}
 	repository := template.Repository()
+	helperTools := make([]runtimeport.HelperToolInput, 0, len(template.HelperTools()))
+	for _, tool := range template.HelperTools() {
+		helperTools = append(helperTools, runtimeport.HelperToolInput{
+			Role: tool.Role(), Path: tool.Path(), SHA256: tool.SHA256(), Package: tool.Package(),
+			PackageVersion: tool.PackageVersion(), PackageReceiptDigest: tool.PackageReceiptDigest(),
+		})
+	}
 	architecture := runtimeinstall.ArchitectureAMD64
 	if runtime.GOARCH == "arm64" {
 		architecture = runtimeinstall.ArchitectureARM64
@@ -185,6 +192,7 @@ func TestLinuxNativeHostProbeCollectsTheInvokingPrincipal(t *testing.T) {
 		PrivilegeToolPackage:              template.PrivilegeToolPackage(),
 		PrivilegeToolPackageVersion:       template.PrivilegeToolPackageVersion(),
 		PrivilegeToolPackageReceiptDigest: template.PrivilegeToolPackageReceiptDigest(),
+		HelperTools:                       helperTools,
 		RPMKeysPath:                       template.RPMKeysPath(), RPMKeysSHA256: template.RPMKeysSHA256(),
 		RootlessToolDigest: template.RootlessToolDigest(), ProbeImage: template.ProbeImage(),
 		ProbeImageDigest: template.ProbeImageDigest(), ProbeContractVersion: template.ProbeContractVersion(),

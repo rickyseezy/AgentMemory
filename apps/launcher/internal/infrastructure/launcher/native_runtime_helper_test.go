@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -195,6 +196,9 @@ func launcherDesktopAuthorityForDigests(
 ) runtimeport.DesktopAuthority {
 	t.Helper()
 	architecture := runtimeinstall.ArchitectureARM64
+	if platform == runtimeinstall.PlatformDarwin && runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
+		architecture = runtimeinstall.ArchitectureAMD64
+	}
 	input := runtimeport.DesktopAuthorityInput{
 		PlanDigest:    planDigest,
 		CatalogDigest: catalogDigest,

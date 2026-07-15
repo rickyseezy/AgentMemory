@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,8 @@ func TestPF001OfflineBundlePublishesOnlyExactInventoryAfterEveryTargetVerificati
 		path := filepath.Join(fixture.output, filepath.FromSlash(resource.path))
 		content, readErr := os.ReadFile(path) // #nosec G304 -- test-owned output and closed fixture path.
 		info, statErr := os.Lstat(path)
-		if readErr != nil || statErr != nil || digestHex(content) != resource.sha256 || info.Mode().Perm() != 0o600 ||
+		if readErr != nil || statErr != nil || digestHex(content) != resource.sha256 ||
+			(runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) ||
 			info.ModTime().Unix() != fixture.options.SourceEpoch {
 			t.Fatalf("published %s content=%q info=%+v errors=(%v,%v)", resource.path, content, info, readErr, statErr)
 		}

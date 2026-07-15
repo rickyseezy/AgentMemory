@@ -269,9 +269,13 @@ func nativeProductExecutors(t testing.TB) (dockercli.Executors, *nativeProductRu
 	plan := sha256.Sum256([]byte("plan"))
 	trust := sha256.Sum256([]byte("publisher trust"))
 	newAuthority := func(id, path string, role argvprocess.ExecutableRole) argvprocess.ExecutableAuthority {
+		owner := "uid:0"
+		if runtime.GOOS == "windows" {
+			owner = "sid:S-1-5-32-544"
+		}
 		authority, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
 			CanonicalID: id, CanonicalPath: path, SHA256: sha256.Sum256([]byte(id)),
-			OwnerIdentity: "uid:0", PublisherIdentity: "publisher", PublisherPolicyID: "policy",
+			OwnerIdentity: owner, PublisherIdentity: "publisher", PublisherPolicyID: "policy",
 			PublisherTrustDigest: trust, ReleaseManifestDigest: release, RuntimePlanDigest: plan,
 			Role: role, Platform: runtime.GOOS, Architecture: runtime.GOARCH,
 		})
@@ -280,12 +284,18 @@ func nativeProductExecutors(t testing.TB) (dockercli.Executors, *nativeProductRu
 		}
 		return authority
 	}
+	dockerPath := "/opt/agentmemory/docker"
+	composePath := "/opt/agentmemory/docker-compose"
+	if runtime.GOOS == "windows" {
+		dockerPath = `C:\Program Files\AgentMemory\docker.exe`
+		composePath = `C:\Program Files\AgentMemory\docker-compose.exe`
+	}
 	dockerRunner := &nativeProductRunner{
-		authority: newAuthority("docker", "/opt/agentmemory/docker", argvprocess.ExecutableRoleDockerCLI),
+		authority: newAuthority("docker", dockerPath, argvprocess.ExecutableRoleDockerCLI),
 		output:    []byte(`{"ID":"local-daemon","DockerRootDir":"/var/lib/docker","Driver":"overlay2","DriverStatus":[["Backing Filesystem","extfs"],["Supports d_type","true"]],"OperatingSystem":"Docker Desktop","OSType":"linux","Architecture":"` + runtime.GOARCH + `","Name":"local","ServerVersion":"28.0.0"}`),
 	}
 	composeRunner := &nativeProductRunner{
-		authority: newAuthority("compose", "/opt/agentmemory/docker-compose", argvprocess.ExecutableRoleComposePlugin),
+		authority: newAuthority("compose", composePath, argvprocess.ExecutableRoleComposePlugin),
 	}
 	executors, err := dockercli.NewExecutors(dockerRunner, composeRunner)
 	if err != nil {

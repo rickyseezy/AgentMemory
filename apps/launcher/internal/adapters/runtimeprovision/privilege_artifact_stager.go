@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 
@@ -126,7 +126,7 @@ func (s *CatalogPrivilegeArtifactStager) StagePrivilegeArtifacts(
 	for _, pkg := range authority.Packages() {
 		packageIDs[pkg.Name()] = struct{}{}
 	}
-	operationRoot := filepath.Join(s.boundary, authority.Digest().String())
+	operationRoot := path.Join(s.boundary, authority.Digest().String())
 	bindings := make([]PrivilegeArtifactBinding, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		extension := ".metadata"
@@ -141,7 +141,7 @@ func (s *CatalogPrivilegeArtifactStager) StagePrivilegeArtifacts(
 		// Include the signed ID as well as the digest. Distinct repositories may
 		// deliberately publish the same signing key or metadata bytes; they still
 		// require distinct canonical bindings in the helper envelope.
-		target := filepath.Join(operationRoot, artifact.ID()+"-"+artifact.Digest().Hex()+extension)
+		target := path.Join(operationRoot, artifact.ID()+"-"+artifact.Digest().Hex()+extension)
 		binding, bindingError := newPrivilegeArtifactBinding(s.boundary, artifact, target)
 		if bindingError != nil || s.materializer.MaterializeFinal(ctx, artifact, s.boundary, target) != nil {
 			if contextError := ctx.Err(); contextError != nil {
@@ -159,10 +159,11 @@ func newPrivilegeArtifactBinding(
 	artifact artifactacquisition.Artifact,
 	target string,
 ) (PrivilegeArtifactBinding, error) {
-	relative, err := filepath.Rel(boundary, target)
+	cleanBoundary := path.Clean(boundary)
+	cleanTarget := path.Clean(target)
 	if artifact.ID() == "" || len(artifact.ID()) > 256 || artifact.Digest().IsZero() || artifact.Size() == 0 ||
-		err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) ||
-		strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.Clean(target) != target {
+		cleanBoundary != boundary || cleanTarget != target ||
+		!strings.HasPrefix(cleanTarget, cleanBoundary+"/") {
 		return PrivilegeArtifactBinding{}, runtimeport.ErrLinuxArtifactIntegrity
 	}
 	return NewPrivilegeArtifactBinding(
@@ -171,8 +172,8 @@ func newPrivilegeArtifactBinding(
 }
 
 func validPrivilegeStagingBoundary(value string) bool {
-	return value != "" && value != string(filepath.Separator) && filepath.IsAbs(value) &&
-		filepath.Clean(value) == value && !strings.ContainsAny(value, "\x00\r\n")
+	return value != "" && value != "/" && path.IsAbs(value) &&
+		path.Clean(value) == value && !strings.ContainsAny(value, "\x00\r\n")
 }
 
 var _ PrivilegeArtifactStager = (*CatalogPrivilegeArtifactStager)(nil)

@@ -282,6 +282,7 @@ func desktopHelperCommandContextOrIntegrity(ctx context.Context) error {
 	return runtimeport.ErrDesktopMutationIntegrity
 }
 
+//lint:ignore U1000 platform-specific desktop helper decoders call this function
 func canonicalDesktopHelperDigest(value string) bool {
 	digest, err := runtimeinstall.ParseHash(value)
 	return err == nil && !digest.IsZero()

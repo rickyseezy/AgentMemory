@@ -3,7 +3,7 @@ package launcher
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"strings"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -143,7 +143,7 @@ func nativeDesktopHelperPaths(desktop runtimeport.DesktopAuthority) (string, str
 	switch desktop.Platform() {
 	case runtimeinstall.PlatformDarwin:
 		return "/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper",
-			filepath.Join(desktop.HomeDirectory(), "Library", "Application Support", "AgentMemory", "bootstrap", operation, "native"), nil
+			path.Join(desktop.HomeDirectory(), "Library", "Application Support", "AgentMemory", "bootstrap", operation, "native"), nil
 	case runtimeinstall.PlatformWindows:
 		home := strings.TrimRight(desktop.HomeDirectory(), `\`)
 		return `C:\Program Files\AgentMemory\bin\agentmemory-runtime-helper.exe`,

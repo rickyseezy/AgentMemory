@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	pathpkg "path"
 	"strings"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -60,7 +60,7 @@ func (m *CanonicalPrivilegeRepositoryManager) EnsurePrivilegeRepository(
 	keyID := "repo-" + repository.ID() + "-signing_key"
 	key, found := artifacts.Artifact(keyID)
 	if !found || key.IsPackage() || key.SHA256() != repository.SigningKeyDigest() ||
-		key.Size() == 0 || filepath.Dir(key.TargetPath()) != artifacts.Root() {
+		key.Size() == 0 || pathpkg.Dir(key.TargetPath()) != artifacts.Root() {
 		return false, runtimeport.ErrPrivilegeIntegrity
 	}
 	configurationPath, keyPath, configuration, err := renderPrivilegeRepository(authority)
@@ -160,7 +160,7 @@ func privilegeAPTArchitecture(architecture runtimeinstall.Architecture) (string,
 }
 
 func canonicalPrivilegeSystemPath(path string) bool {
-	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path &&
+	return path != "" && pathpkg.IsAbs(path) && pathpkg.Clean(path) == path &&
 		!strings.ContainsAny(path, "\x00\r\n")
 }
 

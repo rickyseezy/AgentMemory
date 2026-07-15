@@ -12,10 +12,14 @@ agent vendors while keeping the Brain and its data on the user's own machine.
 > durable active cancellation with ownership-scoped runtime compensation, split capacity policy,
 > operation-scoped release-bound Docker/Compose execution, native package transactions, and a
 > portable MCP bootstrap plus deterministic Claude MCPB, Gemini extension, and generic host-package
-> assemblers. No production-signed package has been released yet: external platform signing,
-> immutable-release configuration, vendor approvals, and pristine-host certification remain. See the
+> assemblers. The repository also contains the executable seven-cell native support matrix,
+> independent signed-campaign verifier, hosted per-cell certification, and 117-object immutable
+> promotion gate. No production-signed package has been released yet: external platform signing,
+> immutable-release configuration, vendor approvals, and execution on pristine hosts remain. See the
 > [PF-001 implementation record](docs/implementation/PF-001.md) for the exact delivered and
-> outstanding scope; no current code should be interpreted as a completed installer.
+> outstanding scope and the
+> [native certification procedure](docs/implementation/PF-001-NATIVE-CERTIFICATION.md) for the
+> no-skip release evidence contract; no current code should be interpreted as a released installer.
 
 The project is inspired by the persistent-memory experience of
 [Claude-Mem](https://github.com/thedotmack/claude-mem), but its target is broader:

@@ -139,7 +139,7 @@ archive and its detached non-circular record. Qualification must reproduce all
 native package payloads with the retained release bundle, and reverify every
 detached signature. Immutable promotion copies those bytes only. The release
 owner must configure and protect the `pf001-release-build`,
-`pf001-host-package-build`, `pf001-release-qualification`, and
+`pf001-host-package-build`, `pf001-native-certification`, `pf001-release-qualification`, and
 `pf001-production-release` environments and enable GitHub immutable releases;
 the repository cannot enable or approve those owner controls itself.
 
@@ -186,21 +186,29 @@ Polkit action policy; a PATH-discovered or caller-selected helper is forbidden.
 
 ## Native certification hosts
 
-The release owner must provide pristine, supported, non-virtualized or
-explicitly certified hosts for every release matrix cell. At minimum, the
-release record needs clean-host, interrupted-install, logout/reboot,
-power-loss-recovery, upgrade/rollback, offline, proxy/TLS-interception, and
-uninstall evidence for:
+The release owner must provide all seven pristine cells declared by
+`contracts/pf001/support-matrix-v1.json`: macOS Tahoe 26 Intel and Apple
+Silicon on APFS; Ubuntu 24.04 LTS x86-64 and ARM64 on ext4; Fedora 44 x86-64
+and ARM64 on XFS; and Windows 11 25H2 x86-64 on NTFS. The complete no-skip
+campaign, clean-image/reset proof, exact 54–58 trials per cell, evidence files,
+freshness rules, report shape, and immutable handoff are normative in
+[`PF-001-NATIVE-CERTIFICATION.md`](PF-001-NATIVE-CERTIFICATION.md).
 
-- macOS Intel;
-- macOS Apple Silicon;
-- Linux x86_64;
-- Linux ARM64; and
-- Windows x86_64 with the supported WSL prerequisite states.
+The release owner must additionally provide an independently controlled Ed25519
+certification authority. Store only its standard-base64 public key in
+`AGENTMEMORY_NATIVE_CERTIFICATION_PUBLIC_KEY_BASE64`; the private key remains in
+the approved external or hardware signing boundary. The authority must review
+the full evidence set and return a raw signature over the exact canonical report.
+Operator identity, authority approval, key custody, rotation, revocation, and
+evidence-retention records are external release inputs.
 
-Hosted unit-test success is necessary but is not clean-host certification.
-Every native result must identify the OS build, architecture, hardware/storage
-facts, release commit, manifest digest, artifact digests, and test procedure.
+Hosted unit-test success and a self-hosted GitHub attestation are necessary but
+are not clean-host certification. The canonical independently signed campaign
+must be published as an immutable staging release bound to the final version and
+source commit. Hosted CI then verifies each support cell, the complete file set,
+the release/publication/matrix digests, the independent signature, and campaign
+freshness before emitting the single attested certification object consumed by
+qualification.
 
 ## Release decision rule
 

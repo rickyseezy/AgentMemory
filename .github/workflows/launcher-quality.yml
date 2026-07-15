@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/launcher-quality.yml"
       - ".github/workflows/pf001-release-build.yml"
+      - ".github/workflows/pf001-native-certification.yml"
       - ".github/workflows/pf001-release.yml"
       - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"
@@ -24,6 +25,7 @@ on:
     paths:
       - ".github/workflows/launcher-quality.yml"
       - ".github/workflows/pf001-release-build.yml"
+      - ".github/workflows/pf001-native-certification.yml"
       - ".github/workflows/pf001-release.yml"
       - ".github/workflows/pf001-release-qualification.yml"
       - ".golangci.yml"
@@ -76,6 +78,9 @@ jobs:
 
       - name: Verify immutable release-promotion contract
         run: go run ./tools/check_release_workflow
+
+      - name: Verify executable PF-001 native support matrix
+        run: go run ./tools/check_pf001_certification
 
       - name: Vet launcher and quality tools
         run: go vet ./apps/launcher/... ./tools/...

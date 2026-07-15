@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.dev/contracts/pf001-native-certification/v1.json",
+  "title": "AgentMemory PF-001 native certification report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "matrix_id",
+    "matrix_sha256",
+    "version",
+    "source_commit",
+    "publication_sha256",
+    "distribution_manifest_sha256",
+    "release_trust_sha256",
+    "campaign_id",
+    "authority_key_id",
+    "procedure_version",
+    "started_at",
+    "completed_at",
+    "no_waivers",
+    "cells"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "matrix_id": { "$ref": "#/$defs/id" },
+    "matrix_sha256": { "$ref": "#/$defs/sha256" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "publication_sha256": { "$ref": "#/$defs/sha256" },
+    "distribution_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "release_trust_sha256": { "$ref": "#/$defs/sha256" },
+    "campaign_id": { "$ref": "#/$defs/id" },
+    "authority_key_id": { "$ref": "#/$defs/id" },
+    "procedure_version": { "$ref": "#/$defs/id" },
+    "started_at": { "$ref": "#/$defs/time" },
+    "completed_at": { "$ref": "#/$defs/time" },
+    "no_waivers": { "const": true },
+    "cells": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cell" },
+      "minItems": 5,
+      "maxItems": 64
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "sha256",
+        "size",
+        "media_type"
+      ],
+      "properties": {
+        "kind": { "$ref": "#/$defs/id" },
+        "path": {
+          "type": "string",
+          "pattern": "^evidence/[a-z0-9.-]+/[a-z0-9.-]+/[a-z0-9.-]+/[a-z0-9.-]+$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824
+        },
+        "media_type": {
+          "enum": [
+            "application/json",
+            "application/pdf",
+            "application/vnd.tcpdump.pcap",
+            "text/plain"
+          ]
+        }
+      }
+    },
+    "trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "variant",
+        "snapshot_id",
+        "status",
+        "started_at",
+        "completed_at",
+        "reboot_count",
+        "evidence"
+      ],
+      "properties": {
+        "scenario_id": { "$ref": "#/$defs/id" },
+        "variant": { "$ref": "#/$defs/id" },
+        "snapshot_id": { "$ref": "#/$defs/id" },
+        "status": { "const": "passed" },
+        "started_at": { "$ref": "#/$defs/time" },
+        "completed_at": { "$ref": "#/$defs/time" },
+        "reboot_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" },
+          "minItems": 4,
+          "maxItems": 10
+        }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_id",
+        "observed_os_version",
+        "observed_build",
+        "filesystem",
+        "stock_image_sha256",
+        "hardware_sha256",
+        "trials"
+      ],
+      "properties": {
+        "cell_id": { "$ref": "#/$defs/id" },
+        "observed_os_version": {
+          "type": "string",
+          "pattern": "^[0-9]{1,5}(\\.[0-9]{1,5}){1,3}$"
+        },
+        "observed_build": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "filesystem": {
+          "enum": [
+            "apfs",
+            "ext4",
+            "ntfs",
+            "xfs"
+          ]
+        },
+        "stock_image_sha256": { "$ref": "#/$defs/sha256" },
+        "hardware_sha256": { "$ref": "#/$defs/sha256" },
+        "trials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trial" },
+          "minItems": 40,
+          "maxItems": 256
+        }
+      }
+    }
+  }
+}

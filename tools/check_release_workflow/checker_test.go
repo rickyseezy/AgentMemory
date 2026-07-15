@@ -44,6 +44,26 @@ func TestReleaseWorkflowCheckerRejectsEveryByteSubstitution(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowCheckerProtectsNativeCertificationContract(t *testing.T) {
+	t.Parallel()
+	root := copyWorkflowFixture(t)
+	path := filepath.Join(root, filepath.FromSlash(certificationWorkflowPath))
+	content, err := os.ReadFile(path) // #nosec G304 -- closed workflow fixture path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := bytes.Replace(content, []byte("--deny-self-hosted-runners"), []byte("--format json"), 1)
+	if bytes.Equal(mutated, content) {
+		t.Fatal("certification workflow mutation fixture did not change")
+	}
+	if err := os.WriteFile(path, mutated, 0o644); err != nil { // #nosec G306,G703 -- closed contract path/mode under private test root.
+		t.Fatal(err)
+	}
+	if violations := Check(Options{RepositoryRoot: root}); len(violations) != 1 {
+		t.Fatalf("violations=%v", violations)
+	}
+}
+
 func TestReleaseWorkflowCheckerRejectsMissingLinksAndInvocationErrors(t *testing.T) {
 	t.Parallel()
 	root := copyWorkflowFixture(t)

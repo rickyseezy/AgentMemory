@@ -1,0 +1,653 @@
+{
+  "schema_version": 1,
+  "matrix_id": "pf001-native-2026.1",
+  "story": "PF-001",
+  "owner": "release-engineering",
+  "procedure_version": "pf001-clean-host-v1",
+  "maximum_evidence_age_seconds": 604800,
+  "agent_hosts": [
+    "claude",
+    "codex",
+    "cursor",
+    "gemini",
+    "generic-custom"
+  ],
+  "cells": [
+    {
+      "id": "darwin-amd64-macos-tahoe-apfs",
+      "owner": "release-engineering-macos",
+      "status": "required",
+      "operating_system": "darwin",
+      "architecture": "amd64",
+      "distribution": "macos-tahoe",
+      "minimum_os_version": "26.0.0",
+      "maximum_os_version": "26.99.99",
+      "minimum_build": 25000,
+      "maximum_build": 25999,
+      "filesystem": "apfs",
+      "stock_image": {
+        "authority": "apple",
+        "source": "https://support.apple.com/guide/mac-help/reinstall-macos-mchlp1599/mac",
+        "reset_method": "apple-recovery-erase",
+        "identity_kind": "recovery-build-hardware"
+      },
+      "runner_labels": [
+        "amd64",
+        "darwin",
+        "darwin-amd64-macos-tahoe-apfs",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "authorization-services",
+        "developer-id",
+        "keychain",
+        "notarization"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "user-supplied-official",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "apfs-durability",
+        "clean-host-install",
+        "default-no-egress",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-publisher",
+        "novice-accessibility"
+      ]
+    },
+    {
+      "id": "darwin-arm64-macos-tahoe-apfs",
+      "owner": "release-engineering-macos",
+      "status": "required",
+      "operating_system": "darwin",
+      "architecture": "arm64",
+      "distribution": "macos-tahoe",
+      "minimum_os_version": "26.0.0",
+      "maximum_os_version": "26.99.99",
+      "minimum_build": 25000,
+      "maximum_build": 25999,
+      "filesystem": "apfs",
+      "stock_image": {
+        "authority": "apple",
+        "source": "https://support.apple.com/en-ca/108900",
+        "reset_method": "apple-dfu-restore",
+        "identity_kind": "ipsw-build-hardware"
+      },
+      "runner_labels": [
+        "arm64",
+        "darwin",
+        "darwin-arm64-macos-tahoe-apfs",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "authorization-services",
+        "developer-id",
+        "keychain",
+        "notarization"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "user-supplied-official",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "apfs-durability",
+        "clean-host-install",
+        "default-no-egress",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-publisher",
+        "novice-accessibility"
+      ]
+    },
+    {
+      "id": "linux-amd64-fedora-44-xfs",
+      "owner": "release-engineering-linux",
+      "status": "required",
+      "operating_system": "linux",
+      "architecture": "amd64",
+      "distribution": "fedora-44",
+      "minimum_os_version": "44.0",
+      "maximum_os_version": "44.99",
+      "minimum_build": 44,
+      "maximum_build": 44,
+      "filesystem": "xfs",
+      "stock_image": {
+        "authority": "fedora-project",
+        "source": "https://fedoraproject.org/workstation/download/",
+        "reset_method": "signed-image-reinstall",
+        "identity_kind": "sha256-gpg"
+      },
+      "runner_labels": [
+        "amd64",
+        "linux",
+        "linux-amd64-fedora-44-xfs",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "dnf",
+        "polkit",
+        "rootless",
+        "selinux-enforcing",
+        "systemd-user"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "redistributable",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "clean-host-install",
+        "default-no-egress",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-package-receipts",
+        "novice-accessibility",
+        "xfs-durability"
+      ]
+    },
+    {
+      "id": "linux-amd64-ubuntu-24.04-ext4",
+      "owner": "release-engineering-linux",
+      "status": "required",
+      "operating_system": "linux",
+      "architecture": "amd64",
+      "distribution": "ubuntu-24.04",
+      "minimum_os_version": "24.04.0",
+      "maximum_os_version": "24.04.99",
+      "minimum_build": 2404,
+      "maximum_build": 2404,
+      "filesystem": "ext4",
+      "stock_image": {
+        "authority": "canonical",
+        "source": "https://releases.ubuntu.com/24.04/",
+        "reset_method": "signed-image-reinstall",
+        "identity_kind": "sha256-gpg"
+      },
+      "runner_labels": [
+        "amd64",
+        "linux",
+        "linux-amd64-ubuntu-24.04-ext4",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "apt",
+        "polkit",
+        "rootless",
+        "systemd-user"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "redistributable",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "clean-host-install",
+        "default-no-egress",
+        "ext4-durability",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-package-receipts",
+        "novice-accessibility"
+      ]
+    },
+    {
+      "id": "linux-arm64-fedora-44-xfs",
+      "owner": "release-engineering-linux",
+      "status": "required",
+      "operating_system": "linux",
+      "architecture": "arm64",
+      "distribution": "fedora-44",
+      "minimum_os_version": "44.0",
+      "maximum_os_version": "44.99",
+      "minimum_build": 44,
+      "maximum_build": 44,
+      "filesystem": "xfs",
+      "stock_image": {
+        "authority": "fedora-project",
+        "source": "https://fedoraproject.org/workstation/download/",
+        "reset_method": "signed-image-reinstall",
+        "identity_kind": "sha256-gpg"
+      },
+      "runner_labels": [
+        "arm64",
+        "linux",
+        "linux-arm64-fedora-44-xfs",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "dnf",
+        "polkit",
+        "rootless",
+        "selinux-enforcing",
+        "systemd-user"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "redistributable",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "clean-host-install",
+        "default-no-egress",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-package-receipts",
+        "novice-accessibility",
+        "xfs-durability"
+      ]
+    },
+    {
+      "id": "linux-arm64-ubuntu-24.04-ext4",
+      "owner": "release-engineering-linux",
+      "status": "required",
+      "operating_system": "linux",
+      "architecture": "arm64",
+      "distribution": "ubuntu-24.04",
+      "minimum_os_version": "24.04.0",
+      "maximum_os_version": "24.04.99",
+      "minimum_build": 2404,
+      "maximum_build": 2404,
+      "filesystem": "ext4",
+      "stock_image": {
+        "authority": "canonical",
+        "source": "https://cdimage.ubuntu.com/releases/24.04/release/",
+        "reset_method": "signed-image-reinstall",
+        "identity_kind": "sha256-gpg"
+      },
+      "runner_labels": [
+        "arm64",
+        "linux",
+        "linux-arm64-ubuntu-24.04-ext4",
+        "pf001-pristine",
+        "self-hosted"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "apt",
+        "polkit",
+        "rootless",
+        "systemd-user"
+      ],
+      "reboot_expectation": "optional",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "redistributable",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "clean-host-install",
+        "default-no-egress",
+        "ext4-durability",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-package-receipts",
+        "novice-accessibility"
+      ]
+    },
+    {
+      "id": "windows-amd64-11-25h2-ntfs",
+      "owner": "release-engineering-windows",
+      "status": "required",
+      "operating_system": "windows",
+      "architecture": "amd64",
+      "distribution": "windows-11-25h2",
+      "minimum_os_version": "10.0.26200",
+      "maximum_os_version": "10.0.26299",
+      "minimum_build": 26200,
+      "maximum_build": 26299,
+      "filesystem": "ntfs",
+      "stock_image": {
+        "authority": "microsoft",
+        "source": "https://www.microsoft.com/software-download/windows11",
+        "reset_method": "signed-image-reinstall",
+        "identity_kind": "sha256-authenticode"
+      },
+      "runner_labels": [
+        "amd64",
+        "pf001-pristine",
+        "self-hosted",
+        "windows",
+        "windows-amd64-11-25h2-ntfs"
+      ],
+      "runtime_states": [
+        "absent",
+        "compatible-running",
+        "compatible-stopped"
+      ],
+      "privilege_expectations": [
+        "authenticode",
+        "credential-manager",
+        "dpapi",
+        "uac",
+        "wsl2"
+      ],
+      "reboot_expectation": "required-when-prerequisite-changes",
+      "vendor_channel": "stable",
+      "offline_redistribution_policy": "user-supplied-official",
+      "fixture_suites": [
+        "agent-config-preservation",
+        "clean-host-install",
+        "default-no-egress",
+        "interruption-recovery",
+        "managed-runtime-removal",
+        "native-publisher",
+        "novice-accessibility",
+        "ntfs-durability"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "agent-host-integration",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "claude-mcpb-install",
+        "codex-config-install",
+        "config-preservation",
+        "cursor-config-install",
+        "first-mcp-timeout-status",
+        "gemini-extension-install",
+        "generic-custom-contract",
+        "reboot-reconnect"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "fail-closed-host-conditions",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "decline-elevation",
+        "decline-license",
+        "failed-semantic-smoke",
+        "incompatible-migration",
+        "invalid-provenance",
+        "invalid-sbom",
+        "invalid-signature",
+        "low-disk",
+        "low-memory",
+        "managed-device-denial",
+        "port-collision",
+        "remote-docker-context",
+        "unavailable-project-mount",
+        "unsafe-secret-permissions",
+        "unsupported-hardware",
+        "unsupported-os",
+        "virtualization-disabled"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "install-lifecycle",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "existing-running-online",
+        "existing-stopped-online",
+        "physical-capacity-reservation",
+        "pristine-offline",
+        "pristine-online",
+        "repeat-already-ready"
+      ],
+      "evidence_kinds": [
+        "egress-report",
+        "host-attestation",
+        "journal",
+        "result",
+        "transcript"
+      ]
+    },
+    {
+      "id": "interruption-recovery",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "daemon-failure-every-checkpoint",
+        "logout-every-checkpoint",
+        "network-loss-every-checkpoint",
+        "power-loss-every-checkpoint",
+        "process-kill-every-checkpoint",
+        "reboot-every-checkpoint"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "recovery-trace",
+        "result",
+        "transcript"
+      ]
+    },
+    {
+      "id": "linux-apt-native",
+      "platforms": [
+        "linux"
+      ],
+      "distributions": [
+        "ubuntu-24.04"
+      ],
+      "variants": [
+        "package-signature-receipts",
+        "polkit-denial-retry",
+        "rootless-subid-missing",
+        "systemd-user-missing",
+        "uninstall-package-state"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "linux-dnf-native",
+      "platforms": [
+        "linux"
+      ],
+      "distributions": [
+        "fedora-44"
+      ],
+      "variants": [
+        "package-signature-receipts",
+        "polkit-denial-retry",
+        "rootless-subid-missing",
+        "selinux-enforcing",
+        "systemd-user-missing",
+        "uninstall-package-state"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "local-semantic-no-egress",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "index-rerank-extract-recall"
+      ],
+      "evidence_kinds": [
+        "egress-report",
+        "host-attestation",
+        "journal",
+        "packet-capture",
+        "result",
+        "transcript"
+      ]
+    },
+    {
+      "id": "macos-native-security",
+      "platforms": [
+        "darwin"
+      ],
+      "distributions": [
+        "macos-tahoe"
+      ],
+      "variants": [
+        "authorization-denial-retry",
+        "developer-id-notarization",
+        "keychain-acl-rollback",
+        "package-uninstall",
+        "path-swap-hardlink"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "network-adversarial",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "captive-portal",
+        "partial-resume",
+        "proxy-authentication",
+        "redirect-substitution",
+        "tls-interception"
+      ],
+      "evidence_kinds": [
+        "egress-report",
+        "host-attestation",
+        "journal",
+        "packet-capture",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "upgrade-removal",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "preserve-reused-runtime",
+        "rollback-generation",
+        "uninstall-managed-runtime",
+        "upgrade-shadow-activation"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "recovery-trace",
+        "result",
+        "transcript"
+      ]
+    },
+    {
+      "id": "usability-accessibility",
+      "platforms": [],
+      "distributions": [],
+      "variants": [
+        "novice-no-technical-choice",
+        "wcag-keyboard-screenreader-localization"
+      ],
+      "evidence_kinds": [
+        "accessibility-report",
+        "host-attestation",
+        "journal",
+        "result",
+        "study-record",
+        "transcript"
+      ]
+    },
+    {
+      "id": "windows-native-security",
+      "platforms": [
+        "windows"
+      ],
+      "distributions": [
+        "windows-11-25h2"
+      ],
+      "variants": [
+        "authenticode-leaf-match",
+        "credential-manager-dpapi",
+        "dacl-reparse-hardlink",
+        "package-uninstall",
+        "uac-denial-retry"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    },
+    {
+      "id": "windows-wsl-prerequisites",
+      "platforms": [
+        "windows"
+      ],
+      "distributions": [
+        "windows-11-25h2"
+      ],
+      "variants": [
+        "wsl-absent-reboot",
+        "wsl-current",
+        "wsl-distribution-absent",
+        "wsl-outdated-reboot"
+      ],
+      "evidence_kinds": [
+        "host-attestation",
+        "journal",
+        "recovery-trace",
+        "result",
+        "security-report",
+        "transcript"
+      ]
+    }
+  ]
+}

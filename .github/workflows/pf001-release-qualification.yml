@@ -15,6 +15,14 @@ on:
         description: Exact signed host-package candidate artifact name
         required: true
         type: string
+      certification_run_id:
+        description: Successful hosted PF-001 native-certification workflow run ID
+        required: true
+        type: string
+      certification_artifact:
+        description: Exact attested native-certification artifact name
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -220,6 +228,112 @@ jobs:
               -source-date-epoch "$source_epoch" \
               -verification-epoch "$verification_epoch"
           done
+
+  native-certification:
+    name: Independently signed clean-host campaign
+    needs: retained-bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: pf001-release-qualification
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ inputs.version }}
+      VERSION: ${{ inputs.version }}
+      CERTIFICATION_RUN_ID: ${{ inputs.certification_run_id }}
+      CERTIFICATION_ARTIFACT: ${{ inputs.certification_artifact }}
+      CERTIFICATION_PUBLIC_KEY: ${{ vars.AGENTMEMORY_NATIVE_CERTIFICATION_PUBLIC_KEY_BASE64 }}
+    steps:
+      - name: Check out exact tagged source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Prove certification workflow identity and exact tagged source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CERTIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CERTIFICATION_ARTIFACT" =~ ^pf001-native-certification-[0-9a-f]{40}-[1-9][0-9]*$ ]]
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$TAG"
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+          test "$CERTIFICATION_ARTIFACT" = "pf001-native-certification-$GITHUB_SHA-$CERTIFICATION_RUN_ID"
+          gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CERTIFICATION_RUN_ID" \
+            > "$RUNNER_TEMP/certification-run.json"
+          jq -e \
+            --arg sha "$GITHUB_SHA" \
+            --arg tag "$TAG" \
+            '.status == "completed" and .conclusion == "success" and
+             .event == "workflow_dispatch" and .head_sha == $sha and .head_branch == $tag and
+             .path == ".github/workflows/pf001-native-certification.yml"' \
+            "$RUNNER_TEMP/certification-run.json" >/dev/null
+          gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CERTIFICATION_RUN_ID/artifacts?name=$CERTIFICATION_ARTIFACT" \
+            > "$RUNNER_TEMP/certification-artifacts.json"
+          jq -e \
+            --arg name "$CERTIFICATION_ARTIFACT" \
+            --arg sha "$GITHUB_SHA" \
+            '.total_count == 1 and .artifacts[0].name == $name and
+             .artifacts[0].expired == false and .artifacts[0].workflow_run.head_sha == $sha and
+             (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$"))' \
+            "$RUNNER_TEMP/certification-artifacts.json" >/dev/null
+
+      - name: Download exact host candidate for publication binding
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.build_artifact }}
+          path: ${{ runner.temp }}/release-build
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.build_run_id }}
+
+      - name: Download exact hosted certification output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.certification_artifact }}
+          path: ${{ runner.temp }}/certification
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.certification_run_id }}
+
+      - name: Verify hosted attestation and independent campaign signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/certification/agentmemory-native-certification.zip"
+          publication="$RUNNER_TEMP/release-build/publication.json"
+          test -f "$bundle"
+          test "$(find "$RUNNER_TEMP/certification" -type f | wc -l | tr -d ' ')" -eq 1
+          gh attestation verify "$bundle" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/pf001-native-certification.yml" \
+            --signer-digest "$GITHUB_SHA" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners >/dev/null
+          go run ./apps/launcher/cmd/agentmemory-publication-record \
+            -candidate-root "$RUNNER_TEMP/release-build/candidate" \
+            -verify-record "$publication"
+          go run ./tools/check_pf001_certification \
+            -bundle "$bundle" \
+            -publication "$publication" \
+            -public-key-base64 "$CERTIFICATION_PUBLIC_KEY" \
+            -expected-version "$VERSION" \
+            -expected-source-commit "$GITHUB_SHA" \
+            -verification-time-unix "$(date -u +%s)"
 
   macos-package:
     name: Native macOS package (${{ matrix.arch }})
@@ -538,7 +652,7 @@ jobs:
 
   qualify:
     name: Attest and retain exact qualified candidate
-    needs: [retained-bundle, macos-package, windows-package, linux-packages]
+    needs: [retained-bundle, native-certification, macos-package, windows-package, linux-packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: pf001-release-qualification
@@ -565,11 +679,32 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.build_run_id }}
 
+      - name: Add exact verified native certification evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.certification_artifact }}
+          path: ${{ runner.temp }}/qualified
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.certification_run_id }}
+
       - name: Final byte-level re-verification
+        env:
+          CERTIFICATION_PUBLIC_KEY: ${{ vars.AGENTMEMORY_NATIVE_CERTIFICATION_PUBLIC_KEY_BASE64 }}
+          VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           go run ./apps/launcher/cmd/agentmemory-publication-record \
             -candidate-root "$RUNNER_TEMP/qualified/candidate" \
             -verify-record "$RUNNER_TEMP/qualified/publication.json"
+          go run ./tools/check_pf001_certification \
+            -bundle "$RUNNER_TEMP/qualified/agentmemory-native-certification.zip" \
+            -publication "$RUNNER_TEMP/qualified/publication.json" \
+            -public-key-base64 "$CERTIFICATION_PUBLIC_KEY" \
+            -expected-version "$VERSION" \
+            -expected-source-commit "$GITHUB_SHA" \
+            -verification-time-unix "$(date -u +%s)"
+          test "$(find "$RUNNER_TEMP/qualified" -type f | wc -l | tr -d ' ')" -eq 117
 
       - name: Attest every exact qualified object
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1

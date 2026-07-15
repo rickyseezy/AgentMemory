@@ -196,6 +196,32 @@ func TestCatalogDesktopArtifactAcquirerMaterializesExactSignedInstaller(t *testi
 	}
 }
 
+func TestDesktopArtifactPrivateBoundaryUsesTargetPlatformPathSyntax(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		platform runtimeinstall.Platform
+		want     string
+	}{
+		{platform: runtimeinstall.PlatformDarwin, want: "/Users/agentmemory/Library/Caches/AgentMemory"},
+		{platform: runtimeinstall.PlatformWindows, want: `C:\Users\Agent User\AppData\Local\AgentMemory`},
+	} {
+		_, authority := desktopAdapterAuthority(t, test.platform)
+		boundary, err := desktopArtifactPrivateBoundary(authority)
+		if err != nil || boundary != test.want {
+			t.Fatalf("platform=%s boundary=%q error=%v", test.platform, boundary, err)
+		}
+	}
+	for _, target := range []string{
+		`C:\Users\Agent User\AppData\Local\AgentMemory`,
+		`C:\Users\Agent User\AppData\Local\AgentMemory-attacker\runtime\Docker.exe`,
+		`C:/Users/Agent User/AppData/Local/AgentMemory/runtime/Docker.exe`,
+	} {
+		if windowsDesktopPathWithin(`C:\Users\Agent User\AppData\Local\AgentMemory`, target) {
+			t.Fatalf("out-of-boundary Windows target accepted: %q", target)
+		}
+	}
+}
+
 func TestCatalogDesktopArtifactAcquirerRejectsSubstitutionAndMissingDependencies(t *testing.T) {
 	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
 	plan := adapterDesktopArtifactPlan(t, authority)

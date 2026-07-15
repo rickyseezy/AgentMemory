@@ -327,7 +327,7 @@ func AcquireOperationDirectory(
 		return nil, errors.New("windows operation path is outside the closed bootstrap tree")
 	}
 	if create {
-		if err := os.MkdirAll(rootPath, 0o700); err != nil {
+		if _, _, err := EnsurePrivateDirectoryTree(ctx, rootPath, rootPath); err != nil {
 			return nil, err
 		}
 	}

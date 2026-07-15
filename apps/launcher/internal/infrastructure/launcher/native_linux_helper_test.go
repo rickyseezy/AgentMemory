@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"testing"
 	"time"
 
@@ -266,7 +266,7 @@ func (launcherPrivilegeArtifactStager) StagePrivilegeArtifacts(
 		}
 		binding, err := runtimeprovision.NewPrivilegeArtifactBinding(
 			pkg.Name(),
-			filepath.Join(
+			path.Join(
 				"/home/agentmemory/.agentmemory", authority.Digest().String(),
 				pkg.Name()+"-"+digest.String()+extension,
 			),

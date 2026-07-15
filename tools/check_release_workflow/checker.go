@@ -13,6 +13,7 @@ import (
 
 const (
 	buildWorkflowPath         = ".github/workflows/pf001-release-build.yml"
+	certificationWorkflowPath = ".github/workflows/pf001-native-certification.yml"
 	hostPackageWorkflowPath   = ".github/workflows/pf001-host-package-build.yml"
 	releaseWorkflowPath       = ".github/workflows/pf001-release.yml"
 	qualificationWorkflowPath = ".github/workflows/pf001-release-qualification.yml"
@@ -21,9 +22,10 @@ const (
 
 var reviewedWorkflows = map[string]string{
 	buildWorkflowPath:         "0521cd8ed35750665b45e18a0e24990a5fbf38c53bfa4c3e618f604d6dd2b1c6",
+	certificationWorkflowPath: "df05072b988d015412e855a8f3dba6614d26e5e18bab078dba34921b88bc6795",
 	hostPackageWorkflowPath:   "c28e217174b577fea6ea52048ec17be3089b6787a9e280558c3e52ff52f9a998",
-	releaseWorkflowPath:       "bc4f2e36f8d64caea952a8a1dc7534ceaa74ce435761b82fde47426d120e801a",
-	qualificationWorkflowPath: "8b8ed85664314777bdb8d8b968e67e2be7443540adda5a47e9be634aa06b64e2",
+	releaseWorkflowPath:       "ab8cd6a2d3a30337a1a966412f6130d71639e6064da013907b57eab588c155da",
+	qualificationWorkflowPath: "36d7454e3f917b2783240b40052f9b4267ff7e2049e5bad73ed1d3e9bcb383f2",
 }
 
 // Options identifies the repository whose release workflow is checked.

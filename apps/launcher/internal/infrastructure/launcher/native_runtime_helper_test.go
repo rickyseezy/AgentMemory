@@ -18,6 +18,7 @@ func TestPF001NativeDesktopHelperTrustProjectsExactVerifiedReleaseResource(t *te
 	verifier := &nativeDesktopHelperReleaseStub{}
 	resources := []releaseinventory.Resource{
 		nativeDesktopHelperResource(t, "darwin", "arm64"),
+		nativeDesktopHelperResource(t, "darwin", "amd64"),
 		nativeDesktopHelperResource(t, "windows", "amd64"),
 	}
 	certificates := nativeDesktopHelperCertificates(resources)

@@ -38,6 +38,8 @@ jobs:
       QUALIFIED_ROOT: ${{ github.workspace }}/build/release/qualified
       PUBLISH_ROOT: ${{ github.workspace }}/build/release/publish
       TAG: v${{ inputs.version }}
+      VERSION: ${{ inputs.version }}
+      CERTIFICATION_PUBLIC_KEY: ${{ vars.AGENTMEMORY_NATIVE_CERTIFICATION_PUBLIC_KEY_BASE64 }}
     steps:
       - name: Check out the exact tagged release source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -103,7 +105,7 @@ jobs:
               --deny-self-hosted-runners >/dev/null
             count=$((count + 1))
           done < <(find "$QUALIFIED_ROOT" -type f -print0 | sort -z)
-          test "$count" -eq 116
+          test "$count" -eq 117
 
       - name: Rehash the closed candidate and bind selected release identity
         shell: bash
@@ -112,9 +114,16 @@ jobs:
           go run ./apps/launcher/cmd/agentmemory-publication-record \
             -candidate-root "$QUALIFIED_ROOT/candidate" \
             -verify-record "$QUALIFIED_ROOT/publication.json"
-          test "$(jq -r '.version' "$QUALIFIED_ROOT/publication.json")" = '${{ inputs.version }}'
+          test "$(jq -r '.version' "$QUALIFIED_ROOT/publication.json")" = "$VERSION"
           test "$(jq -r '.source_commit' "$QUALIFIED_ROOT/publication.json")" = "$GITHUB_SHA"
           test "$(jq -r '.schema_version' "$QUALIFIED_ROOT/publication.json")" = 1
+          go run ./tools/check_pf001_certification \
+            -bundle "$QUALIFIED_ROOT/agentmemory-native-certification.zip" \
+            -publication "$QUALIFIED_ROOT/publication.json" \
+            -public-key-base64 "$CERTIFICATION_PUBLIC_KEY" \
+            -expected-version "$VERSION" \
+            -expected-source-commit "$GITHUB_SHA" \
+            -verification-time-unix "$(date -u +%s)"
 
       - name: Stage the exact qualified publish set without rebuilding or signing
         shell: bash
@@ -130,7 +139,7 @@ jobs:
             test ! -e "$PUBLISH_ROOT/$name"
             install -m 0600 "$subject" "$PUBLISH_ROOT/$name"
           done < <(find "$QUALIFIED_ROOT" -type f -print0 | sort -z)
-          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 116
+          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 117
 
       - name: Reverify publication and every detached host-package signature
         shell: bash
@@ -149,6 +158,7 @@ jobs:
               --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
               "$subject"
           done < <(find "$PUBLISH_ROOT" -maxdepth 1 -type f \
+            ! -name 'agentmemory-native-certification.zip' \
             \( -name '*.mcpb' -o -name '*.zip' -o -name '*.record.json' \) -print0 | sort -z)
 
       - name: Attest the complete exact promotion set
@@ -163,6 +173,13 @@ jobs:
           go run ./apps/launcher/cmd/agentmemory-publication-record \
             -candidate-root "$QUALIFIED_ROOT/candidate" \
             -verify-record "$QUALIFIED_ROOT/publication.json"
+          go run ./tools/check_pf001_certification \
+            -bundle "$PUBLISH_ROOT/agentmemory-native-certification.zip" \
+            -publication "$PUBLISH_ROOT/agentmemory-release-publication.json" \
+            -public-key-base64 "$CERTIFICATION_PUBLIC_KEY" \
+            -expected-version "$VERSION" \
+            -expected-source-commit "$GITHUB_SHA" \
+            -verification-time-unix "$(date -u +%s)"
           while IFS= read -r -d '' subject; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
@@ -192,7 +209,7 @@ jobs:
           release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id')
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
             --jq '.[] | [.name, .size, .digest] | @tsv' | sort > "$RUNNER_TEMP/published-assets.tsv"
-          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 116
+          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 117
           while IFS= read -r -d '' local_asset; do
             name=$(basename "$local_asset")
             size=$(stat --format='%s' "$local_asset")

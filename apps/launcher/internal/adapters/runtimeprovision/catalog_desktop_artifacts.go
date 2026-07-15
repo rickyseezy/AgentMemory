@@ -3,7 +3,8 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
+	"strings"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -148,21 +149,32 @@ func desktopArtifactPrivateBoundary(authority runtimeport.DesktopAuthority) (str
 	var boundary string
 	switch authority.Platform() {
 	case runtimeinstall.PlatformDarwin:
-		boundary = filepath.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
+		boundary = path.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
+		if !posixDesktopPathWithin(boundary, authority.ArtifactPath()) {
+			return "", runtimeport.ErrDesktopEvidenceIntegrity
+		}
 	case runtimeinstall.PlatformWindows:
-		boundary = filepath.Join(authority.HomeDirectory(), "AppData", "Local", "AgentMemory")
+		boundary = strings.TrimRight(authority.HomeDirectory(), `\`) + `\AppData\Local\AgentMemory`
+		if !windowsDesktopPathWithin(boundary, authority.ArtifactPath()) {
+			return "", runtimeport.ErrDesktopEvidenceIntegrity
+		}
 	case runtimeinstall.PlatformUnknown, runtimeinstall.PlatformLinux:
-		return "", runtimeport.ErrDesktopEvidenceIntegrity
-	}
-	relative, err := filepath.Rel(boundary, authority.ArtifactPath())
-	if err != nil || relative == "." || filepath.IsAbs(relative) || pathEscapesDesktopBoundary(relative) {
 		return "", runtimeport.ErrDesktopEvidenceIntegrity
 	}
 	return boundary, nil
 }
 
-func pathEscapesDesktopBoundary(relative string) bool {
-	return relative == ".." || len(relative) > 3 && relative[:3] == ".."+string(filepath.Separator)
+func posixDesktopPathWithin(boundary, target string) bool {
+	return boundary != "" && target != "" && path.IsAbs(boundary) && path.IsAbs(target) &&
+		strings.HasPrefix(target, strings.TrimRight(boundary, "/")+"/")
+}
+
+func windowsDesktopPathWithin(boundary, target string) bool {
+	if boundary == "" || target == "" || strings.ContainsRune(boundary, '/') || strings.ContainsRune(target, '/') {
+		return false
+	}
+	prefix := strings.ToLower(boundary) + `\`
+	return strings.HasPrefix(strings.ToLower(target), prefix)
 }
 
 func desktopArtifactOperationID(authority runtimeport.DesktopAuthority) string {

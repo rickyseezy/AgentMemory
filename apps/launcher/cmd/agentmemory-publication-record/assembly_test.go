@@ -40,6 +40,11 @@ func TestPF001PublicationAssemblerHashesClosedCandidateTree(t *testing.T) {
 		publication.DistributionEnvelopeSize() != uint64(len(distribution)) {
 		t.Fatalf("distribution binding error=%v", err)
 	}
+	releaseTrust, err := os.ReadFile(filepath.Join(fixture.options.CandidateRoot, releaseTrustName))
+	if err != nil || !publication.ReleaseTrustDigest().Equal(digestBytes(releaseTrust)) ||
+		publication.ReleaseTrustSize() != uint64(len(releaseTrust)) {
+		t.Fatalf("release-trust binding error=%v", err)
+	}
 }
 
 func TestPF001PublicationAssemblerRejectsOpenOrChangedCandidateTrees(t *testing.T) {
@@ -206,6 +211,7 @@ func newCandidateFixture(t testing.TB) *candidateFixture {
 		}
 	}
 	write(distributionEnvelopeName, []byte(`{"signed":"distribution"}`))
+	write(releaseTrustName, []byte(`{"schemaVersion":1,"publicAuthority":"fixture"}`))
 	for _, artifact := range candidateArtifacts {
 		write(artifact.objectPath, []byte("object:"+artifact.id))
 		write(artifact.cycloneDXPath, []byte(`{"bomFormat":"CycloneDX","subject":"`+artifact.id+`"}`))

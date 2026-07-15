@@ -31,6 +31,8 @@ func TestPF001PublicationCanonicalRoundTripBindsExactPromotedObjects(t *testing.
 		decoded.BuildID() != input.BuildID || decoded.SourceCommit() != input.SourceCommit ||
 		!decoded.DistributionEnvelopeDigest().Equal(input.DistributionEnvelopeDigest) ||
 		decoded.DistributionEnvelopeSize() != input.DistributionEnvelopeSize ||
+		!decoded.ReleaseTrustDigest().Equal(input.ReleaseTrustDigest) ||
+		decoded.ReleaseTrustSize() != input.ReleaseTrustSize ||
 		!bytes.Equal(decoded.Canonical(), raw) {
 		t.Fatalf("decoded publication lost an authority binding: %+v", decoded)
 	}
@@ -68,6 +70,9 @@ func TestPF001PublicationRequiresClosedCertifiedNativePackageMatrix(t *testing.T
 		"distribution aliases object": func(input *PublicationInput) {
 			input.DistributionEnvelopeDigest = input.Artifacts[0].Digest
 		},
+		"trust aliases distribution": func(input *PublicationInput) {
+			input.ReleaseTrustDigest = input.DistributionEnvelopeDigest
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -90,6 +95,8 @@ func TestPF001PublicationRejectsUnsafeArtifactAndIdentityInputs(t *testing.T) {
 		"commit":        func(input *PublicationInput) { input.SourceCommit = strings.Repeat("A", 40) },
 		"timestamp":     func(input *PublicationInput) { input.BuildTimestamp = time.Time{} },
 		"envelope size": func(input *PublicationInput) { input.DistributionEnvelopeSize = 0 },
+		"trust digest":  func(input *PublicationInput) { input.ReleaseTrustDigest = releaseinventory.Digest{} },
+		"trust size":    func(input *PublicationInput) { input.ReleaseTrustSize = 0 },
 		"unsafe name":   func(input *PublicationInput) { input.Artifacts[0].FileName = "../agentmemory.pkg" },
 		"empty object":  func(input *PublicationInput) { input.Artifacts[0].Size = 0 },
 		"missing SBOM":  func(input *PublicationInput) { input.Artifacts[0].CycloneDXSBOMDigest = releaseinventory.Digest{} },
@@ -171,6 +178,7 @@ func validPublicationInput(t testing.TB) PublicationInput {
 		SchemaVersion: SupportedSchemaMajor, ReleaseID: "release-2026-07", Version: "1.2.3", BuildID: "build-17",
 		SourceCommit: strings.Repeat("a", 40), BuildTimestamp: time.Unix(1_784_073_600, 0).UTC(),
 		DistributionEnvelopeDigest: digest("distribution-envelope"), DistributionEnvelopeSize: 8192,
+		ReleaseTrustDigest: digest("release-trust"), ReleaseTrustSize: 4096,
 		Artifacts: artifacts,
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 const (
 	releaseWorkflowPath    = ".github/workflows/pf001-release.yml"
-	releaseWorkflowSHA256  = "3ddeb7dc66448315355336cde9ba606b9c9ef53be1842d967e1274a2f22b8345"
+	releaseWorkflowSHA256  = "b06d66b71191597e96a88895adab096cba7300c9dfec0de21bbbf399ee717d47"
 	downloadArtifactCommit = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 )
 

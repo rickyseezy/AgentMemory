@@ -103,7 +103,7 @@ jobs:
               --deny-self-hosted-runners >/dev/null
             count=$((count + 1))
           done < <(find "$QUALIFIED_ROOT" -type f -print0 | sort -z)
-          test "$count" -eq 34
+          test "$count" -eq 35
 
       - name: Rehash the closed candidate and bind selected release identity
         shell: bash
@@ -125,9 +125,11 @@ jobs:
             "$PUBLISH_ROOT/agentmemory-release-publication.json"
           install -m 0600 "$QUALIFIED_ROOT/candidate/distribution-manifest.json" \
             "$PUBLISH_ROOT/distribution-manifest.json"
+          install -m 0600 "$QUALIFIED_ROOT/candidate/release-trust.json" \
+            "$PUBLISH_ROOT/release-trust.json"
           find "$QUALIFIED_ROOT/candidate/objects" "$QUALIFIED_ROOT/candidate/evidence" \
             -mindepth 1 -maxdepth 1 -type f -exec install -m 0600 '{}' "$PUBLISH_ROOT/" ';'
-          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 34
+          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 35
 
       - name: Sign and immediately verify the publication authority
         shell: bash
@@ -142,7 +144,7 @@ jobs:
             --certificate-identity "$identity" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "$PUBLISH_ROOT/agentmemory-release-publication.json"
-          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 35
+          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 36
 
       - name: Attest the complete exact promotion set
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -185,7 +187,7 @@ jobs:
           release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id')
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
             --jq '.[] | [.name, .size, .digest] | @tsv' | sort > "$RUNNER_TEMP/published-assets.tsv"
-          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 35
+          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 36
           while IFS= read -r -d '' local_asset; do
             name=$(basename "$local_asset")
             size=$(stat --format='%s' "$local_asset")

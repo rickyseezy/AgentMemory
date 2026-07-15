@@ -18,6 +18,7 @@ import (
 
 const (
 	distributionEnvelopeName = "distribution-manifest.json"
+	releaseTrustName         = "release-trust.json"
 	maximumEvidenceSize      = 64 * 1024 * 1024
 	maximumEnvelopeSize      = 32 * 1024 * 1024
 	maximumSafeFileSize      = int64(1<<53 - 1)
@@ -91,6 +92,8 @@ type publicationParts struct {
 	options            PublicationOptions
 	distributionDigest releaseinventory.Digest
 	distributionSize   uint64
+	releaseTrustDigest releaseinventory.Digest
+	releaseTrustSize   uint64
 	artifacts          []releasepublication.ArtifactInput
 }
 
@@ -207,7 +210,7 @@ func resolveOptions(options PublicationOptions) (PublicationOptions, error) {
 }
 
 func inspectCandidate(options PublicationOptions) (publicationParts, error) {
-	allowedFiles := map[string]struct{}{distributionEnvelopeName: {}}
+	allowedFiles := map[string]struct{}{distributionEnvelopeName: {}, releaseTrustName: {}}
 	allowedDirectories := map[string]struct{}{":root": {}, "objects": {}, "evidence": {}}
 	for _, artifact := range candidateArtifacts {
 		for _, path := range []string{artifact.objectPath, artifact.cycloneDXPath, artifact.provenancePath, artifact.signaturePath} {
@@ -256,7 +259,16 @@ func inspectCandidate(options PublicationOptions) (publicationParts, error) {
 	if err != nil {
 		return publicationParts{}, fmt.Errorf("hash distribution envelope: %w", err)
 	}
-	parts := publicationParts{options: options, distributionDigest: distributionDigest, distributionSize: distributionSize}
+	releaseTrustDigest, releaseTrustSize, err := digestRegularFile(
+		filepath.Join(options.CandidateRoot, releaseTrustName), maximumEnvelopeSize,
+	)
+	if err != nil {
+		return publicationParts{}, fmt.Errorf("hash release trust: %w", err)
+	}
+	parts := publicationParts{
+		options: options, distributionDigest: distributionDigest, distributionSize: distributionSize,
+		releaseTrustDigest: releaseTrustDigest, releaseTrustSize: releaseTrustSize,
+	}
 	for _, definition := range candidateArtifacts {
 		artifact, err := inspectArtifact(options.CandidateRoot, definition)
 		if err != nil {
@@ -349,6 +361,7 @@ func compilePublication(parts publicationParts) ([]byte, error) {
 		Version: parts.options.Version, BuildID: parts.options.BuildID, SourceCommit: parts.options.SourceCommit,
 		BuildTimestamp:             time.Unix(parts.options.SourceEpoch, 0).UTC(),
 		DistributionEnvelopeDigest: parts.distributionDigest, DistributionEnvelopeSize: parts.distributionSize,
+		ReleaseTrustDigest: parts.releaseTrustDigest, ReleaseTrustSize: parts.releaseTrustSize,
 		Artifacts: parts.artifacts,
 	})
 	if err != nil {
@@ -362,7 +375,9 @@ func publicationMatchesParts(publication releasepublication.Publication, parts p
 		publication.BuildID() != parts.options.BuildID || publication.SourceCommit() != parts.options.SourceCommit ||
 		publication.BuildTimestamp().Unix() != parts.options.SourceEpoch ||
 		!publication.DistributionEnvelopeDigest().Equal(parts.distributionDigest) ||
-		publication.DistributionEnvelopeSize() != parts.distributionSize {
+		publication.DistributionEnvelopeSize() != parts.distributionSize ||
+		!publication.ReleaseTrustDigest().Equal(parts.releaseTrustDigest) ||
+		publication.ReleaseTrustSize() != parts.releaseTrustSize {
 		return false
 	}
 	actual := publication.Artifacts()

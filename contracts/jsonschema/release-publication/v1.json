@@ -12,6 +12,8 @@
     "distribution_envelope_sha256",
     "distribution_envelope_size",
     "release_id",
+    "release_trust_sha256",
+    "release_trust_size",
     "schema_version",
     "source_commit",
     "version"
@@ -28,6 +30,8 @@
     "distribution_envelope_sha256": { "$ref": "#/$defs/digest" },
     "distribution_envelope_size": { "$ref": "#/$defs/safePositiveInteger" },
     "release_id": { "$ref": "#/$defs/identifier" },
+    "release_trust_sha256": { "$ref": "#/$defs/digest" },
+    "release_trust_size": { "$ref": "#/$defs/safePositiveInteger" },
     "schema_version": { "const": 1 },
     "source_commit": {
       "type": "string",

@@ -38,6 +38,8 @@ type canonicalPublication struct {
 	DistributionEnvelopeSHA256 string              `json:"distribution_envelope_sha256"`
 	DistributionEnvelopeSize   uint64              `json:"distribution_envelope_size"`
 	ReleaseID                  string              `json:"release_id"`
+	ReleaseTrustSHA256         string              `json:"release_trust_sha256"`
+	ReleaseTrustSize           uint64              `json:"release_trust_size"`
 	SchemaVersion              uint16              `json:"schema_version"`
 	SourceCommit               string              `json:"source_commit"`
 	Version                    string              `json:"version"`
@@ -80,6 +82,10 @@ func DecodeV1(raw []byte) (Publication, error) {
 	if err != nil {
 		return Publication{}, errors.New("publication distribution digest is invalid")
 	}
+	releaseTrust, err := releaseinventory.ParseDigest(document.ReleaseTrustSHA256)
+	if err != nil {
+		return Publication{}, errors.New("publication release-trust digest is invalid")
+	}
 	inputs := make([]ArtifactInput, 0, len(document.Artifacts))
 	for _, artifact := range document.Artifacts {
 		digest, digestErr := releaseinventory.ParseDigest(artifact.SHA256)
@@ -102,6 +108,7 @@ func DecodeV1(raw []byte) (Publication, error) {
 		BuildID: document.BuildID, SourceCommit: document.SourceCommit,
 		BuildTimestamp:             time.Unix(document.BuildTimestamp, 0).UTC(),
 		DistributionEnvelopeDigest: distribution, DistributionEnvelopeSize: document.DistributionEnvelopeSize,
+		ReleaseTrustDigest: releaseTrust, ReleaseTrustSize: document.ReleaseTrustSize,
 		Artifacts: inputs,
 	})
 	if err != nil || !bytes.Equal(raw, publication.canonical) {

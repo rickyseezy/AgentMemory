@@ -28,6 +28,8 @@ type PublicationInput struct {
 	BuildTimestamp             time.Time
 	DistributionEnvelopeDigest releaseinventory.Digest
 	DistributionEnvelopeSize   uint64
+	ReleaseTrustDigest         releaseinventory.Digest
+	ReleaseTrustSize           uint64
 	Artifacts                  []ArtifactInput
 }
 
@@ -41,6 +43,8 @@ type Publication struct {
 	buildTimestamp             int64
 	distributionEnvelopeDigest releaseinventory.Digest
 	distributionEnvelopeSize   uint64
+	releaseTrustDigest         releaseinventory.Digest
+	releaseTrustSize           uint64
 	artifacts                  []Artifact
 	canonical                  []byte
 }
@@ -52,12 +56,19 @@ func NewPublication(input PublicationInput) (Publication, error) {
 		!validSourceCommit(input.SourceCommit) || input.BuildTimestamp.IsZero() ||
 		input.BuildTimestamp.Unix() <= 0 || input.BuildTimestamp.Nanosecond() != 0 ||
 		input.DistributionEnvelopeDigest.IsZero() || input.DistributionEnvelopeSize == 0 ||
-		input.DistributionEnvelopeSize > maxSafeJSONInteger || len(input.Artifacts) != len(requiredNativeCells)+1 {
+		input.DistributionEnvelopeSize > maxSafeJSONInteger || input.ReleaseTrustDigest.IsZero() ||
+		input.ReleaseTrustSize == 0 || input.ReleaseTrustSize > maxSafeJSONInteger ||
+		len(input.Artifacts) != len(requiredNativeCells)+1 {
 		return Publication{}, errors.New("publication identity or inventory is invalid")
 	}
 	artifacts := make([]Artifact, 0, len(input.Artifacts))
 	identifiers := make(map[string]struct{}, len(input.Artifacts))
-	digests := map[string]struct{}{input.DistributionEnvelopeDigest.Hex(): {}}
+	if input.DistributionEnvelopeDigest.Equal(input.ReleaseTrustDigest) {
+		return Publication{}, errors.New("publication authority objects alias one digest")
+	}
+	digests := map[string]struct{}{
+		input.DistributionEnvelopeDigest.Hex(): {}, input.ReleaseTrustDigest.Hex(): {},
+	}
 	cells := make(map[string]struct{}, len(requiredNativeCells))
 	offlineBundles := 0
 	for _, artifactInput := range input.Artifacts {
@@ -101,7 +112,9 @@ func NewPublication(input PublicationInput) (Publication, error) {
 		schemaVersion: input.SchemaVersion, releaseID: input.ReleaseID, version: input.Version,
 		buildID: input.BuildID, sourceCommit: input.SourceCommit, buildTimestamp: input.BuildTimestamp.Unix(),
 		distributionEnvelopeDigest: input.DistributionEnvelopeDigest,
-		distributionEnvelopeSize:   input.DistributionEnvelopeSize, artifacts: artifacts,
+		distributionEnvelopeSize:   input.DistributionEnvelopeSize,
+		releaseTrustDigest:         input.ReleaseTrustDigest, releaseTrustSize: input.ReleaseTrustSize,
+		artifacts: artifacts,
 	}
 	canonical, err := publication.encodeCanonical()
 	if err != nil {
@@ -150,6 +163,7 @@ func (p Publication) encodeCanonical() ([]byte, error) {
 		Artifacts: artifacts, BuildID: p.buildID, BuildTimestamp: p.buildTimestamp,
 		DistributionEnvelopeSHA256: p.distributionEnvelopeDigest.Hex(),
 		DistributionEnvelopeSize:   p.distributionEnvelopeSize, ReleaseID: p.releaseID,
+		ReleaseTrustSHA256: p.releaseTrustDigest.Hex(), ReleaseTrustSize: p.releaseTrustSize,
 		SchemaVersion: p.schemaVersion, SourceCommit: p.sourceCommit, Version: p.version,
 	}
 	var output bytes.Buffer
@@ -188,6 +202,12 @@ func (p Publication) DistributionEnvelopeDigest() releaseinventory.Digest {
 
 // DistributionEnvelopeSize returns the packaged inner authority byte length.
 func (p Publication) DistributionEnvelopeSize() uint64 { return p.distributionEnvelopeSize }
+
+// ReleaseTrustDigest returns the native binaries' embedded public authority digest.
+func (p Publication) ReleaseTrustDigest() releaseinventory.Digest { return p.releaseTrustDigest }
+
+// ReleaseTrustSize returns the embedded public authority byte length.
+func (p Publication) ReleaseTrustSize() uint64 { return p.releaseTrustSize }
 
 // Artifacts returns an independently copied canonical artifact inventory.
 func (p Publication) Artifacts() []Artifact { return append([]Artifact(nil), p.artifacts...) }

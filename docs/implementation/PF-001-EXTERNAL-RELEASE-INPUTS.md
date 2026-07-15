@@ -95,13 +95,14 @@ execution. Linux privilege receipts and Desktop mutation receipts remain
 domain-separated and cannot be replayed across those boundaries.
 
 The release owner must also provide the SHA-256 digest of the native signing
-certificate for every helper resource ID. The reproducible release build writes
+certificate for every helper resource ID and the Windows launcher resource ID. The reproducible release build writes
 these public, per-resource bindings into `runtimeHelperPublisherCertificates`;
-Darwin and Windows helpers must never share an inferred or ambient certificate
-identity. The release manifest still binds each helper's exact executable
+the schema-v1 wire name is retained for compatibility even though the map is now the closed native
+resource certificate set. Darwin and Windows helpers and the Windows launcher must never use an
+inferred or ambient certificate identity. The release manifest still binds each native resource's exact executable
 digest, publisher identity, publisher policy, platform, and architecture. A
-missing, zero, duplicate-platform, foreign, or non-release helper binding makes
-runtime mutation unavailable before elevation.
+missing, zero, duplicate-platform, foreign, or non-release binding makes runtime
+mutation or agent-configuration publication unavailable before elevation/execution.
 
 Every published artifact must carry an offline-verifiable Sigstore bundle or
 equivalent manifest-bound evidence. Sigstore documents that a verification

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
+	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimecatalogapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
@@ -66,7 +67,7 @@ func (v *nativeRuntimeExecutionVerifier) verifyAuthenticated(
 	}
 	return nativeVerifiedRuntimeExecution{
 		authority: authority, catalog: verified.verified, runtime: verified.runtime, request: request,
-		manifestDigest: verified.manifestDigest, signedCatalog: envelope.Signed,
+		manifestDigest: verified.manifestDigest, signedCatalog: envelope.Signed, inventory: envelope.Inventory,
 	}, nil
 }
 
@@ -76,6 +77,7 @@ type nativeVerifiedRuntimeExecution struct {
 	runtime        runtimeinstall.CertifiedRuntime
 	manifestDigest runtimecatalog.Digest
 	signedCatalog  runtimecatalog.SignedManifest
+	inventory      appreleaseverify.VerifiedInventory
 	request        installplanapp.RuntimeEvidenceRequest
 }
 

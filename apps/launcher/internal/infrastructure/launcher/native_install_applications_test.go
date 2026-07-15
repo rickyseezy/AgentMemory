@@ -2,12 +2,12 @@ package launcher
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 )
 
 func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing.T) {
@@ -24,12 +24,15 @@ func TestPF001NativeInstallApplicationsDeriveReleaseBoundCapabilities(t *testing
 	t.Cleanup(func() { _ = composition.resources.Close(context.Background()) })
 	dependencies := nativeInstallGraphFixture()
 	builder, err := newNativeInstallApplicationsBuilderWithDecoder(
-		&composition, nativeInstallCapabilitiesFixture(dependencies),
+		&composition,
 		func([]byte) (runtimePlanProjection, error) {
 			return runtimePlanProjection{ //nolint:gosec // G101: protected path reference, never credential bytes.
 				operationID: nativeGraphOperationID(t), digest: nativeGraphPlanDigest(t),
 				coreEndpoint: "http://127.0.0.1:9411", credentialPath: "/owner/credential",
 			}, nil
+		},
+		func(*nativeReleaseAuthority, []byte, string) (installphase.AgentConfigurationMerger, error) {
+			return dependencies.AgentConfiguration, nil
 		},
 	)
 	if err != nil {
@@ -86,7 +89,7 @@ func TestManagedNativeInstallApplicationDelegatesAndRejectsMissingApplication(t 
 func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *testing.T) {
 	t.Parallel()
 	composition := &nativeComposition{}
-	if builder, err := newNativeInstallApplicationsBuilder(composition, nativeInstallPhaseCapabilities{}); builder != nil || err == nil {
+	if builder, err := newNativeInstallApplicationsBuilder(composition); builder != nil || err == nil {
 		t.Fatalf("incomplete composition accepted: builder=%v error=%v", builder, err)
 	}
 	complete, err := composeNative(
@@ -100,27 +103,12 @@ func TestPF001NativeInstallApplicationsRejectEveryMissingRemainingCapability(t *
 	}
 	t.Cleanup(func() { _ = complete.resources.Close(context.Background()) })
 
-	base := nativeInstallCapabilitiesFixture(nativeInstallGraphFixture())
 	missingCatalogAnchor := complete
 	missingCatalogAnchor.runtimeCatalogAnchor = nil
-	if builder, buildError := newNativeInstallApplicationsBuilder(&missingCatalogAnchor, base); builder != nil || buildError == nil {
+	if builder, buildError := newNativeInstallApplicationsBuilder(&missingCatalogAnchor); builder != nil || buildError == nil {
 		t.Fatalf("missing runtime catalog anchor accepted: builder=%v error=%v", builder, buildError)
 	}
-	value := reflect.ValueOf(&base).Elem()
-	for index := 0; index < value.NumField(); index++ {
-		candidate := base
-		field := reflect.ValueOf(&candidate).Elem().Field(index)
-		field.Set(reflect.Zero(field.Type()))
-		if builder, err := newNativeInstallApplicationsBuilder(&complete, candidate); builder != nil || err == nil {
-			t.Fatalf("missing capability %s accepted", value.Type().Field(index).Name)
-		}
-	}
-}
-
-func nativeInstallCapabilitiesFixture(dependencies nativeInstallGraphDependencies) nativeInstallPhaseCapabilities {
-	return nativeInstallPhaseCapabilities{
-		Capacity:         dependencies.Capacity,
-		ManagedResources: dependencies.ManagedResources, ProductStack: dependencies.ProductStack,
-		AgentConfiguration: dependencies.AgentConfiguration,
+	if builder, buildError := newNativeInstallApplicationsBuilderWithDecoder(&complete, decodeRuntimePlan, nil); builder != nil || buildError == nil {
+		t.Fatalf("missing agent builder accepted: builder=%v error=%v", builder, buildError)
 	}
 }

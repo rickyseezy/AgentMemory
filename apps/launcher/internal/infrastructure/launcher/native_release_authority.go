@@ -140,6 +140,14 @@ func (a *nativeReleaseAuthority) runtimeHelperPublisherCertificateDigest(resourc
 	return a.runtimeHelperPublisherCertificates[resourceID]
 }
 
+// nativePublisherCertificateDigest returns an independently embedded native
+// signer-certificate binding. The trust document field retains its original
+// helper-oriented wire name for schema-v1 compatibility, but the map is keyed
+// by exact signed native resource ID and also covers the Windows launcher.
+func (a *nativeReleaseAuthority) nativePublisherCertificateDigest(resourceID string) releaseinventory.Digest {
+	return a.runtimeHelperPublisherCertificateDigest(resourceID)
+}
+
 func copyNativeHelperCertificateBindings(
 	values map[string]releaseinventory.Digest,
 ) map[string]releaseinventory.Digest {

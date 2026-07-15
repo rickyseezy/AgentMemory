@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
+	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
@@ -38,6 +39,13 @@ func TestPF001NativeDesktopHelperTrustProjectsExactVerifiedReleaseResource(t *te
 		}
 		if err := publisher.VerifyDesktopHelperPublisher(t.Context(), helper); err != nil {
 			t.Fatalf("platform=%s publisher error=%v", platform, err)
+		}
+		if platform == runtimeinstall.PlatformDarwin {
+			cancelled, cancel := context.WithCancel(t.Context())
+			cancel()
+			if err := publisher.VerifyDesktopHelperPublisher(cancelled, helper); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled publisher error=%v", err)
+			}
 		}
 		if platform == runtimeinstall.PlatformDarwin && helper.CanonicalPath() !=
 			"/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper" {
@@ -110,6 +118,14 @@ func TestPF001NativeDesktopHelperTrustFailsClosedAtEveryBoundary(t *testing.T) {
 	}
 	if _, _, err := newNativeDesktopHelperTrust(nil, releaseinventory.SignedManifest{}); err == nil {
 		t.Fatal("nil release trust accepted")
+	}
+	incompleteRelease := &nativeReleaseAuthority{stack: nativeReleaseStack{application: &appreleaseverify.Application{}}}
+	if _, _, err := newNativeDesktopHelperTrust(incompleteRelease, releaseinventory.SignedManifest{}); err == nil {
+		t.Fatal("incomplete signed helper inventory accepted")
+	}
+	if canonical, exchange, err := nativeDesktopHelperPaths(runtimeport.DesktopAuthority{}); err == nil ||
+		canonical != "" || exchange != "" {
+		t.Fatalf("zero desktop helper paths=%q/%q error=%v", canonical, exchange, err)
 	}
 	if err := (*nativeDesktopHelperPublisherVerifier)(nil).VerifyDesktopHelperPublisher(t.Context(), runtimeport.DesktopHelperAuthority{}); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("nil publisher error=%v", err)

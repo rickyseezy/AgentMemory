@@ -187,6 +187,78 @@ func TestPF001NativeRuntimeCatalogSourceSelectionHonorsRedistributionPolicy(t *t
 	}
 }
 
+func TestPF001NativeRuntimeCatalogPolicyPublishesOnlyCertifiedProjection(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("testdata/runtime-catalog-macos.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := runtimecatalog.DecodeManifestV1(bytes.TrimSpace(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := runtimecatalog.NewSignedManifest(
+		manifest,
+		manifest.SigningKeyID(),
+		[]byte("detached runtime catalog signature"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := newNativeRuntimeCatalogPolicy(
+		catalogClockStub{},
+		&catalogSignatureStub{},
+		&catalogPublisherStub{},
+		&catalogAnchorStub{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := policy.VerifyRuntimeCatalog(
+		t.Context(),
+		nativeRuntimeEvidenceRequest(t),
+		nativeRuntimeCatalogEnvelope{
+			Signed:         signed,
+			ResourceDigest: install.DigestBytes([]byte("signed outer catalog resource")),
+		},
+	)
+	if err != nil || verified.runtime.CatalogDigest().IsZero() ||
+		!verified.manifestDigest.Equal(manifest.Digest()) {
+		t.Fatalf("verified=%+v error=%v", verified, err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := policy.VerifyRuntimeCatalog(
+		cancelled,
+		nativeRuntimeEvidenceRequest(t),
+		nativeRuntimeCatalogEnvelope{Signed: signed, ResourceDigest: install.DigestBytes([]byte("outer"))},
+	); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("cancelled policy error=%v", err)
+	}
+	rejecting, err := newNativeRuntimeCatalogPolicy(
+		catalogClockStub{},
+		catalogSignatureFailureStub{},
+		&catalogPublisherStub{},
+		&catalogAnchorStub{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rejecting.VerifyRuntimeCatalog(
+		t.Context(),
+		nativeRuntimeEvidenceRequest(t),
+		nativeRuntimeCatalogEnvelope{Signed: signed, ResourceDigest: install.DigestBytes([]byte("outer"))},
+	); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("rejected signature error=%v", err)
+	}
+}
+
+type catalogSignatureFailureStub struct{}
+
+func (catalogSignatureFailureStub) VerifyManifestSignature(context.Context, runtimecatalog.SignedManifest) error {
+	return errors.New("private signature failure")
+}
+
 func nativeRuntimeEvidenceRequest(t testing.TB) installplanapp.RuntimeEvidenceRequest {
 	t.Helper()
 	operationID, err := install.NewOperationID("019f5f23-5678-7def-9123-abcdef012347")

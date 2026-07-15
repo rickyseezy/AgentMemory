@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
@@ -75,6 +76,71 @@ func TestPF001NativeRuntimeCatalogLoaderRejectsReleaseContentAndBindingSubstitut
 	if loader, err := newNativeRuntimeCatalogLoaderWithDependencies(nil, nil, nil); loader != nil || err == nil {
 		t.Fatalf("incomplete loader=(%v,%v)", loader, err)
 	}
+	if loader, err := newNativeRuntimeCatalogLoader(nil); loader != nil || !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("missing release loader=(%v,%v)", loader, err)
+	}
+}
+
+func TestPF001VerifiedReleaseResourceRejectsMissingVerificationAuthority(t *testing.T) {
+	t.Parallel()
+	resource := nativeRuntimeCatalogResource(t, []byte("runtime catalog"))
+	var absent *nativeVerifiedReleaseResource
+	if _, err := absent.VerifyReleaseResourceInventory(t.Context(), releaseinventory.SignedManifest{}, resource); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("absent inventory verifier error=%v", err)
+	}
+	verifier := &nativeVerifiedReleaseResource{application: &releaseverify.Application{}}
+	if err := verifier.VerifyReleaseResource(t.Context(), releaseinventory.SignedManifest{}, resource); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("invalid signed release error=%v", err)
+	}
+}
+
+func TestPF001NativeRuntimeCatalogLoaderPreservesCancellationAndDecodeBoundaries(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"signed":"runtime-catalog"}`)
+	resource := nativeRuntimeCatalogResource(t, raw)
+	request := nativeRuntimeCatalogRequest(t, resource)
+	loader, err := newNativeRuntimeCatalogLoaderWithDependencies(
+		&nativeRuntimeCatalogVerifierStub{},
+		&nativeRuntimeCatalogSourceStub{raw: raw},
+		func([]byte) (runtimecatalog.SignedManifest, error) {
+			return runtimecatalog.SignedManifest{}, errors.New("private decode failure")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := loader.Load(cancelled, request); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled load error=%v", err)
+	}
+	if _, err := loader.Load(t.Context(), request); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("decode failure error=%v", err)
+	}
+	sameSizeSubstitution := append([]byte(nil), raw...)
+	sameSizeSubstitution[0] ^= 0xff
+	digestFailure, err := newNativeRuntimeCatalogLoaderWithDependencies(
+		&nativeRuntimeCatalogVerifierStub{},
+		&nativeRuntimeCatalogSourceStub{raw: sameSizeSubstitution},
+		func([]byte) (runtimecatalog.SignedManifest, error) { return runtimecatalog.SignedManifest{}, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := digestFailure.Load(t.Context(), request); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("digest failure error=%v", err)
+	}
+	sourceFailure, err := newNativeRuntimeCatalogLoaderWithDependencies(
+		&nativeRuntimeCatalogVerifierStub{},
+		&nativeRuntimeCatalogSourceStub{err: errors.New("private source failure")},
+		func([]byte) (runtimecatalog.SignedManifest, error) { return runtimecatalog.SignedManifest{}, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceFailure.Load(t.Context(), request); !errors.Is(err, installplanapp.ErrRuntimeEvidenceUnavailable) {
+		t.Fatalf("source failure error=%v", err)
+	}
 }
 
 func nativeRuntimeCatalogRequest(t testing.TB, resource releaseinventory.Resource) installplanapp.RuntimeEvidenceRequest {
@@ -124,21 +190,25 @@ type nativeRuntimeCatalogVerifierStub struct {
 	err   error
 }
 
-func (v *nativeRuntimeCatalogVerifierStub) VerifyReleaseResource(
+func (v *nativeRuntimeCatalogVerifierStub) VerifyReleaseResourceInventory(
 	context.Context,
 	releaseinventory.SignedManifest,
 	releaseinventory.Resource,
-) error {
+) (releaseverify.VerifiedInventory, error) {
 	v.calls++
-	return v.err
+	return releaseverify.VerifiedInventory{}, v.err
 }
 
 type nativeRuntimeCatalogSourceStub struct {
 	raw   []byte
+	err   error
 	calls int
 }
 
 func (s *nativeRuntimeCatalogSourceStub) OpenResource(context.Context, releaseinventory.Resource) (io.ReadCloser, error) {
 	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	return io.NopCloser(bytes.NewReader(s.raw)), nil
 }

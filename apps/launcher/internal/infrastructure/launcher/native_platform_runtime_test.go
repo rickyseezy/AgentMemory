@@ -1,12 +1,16 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"runtime"
 	"testing"
 
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimecatalog"
 )
 
 func TestPF006ManagedNativeRuntimeApplicationSettlesNativeResources(t *testing.T) {
@@ -67,6 +71,50 @@ func TestPF006NativePlatformRuntimeFactoryRejectsMissingAuthority(t *testing.T) 
 		t.Context(), nativeVerifiedRuntimeExecution{},
 	); application != nil || !errors.Is(err, wantLinuxError) {
 		t.Fatalf("Linux application=%+v error=%v want=%v", application, err, wantLinuxError)
+	}
+}
+
+func TestPF006NativePlatformRuntimeFactoryHonorsCancellationAfterExactBinding(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("testdata/runtime-catalog-macos.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := runtimecatalog.DecodeManifestV1(bytes.TrimSpace(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := runtimecatalog.NewSignedManifest(manifest, manifest.SigningKeyID(), []byte("detached signature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, authority, _ := nativeRuntimeExecutionFixture(t)
+	policy, err := newNativeRuntimeCatalogPolicy(
+		catalogClockStub{}, &catalogSignatureStub{}, &catalogPublisherStub{}, &catalogAnchorStub{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := policy.VerifyRuntimeCatalog(t.Context(), request, nativeRuntimeCatalogEnvelope{
+		Signed: signed, ResourceDigest: authority.CatalogResourceEvidenceDigest(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := nativeVerifiedRuntimeExecution{
+		request: request, authority: authority, runtime: catalog.runtime,
+		catalog: catalog.verified, manifestDigest: catalog.manifestDigest,
+	}
+	factory := &nativePlatformRuntimeFactory{
+		composition: &nativeComposition{}, release: &nativeReleaseAuthority{}, artifacts: &artifactapp.Application{},
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if application, err := factory.BuildRuntimeApplication(cancelled, verified); application != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled application=%T error=%v", application, err)
+	}
+	if application, err := factory.BuildRuntimeApplication(t.Context(), verified); application != nil || err == nil {
+		t.Fatalf("incomplete platform application=%T error=%v", application, err)
 	}
 }
 

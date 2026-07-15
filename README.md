@@ -8,9 +8,10 @@ agent vendors while keeping the Brain and its data on the user's own machine.
 
 > [!IMPORTANT]
 > AgentMemory is in **early production implementation**. PF-001 now has a substantial,
-> fail-closed installer control plane—including durable active cancellation, split capacity
-> policy, release-bound Docker/Compose execution, and protected Linux/macOS/Windows configuration
-> stores—but there is not yet a working release or installable MCP package. See the
+> fail-closed installer control plane—including the default verified first-start composition,
+> durable active cancellation, split capacity policy, operation-scoped release-bound Docker/Compose
+> execution, and signed-launcher Linux/macOS/Windows agent configuration—but there is not yet a
+> working release or installable MCP package. See the
 > [PF-001 implementation record](docs/implementation/PF-001.md) for the exact delivered and
 > outstanding scope; no current code should be interpreted as a completed installer.
 

@@ -12,6 +12,7 @@ import (
 
 	bootstrapadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/bootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/filesystem"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/installworker"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
@@ -122,6 +123,46 @@ func TestPF001NativeCompositionUsesPurposeSeparatedJournalAuthoritiesAndResolves
 	}
 	if err := composition.resources.Close(context.Background()); err != nil {
 		t.Fatalf("idempotent resource close error=%v", err)
+	}
+}
+
+func TestPF001NativeFactoryOwnsProductionResourcesOnEveryExit(t *testing.T) {
+	t.Parallel()
+	newFactory := func(production nativeProductionComposer) *NativeFactory {
+		return &NativeFactory{
+			roots: func() (NativeRoots, error) { return nativeTestRoots(t.TempDir()), nil },
+			journals: func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error) {
+				return nativeMissingJournalProvider{}, nil
+			},
+			ready: pendingReadySurface{}, production: production,
+		}
+	}
+	if runner, err := newFactory(func(context.Context, *nativeComposition) (nativeProductionFirstStart, error) {
+		return nativeProductionFirstStart{}, errors.New("private production failure")
+	}).BuildMCP(t.Context(), agentconfigdomain.AgentHostCodex); runner != nil ||
+		!errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) {
+		t.Fatalf("failed production runner=%T error=%v", runner, err)
+	}
+	production := func(context.Context, *nativeComposition) (nativeProductionFirstStart, error) {
+		return nativeProductionFirstStart{
+			Factory: &Factory{}, Supervisor: &installworker.Supervisor{}, Release: &nativeReleaseAuthority{},
+		}, nil
+	}
+	if runner, err := newFactory(production).BuildMCP(t.Context(), agentconfigdomain.AgentHostCodex); runner != nil ||
+		!errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
+		t.Fatalf("invalid production factory runner=%T error=%v", runner, err)
+	}
+	if runner, err := newFactory(func(
+		ctx context.Context,
+		composition *nativeComposition,
+	) (nativeProductionFirstStart, error) {
+		if err := composition.resources.Close(context.WithoutCancel(ctx)); err != nil {
+			return nativeProductionFirstStart{}, err
+		}
+		return production(ctx, composition)
+	}).BuildMCP(t.Context(), agentconfigdomain.AgentHostCodex); runner != nil ||
+		!errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) {
+		t.Fatalf("closed composition runner=%T error=%v", runner, err)
 	}
 }
 
@@ -694,6 +735,31 @@ func TestPF001NativeSetupLifecycleResourcesAndPendingReadyFailClosed(t *testing.
 	if err := (*nativeResources)(nil).Close(context.Background()); err != nil {
 		t.Fatalf("nil resources close error=%v", err)
 	}
+	if err := (*nativeResources)(nil).addClosers(&nativeRuntimeCloserStub{}); err == nil {
+		t.Fatal("nil resources accepted a managed closer")
+	}
+	var typedNilCloser *nativeRuntimeCloserStub
+	if err := (&nativeResources{}).addClosers(typedNilCloser); err == nil {
+		t.Fatal("resources accepted a typed-nil managed closer")
+	}
+	managedCloser := &nativeRuntimeCloserStub{}
+	failingManagedCloser := &nativeRuntimeCloserStub{err: errors.New("private managed close")}
+	managedResources := &nativeResources{}
+	if err := managedResources.addClosers(managedCloser, failingManagedCloser); err != nil {
+		t.Fatal(err)
+	}
+	if err := managedResources.Close(context.Background()); err == nil ||
+		managedCloser.calls != 1 || failingManagedCloser.calls != 1 {
+		t.Fatalf("managed resource close error=%v calls=%d/%d", err, managedCloser.calls, failingManagedCloser.calls)
+	}
+	if err := managedResources.addClosers(&nativeRuntimeCloserStub{}); err == nil {
+		t.Fatal("closed resources accepted another managed closer")
+	}
+	//lint:ignore SA1012 Deliberate nil-context resource boundary attack.
+	//nolint:staticcheck // SA1012: security regression fixture; owner=security expiry=2027-07-14.
+	if err := (&nativeResources{}).Close(nil); err == nil {
+		t.Fatal("resources accepted a nil close context")
+	}
 	closer := &nativePlanCloser{}
 	artifactCloser := &nativePlanCloser{}
 	resources := &nativeResources{plans: closer, artifacts: artifactCloser}
@@ -742,6 +808,9 @@ func TestPF001NativePlatformJournalProviderConstructsWithoutCreatingAuthority(t 
 	if err != nil || provider == nil {
 		t.Fatalf("newPlatformJournalProvider()=%T,%v", provider, err)
 	}
+	if provider, err := newPlatformJournalProvider(nil); provider != nil || err == nil {
+		t.Fatalf("nil-locator journal provider=%T error=%v", provider, err)
+	}
 }
 
 func TestPF001NativeNilClassificationCoversEveryNilableKind(t *testing.T) {
@@ -777,8 +846,9 @@ func nativeTestRoots(root string) NativeRoots {
 		ReleaseAnchorState:         filepath.Join(root, "release-anchor"),
 		RuntimeCatalogAnchorState:  filepath.Join(root, "runtime-catalog-anchor"),
 		ArtifactState:              filepath.Join(root, "artifacts"), ResourceState: filepath.Join(root, "resources"),
-		ArtifactCAS:        filepath.Join(root, "artifact-cas"),
-		ActiveReleaseState: filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
+		AgentConfigurationBackups: filepath.Join(root, "agent-configuration-backups"),
+		ArtifactCAS:               filepath.Join(root, "artifact-cas"),
+		ActiveReleaseState:        filepath.Join(root, "active-release"), InstallationLock: filepath.Join(root, "installation.lock"),
 		ReadinessState: filepath.Join(root, "readiness"),
 		CanonicalPlans: filepath.Join(root, "plans"),
 	}

@@ -13,19 +13,13 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installplanapp"
-	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/productstack"
 )
 
-// nativeInstallPhaseCapabilities contains the production capabilities whose
-// authority is established outside the protected persistence composition.
-// Release, host-policy, and artifact-acquisition authority are deliberately
-// absent: the builder derives those only from the verified retained release.
-type nativeInstallPhaseCapabilities struct {
-	Capacity           installphase.ArtifactCapacityApplication
-	ManagedResources   installphase.ManagedResourceEnsurer
-	ProductStack       productstack.Ensurer
-	AgentConfiguration installphase.AgentConfigurationMerger
-}
+type nativeAgentConfigurationBuilder func(
+	*nativeReleaseAuthority,
+	[]byte,
+	string,
+) (installphase.AgentConfigurationMerger, error)
 
 // newNativeInstallApplicationsBuilder joins the purpose-separated protected
 // repositories to one already verified release. It is the only production
@@ -33,32 +27,34 @@ type nativeInstallPhaseCapabilities struct {
 // the fourteen-phase graph.
 func newNativeInstallApplicationsBuilder(
 	composition *nativeComposition,
-	capabilities nativeInstallPhaseCapabilities,
 ) (nativeInstallApplicationsBuilder, error) {
-	return newNativeInstallApplicationsBuilderWithDecoder(composition, capabilities, decodeRuntimePlan)
+	return newNativeInstallApplicationsBuilderWithDecoder(
+		composition,
+		decodeRuntimePlan,
+		func(
+			release *nativeReleaseAuthority,
+			canonical []byte,
+			backupDirectory string,
+		) (installphase.AgentConfigurationMerger, error) {
+			return newNativeAgentConfigurationMerger(release, canonical, backupDirectory)
+		},
+	)
 }
 
 func newNativeInstallApplicationsBuilderWithDecoder(
 	composition *nativeComposition,
-	capabilities nativeInstallPhaseCapabilities,
 	decode runtimePlanDecoder,
+	agents nativeAgentConfigurationBuilder,
 ) (nativeInstallApplicationsBuilder, error) {
 	if composition == nil || composition.plans == nil || composition.operations == nil ||
 		composition.artifacts == nil || composition.artifactStore == nil ||
+		composition.capacityState == nil || composition.expandedTargets == nil ||
 		composition.resourceState == nil || composition.installLock == nil ||
 		composition.runtimeCatalogAnchor == nil ||
 		composition.activations == nil || composition.hostPointers == nil ||
-		composition.readinessRoot == "" || decode == nil {
+		composition.readinessRoot == "" || composition.agentConfigurationBackups == "" ||
+		decode == nil || agents == nil {
 		return nil, errNativeInstallerIntegrity
-	}
-	required := []any{
-		capabilities.Capacity, capabilities.ManagedResources, capabilities.ProductStack,
-		capabilities.AgentConfiguration,
-	}
-	for _, capability := range required {
-		if nilAny(capability) {
-			return nil, errNativeInstallerIntegrity
-		}
 	}
 	return func(
 		ctx context.Context,
@@ -152,6 +148,14 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 			if activeError != nil {
 				return nil, errNativeInstallerIntegrity
 			}
+			agentConfiguration, agentError := agents(
+				release,
+				authority.CanonicalPlan,
+				composition.agentConfigurationBackups,
+			)
+			if agentError != nil || nilAny(agentConfiguration) {
+				return nil, errNativeInstallerIntegrity
+			}
 			runtimeBuilder := func(
 				_ context.Context,
 				plans *installplanapp.Application,
@@ -162,6 +166,26 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 					runtimeExecution, runtimePlatform,
 				)
 			}
+			productBuilder := func(
+				_ context.Context,
+				plans *installplanapp.Application,
+				buildAuthority nativeInstallAuthority,
+			) (nativeProductCapabilities, error) {
+				productAuthority, productError := newNativeProductAuthorityResolver(
+					buildAuthority.PlanDigest, buildAuthority.OperationID, plans, composition.operations,
+					runtimeExecution, runtimePlatform,
+				)
+				if productError != nil {
+					return nativeProductCapabilities{}, productError
+				}
+				products, productError := newNativeProductApplications(productAuthority, composition)
+				if productError != nil {
+					return nativeProductCapabilities{}, productError
+				}
+				return nativeProductCapabilities{
+					Capacity: products, ManagedResources: products, ProductStack: products,
+				}, nil
+			}
 			graph, graphError := newNativeInstallApplicationFactory(nativeInstallGraphDependencies{
 				Plans: composition.plans, RuntimePlans: composition.plans,
 				RuntimeEvidence: runtimeEvidence,
@@ -169,11 +193,10 @@ func newNativeInstallApplicationsBuilderWithDecoder(
 				ReadinessReceipts: receipts, ResourceInventory: composition.resourceState,
 				InstallationLock: composition.installLock,
 				HostVerifier:     release.hostVerification(), RuntimeEnsurer: runtimeBuilder,
-				ReleaseVerifier: release.releaseVerification(), Artifacts: artifacts,
-				Capacity: capabilities.Capacity, Directories: productFiles,
-				Secrets: productFiles, ManagedResources: capabilities.ManagedResources,
-				ProductStack: capabilities.ProductStack, BrainBootstrap: brain,
-				AgentConfiguration: capabilities.AgentConfiguration, Readiness: readiness,
+				ProductApplications: productBuilder,
+				ReleaseVerifier:     release.releaseVerification(), Artifacts: artifacts,
+				Directories: productFiles, Secrets: productFiles, BrainBootstrap: brain,
+				AgentConfiguration: agentConfiguration, Readiness: readiness,
 				ActiveRelease: active,
 			})
 			if graphError != nil {

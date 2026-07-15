@@ -37,6 +37,10 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 		!authority.runtimeHelperPublisherCertificateDigest("foreign").IsZero() {
 		t.Fatal("runtime helper publisher certificate is unavailable")
 	}
+	if authority.nativePublisherCertificateDigest("runtime-helper-windows-amd64").IsZero() ||
+		!(*nativeReleaseAuthority)(nil).nativePublisherCertificateDigest("launcher").IsZero() {
+		t.Fatal("native publisher certificate binding is unavailable")
+	}
 	if err := authority.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +101,22 @@ func TestPF001NativeReleaseAuthorityFailsClosedBeforePublishingCapability(t *tes
 	cancel()
 	if authority, err := newNativeReleaseAuthority(canceled, valid); authority != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled authority=%#v error=%v", authority, err)
+	}
+	var absent *nativeReleaseAuthority
+	if absent.templates() != nil || absent.verifier() != nil || absent.hostVerification() != nil ||
+		absent.releaseVerification() != nil || absent.runtimeCatalogLoader() != nil ||
+		absent.runtimeCatalogSignatureVerifier() != nil || absent.runtimeCatalogPublisherVerifier() != nil ||
+		len(absent.runtimeHelperAuthenticationKey()) != 0 ||
+		!absent.runtimeHelperPublisherCertificateDigest("resource").IsZero() {
+		t.Fatal("absent release authority exposed a capability")
+	}
+	if err := absent.Close(t.Context()); err != nil {
+		t.Fatalf("absent release close error=%v", err)
+	}
+	//lint:ignore SA1012 Deliberate nil-context release boundary attack.
+	//nolint:staticcheck // SA1012: security regression fixture; owner=security expiry=2027-07-14.
+	if err := (&nativeReleaseAuthority{}).Close(nil); err == nil {
+		t.Fatal("release authority accepted a nil close context")
 	}
 }
 

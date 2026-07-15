@@ -104,10 +104,18 @@ func nativeInstallGraphFixture() nativeInstallGraphDependencies {
 		) (installphase.RuntimeEnsurer, error) {
 			return &nativeGraphRuntime{}, nil
 		},
+		ProductApplications: func(
+			context.Context, *installplanapp.Application, nativeInstallAuthority,
+		) (nativeProductCapabilities, error) {
+			return nativeProductCapabilities{
+				Capacity:         &nativeGraphCapacity{},
+				ManagedResources: &nativeGraphResources{},
+				ProductStack:     &nativeGraphStack{},
+			}, nil
+		},
 		ReleaseVerifier: &nativeGraphRelease{}, Artifacts: &nativeGraphArtifacts{},
-		Capacity: &nativeGraphCapacity{}, Directories: &nativeGraphDirectories{},
-		Secrets: &nativeGraphSecrets{}, ManagedResources: &nativeGraphResources{},
-		ProductStack: &nativeGraphStack{}, BrainBootstrap: &nativeGraphBrain{},
+		Directories: &nativeGraphDirectories{}, Secrets: &nativeGraphSecrets{},
+		BrainBootstrap:     &nativeGraphBrain{},
 		AgentConfiguration: &nativeGraphAgent{}, Readiness: &nativeGraphReadiness{},
 		ActiveRelease: &nativeGraphActiveRelease{},
 	}

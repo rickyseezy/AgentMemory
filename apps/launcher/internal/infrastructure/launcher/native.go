@@ -53,6 +53,7 @@ type NativeRoots struct {
 	ArtifactState              string
 	ArtifactCAS                string
 	ResourceState              string
+	AgentConfigurationBackups  string
 	ActiveReleaseState         string
 	ReadinessState             string
 	InstallationLock           string
@@ -61,13 +62,15 @@ type NativeRoots struct {
 
 type nativeRootsResolver func() (NativeRoots, error)
 type nativeJournalFactory func(*bootstrapadapter.OperationLocator) (filesystem.OperationJournalProvider, error)
+type nativeProductionComposer func(context.Context, *nativeComposition) (nativeProductionFirstStart, error)
 
 // NativeFactory lazily constructs platform-protected repositories for one MCP
 // process. Construction itself does not claim an installation exists.
 type NativeFactory struct {
-	roots    nativeRootsResolver
-	journals nativeJournalFactory
-	ready    mcpbootstrap.ReadySurfaceProvider
+	roots      nativeRootsResolver
+	journals   nativeJournalFactory
+	ready      mcpbootstrap.ReadySurfaceProvider
+	production nativeProductionComposer
 }
 
 // NewNativeFactory constructs the production launcher factory. Missing or
@@ -75,7 +78,7 @@ type NativeFactory struct {
 func NewNativeFactory() MCPFactory {
 	return &NativeFactory{
 		roots: defaultNativeRoots, journals: newPlatformJournalProvider,
-		ready: pendingReadySurface{},
+		ready: pendingReadySurface{}, production: composeDefaultNativeProduction,
 	}
 }
 
@@ -98,6 +101,24 @@ func (f *NativeFactory) BuildMCP(
 	composition, err := composeNative(ctx, roots, f.journals, f.ready)
 	if err != nil {
 		return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	if f.production != nil {
+		production, productionError := f.production(ctx, &composition)
+		if productionError != nil || production.Factory == nil || production.Supervisor == nil ||
+			production.Release == nil {
+			_ = composition.resources.Close(context.WithoutCancel(ctx))
+			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+		}
+		if addError := composition.resources.addClosers(
+			production.Release,
+			production.Supervisor,
+		); addError != nil {
+			_ = production.Supervisor.Close(context.WithoutCancel(ctx))
+			_ = production.Release.Close(context.WithoutCancel(ctx))
+			_ = composition.resources.Close(context.WithoutCancel(ctx))
+			return nil, mcpbootstrapapp.ErrBootstrapUnavailable
+		}
+		composition.factory = production.Factory
 	}
 	runner, err := composition.factory.BuildMCP(ctx, host)
 	if err != nil {
@@ -127,6 +148,7 @@ func defaultNativeRoots() (NativeRoots, error) {
 		ArtifactState:              filepath.Join(base, "artifact-state"),
 		ArtifactCAS:                filepath.Join(base, "artifact-cas"),
 		ResourceState:              filepath.Join(base, "resource-state"),
+		AgentConfigurationBackups:  filepath.Join(base, "agent-configuration-backups"),
 		ActiveReleaseState:         filepath.Join(base, "active-release-state"),
 		ReadinessState:             filepath.Join(base, "readiness-state"),
 		InstallationLock:           filepath.Join(base, "installation.lock"),
@@ -140,7 +162,7 @@ func (r NativeRoots) valid() bool {
 		r.PreparationState, r.RuntimeState, r.ReleaseAnchorState, r.RuntimeCatalogAnchorState, r.CanonicalPlans,
 		r.RuntimeConsentKeyState, r.RuntimeConsentReceiptState, r.RuntimeReplayState,
 		r.ArtifactState, r.ArtifactCAS, r.ResourceState, r.ActiveReleaseState, r.InstallationLock,
-		r.ReadinessState,
+		r.ReadinessState, r.AgentConfigurationBackups,
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -156,27 +178,31 @@ func (r NativeRoots) valid() bool {
 }
 
 type nativeComposition struct {
-	factory              *Factory
-	resources            *nativeResources
-	plans                *installplanfs.Repository
-	operations           *filesystem.InstallOperationRepository
-	readinessRoot        string
-	preparations         firststartapp.PreparationRepository
-	binder               firststartapp.PreparationBinder
-	runtimeState         *filesystem.RuntimeOperationRepository
-	consentSigner        *runtimeconsent.ProtectedSigner
-	consentBroker        *runtimeconsent.Broker
-	consentRepository    *runtimeconsentjournal.Repository
-	replayJournals       filesystem.OperationJournalProvider
-	releaseAnchor        *releaseanchor.Repository
-	runtimeCatalogAnchor *runtimecataloganchor.Repository
-	artifacts            *artifactjournal.Repository
-	capacityState        *artifactjournal.CapacityRepository
-	artifactStore        *artifactfs.Store
-	resourceState        *resourcejournal.Repository
-	activations          *activereleasejournal.ActivationRepository
-	hostPointers         *activereleasejournal.HostPointerRepository
-	installLock          *hostlock.Port
+	factory                   *Factory
+	resources                 *nativeResources
+	resolver                  nativeBootstrapAuthority
+	runtime                   *nativeRuntimeFactory
+	plans                     *installplanfs.Repository
+	operations                *filesystem.InstallOperationRepository
+	readinessRoot             string
+	agentConfigurationBackups string
+	preparations              firststartapp.PreparationRepository
+	binder                    firststartapp.PreparationBinder
+	runtimeState              *filesystem.RuntimeOperationRepository
+	consentSigner             *runtimeconsent.ProtectedSigner
+	consentBroker             *runtimeconsent.Broker
+	consentRepository         *runtimeconsentjournal.Repository
+	replayJournals            filesystem.OperationJournalProvider
+	releaseAnchor             *releaseanchor.Repository
+	runtimeCatalogAnchor      *runtimecataloganchor.Repository
+	artifacts                 *artifactjournal.Repository
+	capacityState             *artifactjournal.CapacityRepository
+	expandedTargets           *artifactjournal.ExpandedTargetRepository
+	artifactStore             *artifactfs.Store
+	resourceState             *resourcejournal.Repository
+	activations               *activereleasejournal.ActivationRepository
+	hostPointers              *activereleasejournal.HostPointerRepository
+	installLock               *hostlock.Port
 }
 
 // newRuntimeReplayLedger creates one operation-scoped replay authority only
@@ -324,6 +350,10 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
+	expandedTargetRepository, err := artifactjournal.NewExpandedTargetRepository(artifactJournals, clock)
+	if err != nil {
+		return nativeComposition{}, err
+	}
 	resourceRepository, err := resourcejournal.New(resourceJournals, clock)
 	if err != nil {
 		return nativeComposition{}, err
@@ -426,15 +456,17 @@ func composeNative(
 	}
 	return nativeComposition{
 		factory: factory, resources: resources, plans: plans, operations: operations,
-		readinessRoot: roots.ReadinessState,
-		preparations:  preparations, binder: binder,
+		resolver: resolver, runtime: runtime,
+		readinessRoot: roots.ReadinessState, agentConfigurationBackups: roots.AgentConfigurationBackups,
+		preparations: preparations, binder: binder,
 		runtimeState: runtimeState, releaseAnchor: releaseAnchorRepository,
 		consentSigner:        consentSigner,
 		consentBroker:        consentBroker,
 		consentRepository:    consentRepository,
 		replayJournals:       replayJournals,
 		runtimeCatalogAnchor: runtimeCatalogAnchorRepository,
-		artifacts:            artifactRepository, capacityState: capacityRepository, artifactStore: artifactStore,
+		artifacts:            artifactRepository, capacityState: capacityRepository,
+		expandedTargets: expandedTargetRepository, artifactStore: artifactStore,
 		resourceState: resourceRepository,
 		activations:   activationRepository, hostPointers: hostPointerRepository, installLock: installationLock,
 	}, nil
@@ -690,13 +722,35 @@ func (f *nativeRuntimeFactory) BuildBootstrapRuntime(
 type nativeResources struct {
 	plans     interface{ Close() error }
 	artifacts interface{ Close() error }
+	closers   []nativeRuntimeResourceCloser
 	mu        sync.Mutex
 	closed    bool
 }
 
-func (r *nativeResources) Close(context.Context) error {
+func (r *nativeResources) addClosers(closers ...nativeRuntimeResourceCloser) error {
+	if r == nil {
+		return errors.New("native resources are unavailable")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("native resources are already closed")
+	}
+	for _, closer := range closers {
+		if nilAny(closer) {
+			return errors.New("native resource closer is unavailable")
+		}
+	}
+	r.closers = append(r.closers, closers...)
+	return nil
+}
+
+func (r *nativeResources) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
+	}
+	if ctx == nil {
+		return errors.New("native resource close context is unavailable")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -705,6 +759,12 @@ func (r *nativeResources) Close(context.Context) error {
 	}
 	r.closed = true
 	var result error
+	for index := len(r.closers) - 1; index >= 0; index-- {
+		if err := r.closers[index].Close(ctx); err != nil {
+			result = errors.Join(result, errors.New("native managed resource close failed"))
+		}
+	}
+	r.closers = nil
 	if r.plans != nil && r.plans.Close() != nil {
 		result = errors.Join(result, errors.New("native plan repository close failed"))
 	}

@@ -15,7 +15,11 @@ import (
 const maximumNativeRuntimeCatalogBytes = 8 * 1024 * 1024
 
 type nativeRuntimeCatalogReleaseVerifier interface {
-	VerifyReleaseResource(context.Context, releaseinventory.SignedManifest, releaseinventory.Resource) error
+	VerifyReleaseResourceInventory(
+		context.Context,
+		releaseinventory.SignedManifest,
+		releaseinventory.Resource,
+	) (appreleaseverify.VerifiedInventory, error)
 }
 
 type nativeRuntimeCatalogSource interface {
@@ -27,6 +31,7 @@ type nativeRuntimeCatalogDecoder func([]byte) (runtimecatalog.SignedManifest, er
 type nativeRuntimeCatalogEnvelope struct {
 	Signed         runtimecatalog.SignedManifest
 	ResourceDigest install.Digest
+	Inventory      appreleaseverify.VerifiedInventory
 }
 
 type nativeRuntimeCatalogLoader struct {
@@ -76,7 +81,8 @@ func (l *nativeRuntimeCatalogLoader) Load(
 	if err := ctx.Err(); err != nil {
 		return nativeRuntimeCatalogEnvelope{}, err
 	}
-	if err := l.releases.VerifyReleaseResource(ctx, request.SignedRelease, resource); err != nil {
+	inventory, err := l.releases.VerifyReleaseResourceInventory(ctx, request.SignedRelease, resource)
+	if err != nil {
 		return nativeRuntimeCatalogEnvelope{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
 	reader, err := l.source.OpenResource(ctx, resource)
@@ -98,11 +104,32 @@ func (l *nativeRuntimeCatalogLoader) Load(
 	if err != nil {
 		return nativeRuntimeCatalogEnvelope{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
-	return nativeRuntimeCatalogEnvelope{Signed: signed, ResourceDigest: resourceDigest}, nil
+	return nativeRuntimeCatalogEnvelope{
+		Signed: signed, ResourceDigest: resourceDigest, Inventory: inventory,
+	}, nil
 }
 
 type nativeVerifiedReleaseResource struct {
 	application *appreleaseverify.Application
+}
+
+func (v *nativeVerifiedReleaseResource) VerifyReleaseResourceInventory(
+	ctx context.Context,
+	signed releaseinventory.SignedManifest,
+	resource releaseinventory.Resource,
+) (appreleaseverify.VerifiedInventory, error) {
+	if v == nil || v.application == nil || ctx == nil {
+		return appreleaseverify.VerifiedInventory{}, installplanapp.ErrRuntimeEvidenceUnavailable
+	}
+	inventory, err := v.application.Verify(ctx, signed)
+	if err != nil {
+		return appreleaseverify.VerifiedInventory{}, installplanapp.ErrRuntimeEvidenceUnavailable
+	}
+	verified, found := inventory.Resource(resource.ID())
+	if !found || !verified.Authorizes(resource) {
+		return appreleaseverify.VerifiedInventory{}, installplanapp.ErrRuntimeEvidenceUnavailable
+	}
+	return inventory, nil
 }
 
 func (v *nativeVerifiedReleaseResource) VerifyReleaseResource(
@@ -110,16 +137,6 @@ func (v *nativeVerifiedReleaseResource) VerifyReleaseResource(
 	signed releaseinventory.SignedManifest,
 	resource releaseinventory.Resource,
 ) error {
-	if v == nil || v.application == nil || ctx == nil {
-		return installplanapp.ErrRuntimeEvidenceUnavailable
-	}
-	inventory, err := v.application.Verify(ctx, signed)
-	if err != nil {
-		return installplanapp.ErrRuntimeEvidenceUnavailable
-	}
-	verified, found := inventory.Resource(resource.ID())
-	if !found || !verified.Authorizes(resource) {
-		return installplanapp.ErrRuntimeEvidenceUnavailable
-	}
-	return nil
+	_, err := v.VerifyReleaseResourceInventory(ctx, signed, resource)
+	return err
 }

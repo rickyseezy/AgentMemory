@@ -227,7 +227,7 @@ func NewResource(input ResourceInput) (Resource, error) {
 		return Resource{}, errors.New("non-OCI resource cannot declare an OCI index")
 	}
 	if input.Kind == ResourceKindLauncher || input.Kind == ResourceKindVerifier || input.Kind == ResourceKindHelper {
-		if input.Platform.IsAny() || !validIdentifier(input.NativePublisherIdentity) ||
+		if input.Platform.IsAny() || !validNativePublisherIdentity(input.NativePublisherIdentity) ||
 			!validIdentifier(input.NativePublisherPolicyID) {
 			return Resource{}, errors.New("native release resource publisher policy is invalid")
 		}
@@ -281,6 +281,23 @@ func NewResource(input ResourceInput) (Resource, error) {
 		qualificationExpiresAt:  qualificationExpiresAt,
 		expandedTarget:          expandedTarget,
 	}, nil
+}
+
+func validNativePublisherIdentity(value string) bool {
+	if value == "" || len(value) > 256 || value != strings.TrimSpace(value) ||
+		strings.ContainsAny(value, "\x00\r\n") {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			strings.ContainsRune("._:-@+/", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func expectedPurpose(kind ResourceKind) ResourcePurpose {

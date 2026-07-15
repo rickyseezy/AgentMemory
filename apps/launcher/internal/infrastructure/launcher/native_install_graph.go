@@ -25,19 +25,17 @@ type nativeInstallGraphDependencies struct {
 	ResourceInventory installplanapp.ResourceInventoryRepository
 	InstallationLock  installapp.InstallationLockPort
 
-	HostVerifier       installphase.HostVerifier
-	RuntimeEnsurer     nativeRuntimeEnsurerBuilder
-	ReleaseVerifier    installphase.ReleaseVerifier
-	Artifacts          installphase.ArtifactApplication
-	Capacity           installphase.ArtifactCapacityApplication
-	Directories        productinstall.DirectoryEnsurer
-	Secrets            productinstall.SecretEnsurer
-	ManagedResources   installphase.ManagedResourceEnsurer
-	ProductStack       productstack.Ensurer
-	BrainBootstrap     brainbootstrap.Bootstrapper
-	AgentConfiguration installphase.AgentConfigurationMerger
-	Readiness          installphase.ReadinessVerifier
-	ActiveRelease      installphase.ActiveReleaseCommitter
+	HostVerifier        installphase.HostVerifier
+	RuntimeEnsurer      nativeRuntimeEnsurerBuilder
+	ProductApplications nativeProductApplicationsBuilder
+	ReleaseVerifier     installphase.ReleaseVerifier
+	Artifacts           installphase.ArtifactApplication
+	Directories         productinstall.DirectoryEnsurer
+	Secrets             productinstall.SecretEnsurer
+	BrainBootstrap      brainbootstrap.Bootstrapper
+	AgentConfiguration  installphase.AgentConfigurationMerger
+	Readiness           installphase.ReadinessVerifier
+	ActiveRelease       installphase.ActiveReleaseCommitter
 }
 
 type nativeRuntimeEnsurerBuilder func(
@@ -45,6 +43,18 @@ type nativeRuntimeEnsurerBuilder func(
 	*installplanapp.Application,
 	nativeInstallAuthority,
 ) (installphase.RuntimeEnsurer, error)
+
+type nativeProductCapabilities struct {
+	Capacity         installphase.ArtifactCapacityApplication
+	ManagedResources installphase.ManagedResourceEnsurer
+	ProductStack     productstack.Ensurer
+}
+
+type nativeProductApplicationsBuilder func(
+	context.Context,
+	*installplanapp.Application,
+	nativeInstallAuthority,
+) (nativeProductCapabilities, error)
 
 // newNativeInstallApplicationFactory assembles every one of the fourteen
 // narrow phase capabilities. It rejects a partial graph before a worker can be
@@ -56,9 +66,9 @@ func newNativeInstallApplicationFactory(
 		dependencies.Plans, dependencies.RuntimePlans, dependencies.RuntimeEvidence,
 		dependencies.Operations, dependencies.Cancellation, dependencies.ReadinessReceipts,
 		dependencies.ResourceInventory, dependencies.InstallationLock,
-		dependencies.HostVerifier, dependencies.RuntimeEnsurer, dependencies.ReleaseVerifier,
-		dependencies.Artifacts, dependencies.Capacity, dependencies.Directories,
-		dependencies.Secrets, dependencies.ManagedResources, dependencies.ProductStack,
+		dependencies.HostVerifier, dependencies.RuntimeEnsurer, dependencies.ProductApplications,
+		dependencies.ReleaseVerifier, dependencies.Artifacts, dependencies.Directories,
+		dependencies.Secrets,
 		dependencies.BrainBootstrap, dependencies.AgentConfiguration, dependencies.Readiness,
 		dependencies.ActiveRelease,
 	}
@@ -99,11 +109,16 @@ func newNativeInstallApplicationFactory(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
+		products, err := dependencies.ProductApplications(ctx, plans, authority)
+		if err != nil || nilAny(products.Capacity) || nilAny(products.ManagedResources) ||
+			nilAny(products.ProductStack) {
+			return nil, errNativeInstallerIntegrity
+		}
 		release, err := installphase.NewReleaseVerificationPhase(plans, dependencies.ReleaseVerifier)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		space, err := installphase.NewSpaceReservationPhase(plans, dependencies.Artifacts, dependencies.Capacity)
+		space, err := installphase.NewSpaceReservationPhase(plans, dependencies.Artifacts, products.Capacity)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
@@ -115,19 +130,19 @@ func newNativeInstallApplicationFactory(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		compose, err := installphase.NewComposeBundlePhase(plans, dependencies.Artifacts, dependencies.Capacity)
+		compose, err := installphase.NewComposeBundlePhase(plans, dependencies.Artifacts, products.Capacity)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		resources, err := installphase.NewNetworkVolumePhase(plans, dependencies.ManagedResources, dependencies.Capacity)
+		resources, err := installphase.NewNetworkVolumePhase(plans, products.ManagedResources, products.Capacity)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		migrations, err := installphase.NewMigrationPhase(plans, dependencies.ProductStack)
+		migrations, err := installphase.NewMigrationPhase(plans, products.ProductStack)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		core, err := installphase.NewCoreGraphPhase(plans, dependencies.ProductStack)
+		core, err := installphase.NewCoreGraphPhase(plans, products.ProductStack)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
@@ -143,7 +158,7 @@ func newNativeInstallApplicationFactory(
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}
-		active, err := installphase.NewActiveReleasePhase(plans, dependencies.ActiveRelease, dependencies.Capacity)
+		active, err := installphase.NewActiveReleasePhase(plans, dependencies.ActiveRelease, products.Capacity)
 		if err != nil {
 			return nil, errNativeInstallerIntegrity
 		}

@@ -191,3 +191,105 @@ func TestPF006LinuxPackageTransactionInvocationsAreOfflineAndClosed(t *testing.T
 		}
 	}
 }
+
+func TestPF006LinuxPackageQueryInvocationsHaveFixedMachineReadableContracts(t *testing.T) {
+	t.Parallel()
+	packages := []string{"containerd.io", "docker-ce"}
+	dpkg, err := NewDPKGQueryInvocation("/usr/bin/dpkg-query", packages)
+	wantDPKG := []string{
+		"--show", "--showformat=${Package}\\t${Version}\\t${db:Status-Status}\\n", "--",
+		"containerd.io", "docker-ce",
+	}
+	if err != nil || !slices.Equal(dpkg.Arguments(), wantDPKG) ||
+		dpkg.EnvironmentProfile() != EnvironmentProfilePackageQuery {
+		t.Fatalf("dpkg query=%+v error=%v", dpkg, err)
+	}
+	rpm, err := NewRPMQueryInvocation("/usr/bin/rpm", packages)
+	wantRPM := []string{
+		"--query", "--queryformat", "%{NAME}\\t%{EPOCHNUM}\\t%{VERSION}\\t%{RELEASE}\\n", "--",
+		"containerd.io", "docker-ce",
+	}
+	if err != nil || !slices.Equal(rpm.Arguments(), wantRPM) ||
+		rpm.EnvironmentProfile() != EnvironmentProfilePackageQuery {
+		t.Fatalf("rpm query=%+v error=%v", rpm, err)
+	}
+	for name, invoke := range map[string]func() error{
+		"dpkg path": func() error {
+			_, callErr := NewDPKGQueryInvocation("dpkg-query", packages)
+			return callErr
+		},
+		"rpm path": func() error {
+			_, callErr := NewRPMQueryInvocation("/bin/rpm", packages)
+			return callErr
+		},
+		"unsorted": func() error {
+			_, callErr := NewDPKGQueryInvocation("/usr/bin/dpkg-query", []string{"z", "a"})
+			return callErr
+		},
+		"duplicate": func() error {
+			_, callErr := NewRPMQueryInvocation("/usr/bin/rpm", []string{"a", "a"})
+			return callErr
+		},
+		"unsafe name": func() error {
+			_, callErr := NewRPMQueryInvocation("/usr/bin/rpm", []string{"--erase"})
+			return callErr
+		},
+	} {
+		if callError := invoke(); !errors.Is(callError, ErrInvalidInvocation) {
+			t.Fatalf("%s error=%v", name, callError)
+		}
+	}
+}
+
+func TestPF006SystemdUserServiceInvocationsAreIdentityAndCapabilityClosed(t *testing.T) {
+	t.Parallel()
+	linger, err := NewLoginctlEnableLingerInvocation("/usr/bin/loginctl", 1001)
+	if err != nil || !slices.Equal(linger.Arguments(), []string{"--no-ask-password", "enable-linger", "1001"}) ||
+		linger.EnvironmentProfile() != EnvironmentProfileLoginCTL {
+		t.Fatalf("enable linger=%+v error=%v", linger, err)
+	}
+	showLinger, err := NewLoginctlShowLingerInvocation("/usr/bin/loginctl", 1001)
+	if err != nil || !slices.Equal(showLinger.Arguments(), []string{
+		"--no-pager", "--property=Linger", "--value", "show-user", "1001",
+	}) || showLinger.EnvironmentProfile() != EnvironmentProfileLoginCTL {
+		t.Fatalf("show linger=%+v error=%v", showLinger, err)
+	}
+	prefix := []string{"--user", "--machine=agentmemory@.host", "--no-pager", "--no-ask-password"}
+	reload, err := NewSystemctlUserDaemonReloadInvocation("/usr/bin/systemctl", "agentmemory")
+	if err != nil || !slices.Equal(reload.Arguments(), append(append([]string(nil), prefix...), "daemon-reload")) {
+		t.Fatalf("daemon reload=%+v error=%v", reload, err)
+	}
+	enable, err := NewSystemctlUserEnableNowInvocation("/usr/bin/systemctl", "agentmemory")
+	if err != nil || !slices.Equal(enable.Arguments(), append(append([]string(nil), prefix...),
+		"enable", "--now", "docker.service")) {
+		t.Fatalf("enable service=%+v error=%v", enable, err)
+	}
+	show, err := NewSystemctlUserShowInvocation("/usr/bin/systemctl", "agentmemory")
+	if err != nil || !slices.Equal(show.Arguments(), append(append([]string(nil), prefix...),
+		"show", "--property=LoadState,UnitFileState,ActiveState", "docker.service")) ||
+		show.EnvironmentProfile() != EnvironmentProfileSystemCTL {
+		t.Fatalf("show service=%+v error=%v", show, err)
+	}
+	for name, invoke := range map[string]func() error{
+		"loginctl path": func() error {
+			_, callErr := NewLoginctlEnableLingerInvocation("loginctl", 1001)
+			return callErr
+		},
+		"root uid": func() error {
+			_, callErr := NewLoginctlShowLingerInvocation("/usr/bin/loginctl", 0)
+			return callErr
+		},
+		"systemctl path": func() error {
+			_, callErr := NewSystemctlUserShowInvocation("systemctl", "agentmemory")
+			return callErr
+		},
+		"account injection": func() error {
+			_, callErr := NewSystemctlUserEnableNowInvocation("/usr/bin/systemctl", "root@foreign")
+			return callErr
+		},
+	} {
+		if callError := invoke(); !errors.Is(callError, ErrInvalidInvocation) {
+			t.Fatalf("%s error=%v", name, callError)
+		}
+	}
+}

@@ -52,6 +52,14 @@ const (
 	// EnvironmentProfileDNFTransaction supplies the fixed root package-manager
 	// environment without inheriting proxy, repository, or plugin variables.
 	EnvironmentProfileDNFTransaction
+	// EnvironmentProfilePackageQuery admits only the exact installed-package
+	// query constructors for the signed dpkg-query or rpm helper role.
+	EnvironmentProfilePackageQuery
+	// EnvironmentProfileLoginCTL admits only numeric-UID linger operations.
+	EnvironmentProfileLoginCTL
+	// EnvironmentProfileSystemCTL admits only the fixed local user-manager
+	// reload, enable/start, and machine-readable observation operations.
+	EnvironmentProfileSystemCTL
 )
 
 // NewInvocation validates bounded, NUL-free argv values. The outbound adapter
@@ -178,6 +186,143 @@ func NewDNFInstallInvocation(executable string, packages []string) (Invocation, 
 		"HOME=/root", "LANG=C", "LC_ALL=C", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	return invocation, nil
+}
+
+// NewDPKGQueryInvocation constructs the only admitted Debian installed-state
+// query. The machine-readable record contains exact package, version, and
+// status fields; callers cannot select another format or database operation.
+func NewDPKGQueryInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/dpkg-query" || !validLinuxPackageNames(packages) {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 3+len(packages))
+	arguments = append(arguments, "--show", "--showformat=${Package}\\t${Version}\\t${db:Status-Status}\\n", "--")
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfilePackageQuery
+	return invocation, nil
+}
+
+// NewRPMQueryInvocation constructs the only admitted RPM installed-state
+// query. Epoch, version, and release remain separate so the adapter can
+// reconstruct the catalog's complete native version without ambiguity.
+func NewRPMQueryInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/rpm" || !validLinuxPackageNames(packages) {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 4+len(packages))
+	arguments = append(arguments,
+		"--query", "--queryformat", "%{NAME}\\t%{EPOCHNUM}\\t%{VERSION}\\t%{RELEASE}\\n", "--",
+	)
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfilePackageQuery
+	return invocation, nil
+}
+
+// NewLoginctlEnableLingerInvocation enables only the signed numeric user and
+// explicitly forbids an interactive authorization prompt.
+func NewLoginctlEnableLingerInvocation(executable string, uid uint32) (Invocation, error) {
+	if executable != "/usr/bin/loginctl" || uid == 0 {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	invocation, err := newInvocation(executable, []string{
+		"--no-ask-password", "enable-linger", strconv.FormatUint(uint64(uid), 10),
+	}, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileLoginCTL
+	return invocation, nil
+}
+
+// NewLoginctlShowLingerInvocation queries only the persistent linger property
+// for the signed numeric user in a pager-free machine-readable form.
+func NewLoginctlShowLingerInvocation(executable string, uid uint32) (Invocation, error) {
+	if executable != "/usr/bin/loginctl" || uid == 0 {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	invocation, err := newInvocation(executable, []string{
+		"--no-pager", "--property=Linger", "--value", "show-user", strconv.FormatUint(uint64(uid), 10),
+	}, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileLoginCTL
+	return invocation, nil
+}
+
+// NewSystemctlUserDaemonReloadInvocation reloads only the verified local
+// account's user manager via systemd's explicit user@.host bus transport.
+func NewSystemctlUserDaemonReloadInvocation(executable string, account string) (Invocation, error) {
+	return newSystemctlUserInvocation(executable, account, []string{"daemon-reload"})
+}
+
+// NewSystemctlUserEnableNowInvocation enables and starts only docker.service
+// for the verified local account's user manager.
+func NewSystemctlUserEnableNowInvocation(executable string, account string) (Invocation, error) {
+	return newSystemctlUserInvocation(executable, account, []string{"enable", "--now", "docker.service"})
+}
+
+// NewSystemctlUserShowInvocation observes only load, enablement, and active
+// state for docker.service using stable key=value output.
+func NewSystemctlUserShowInvocation(executable string, account string) (Invocation, error) {
+	return newSystemctlUserInvocation(executable, account, []string{
+		"show", "--property=LoadState,UnitFileState,ActiveState", "docker.service",
+	})
+}
+
+func newSystemctlUserInvocation(
+	executable string,
+	account string,
+	operation []string,
+) (Invocation, error) {
+	if executable != "/usr/bin/systemctl" || !validSystemdAccount(account) || len(operation) == 0 {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 4+len(operation))
+	arguments = append(arguments,
+		"--user", "--machine="+account+"@.host", "--no-pager", "--no-ask-password",
+	)
+	arguments = append(arguments, operation...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileSystemCTL
+	return invocation, nil
+}
+
+func validSystemdAccount(account string) bool {
+	if account == "" || len(account) > 64 {
+		return false
+	}
+	for index, character := range account {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || index > 0 && strings.ContainsRune("_.-", character) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validLinuxPackageNames(packages []string) bool {
+	if len(packages) == 0 || len(packages) > maximumPackageArtifacts || !slices.IsSorted(packages) {
+		return false
+	}
+	for index, name := range packages {
+		if index > 0 && packages[index-1] == name || !validPackageArtifactID(name) {
+			return false
+		}
+	}
+	return true
 }
 
 func validLinuxTransactionArtifacts(paths []string, extension string) bool {

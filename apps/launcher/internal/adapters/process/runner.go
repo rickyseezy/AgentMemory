@@ -118,6 +118,22 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
 		}
 		command.Env = environment
+	case argvprocess.EnvironmentProfilePackageQuery:
+		if r.authority.Role() != argvprocess.ExecutableRoleDPKGQuery &&
+			r.authority.Role() != argvprocess.ExecutableRoleRPMQuery || len(environment) != 0 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileLoginCTL:
+		if r.authority.Role() != argvprocess.ExecutableRoleLoginCTL || len(environment) != 0 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C"}
+	case argvprocess.EnvironmentProfileSystemCTL:
+		if r.authority.Role() != argvprocess.ExecutableRoleSystemCTL || len(environment) != 0 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = []string{"LANG=C", "LC_ALL=C", "SYSTEMD_PAGERSECURE=1"}
 	case argvprocess.EnvironmentProfileRootlessSetup:
 		if r.authority.Role() != argvprocess.ExecutableRoleRootlessSetup || len(environment) != 8 {
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
@@ -129,7 +145,12 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 		}
 		command.Env = []string{"LANG=C", "LC_ALL=C"}
 	case argvprocess.EnvironmentProfileDefault:
-		if len(environment) != 0 {
+		if len(environment) != 0 || r.authority.Role() == argvprocess.ExecutableRoleAPTTransaction ||
+			r.authority.Role() == argvprocess.ExecutableRoleDNFTransaction ||
+			r.authority.Role() == argvprocess.ExecutableRoleDPKGQuery ||
+			r.authority.Role() == argvprocess.ExecutableRoleRPMQuery ||
+			r.authority.Role() == argvprocess.ExecutableRoleLoginCTL ||
+			r.authority.Role() == argvprocess.ExecutableRoleSystemCTL {
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
 		}
 		command.Env = []string{"LANG=C", "LC_ALL=C"}

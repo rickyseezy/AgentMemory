@@ -458,6 +458,7 @@ func capacityCommand(t *testing.T) CapacityCommand {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("capacity-plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{ID: "core", Digest: digest, Size: 3, ExpandedBytes: 3,
 			ExpandedDigest: digest, TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),
 			Sources: []string{"bundle://core"}, Chunks: []artifactacquisition.ChunkInput{{Offset: 0, Size: 3, Digest: digest}}}},

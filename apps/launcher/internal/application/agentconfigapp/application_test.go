@@ -371,7 +371,7 @@ func TestPF001PortableDocumentPolicyExposesOnlySupportedHostSyntax(t *testing.T)
 		t.Fatalf("Validate(invalid) error = %v", err)
 	}
 	policy := hostNeutralDocumentPolicy{}
-	for _, host := range []domain.AgentHost{domain.AgentHostGeneric, domain.AgentHostClaude, domain.AgentHostGemini, domain.AgentHostGLM} {
+	for _, host := range []domain.AgentHost{domain.AgentHostGeneric, domain.AgentHostClaude, domain.AgentHostGemini, domain.AgentHostCursor, domain.AgentHostGLM} {
 		if !policy.Supports(host) {
 			t.Fatalf("portable policy rejected %s", host)
 		}

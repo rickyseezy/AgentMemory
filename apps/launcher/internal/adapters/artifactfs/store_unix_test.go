@@ -735,6 +735,7 @@ func fsPlan(t *testing.T, sources []string) artifactacquisition.Plan {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "core", Digest: digest, Size: 6, ExpandedBytes: 6, ExpandedDigest: digest,
 			TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),
@@ -756,6 +757,7 @@ func fsPlanForBytes(t *testing.T, id string, value []byte) artifactacquisition.P
 	t.Helper()
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("other-plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: id, Digest: releaseinventory.DigestBytes(value), Size: uint64(len(value)),
 			Sources: []string{"bundle://release/other.bin"},

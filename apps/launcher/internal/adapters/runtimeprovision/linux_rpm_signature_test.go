@@ -160,6 +160,7 @@ func rpmTestArtifact(t testing.TB, value []byte) artifactacquisition.Artifact {
 	digest := releaseinventory.Digest(sha256.Sum256(value))
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.Digest(sha256.Sum256([]byte("plan"))),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "docker-ce", Digest: digest, Size: uint64(len(value)), Sources: []string{"https://example.test/docker-ce.rpm"},
 			Chunks: []artifactacquisition.ChunkInput{{Offset: 0, Size: uint64(len(value)), Digest: digest}},

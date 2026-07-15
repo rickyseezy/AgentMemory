@@ -31,6 +31,10 @@ const (
 	AgentHostClaude AgentHost = "claude"
 	// AgentHostGemini uses Gemini CLI's documented settings.json MCP entry.
 	AgentHostGemini AgentHost = "gemini"
+	// AgentHostCursor uses Cursor's documented global ~/.cursor/mcp.json
+	// portable MCP entry. Project-local Cursor configuration is deliberately
+	// not mutated by the installer.
+	AgentHostCursor AgentHost = "cursor"
 	// AgentHostGLM is reserved for a certified GLM-native host exposing the
 	// portable JSON MCP contract; GLM used inside Claude/Codex selects that host.
 	AgentHostGLM AgentHost = "glm"
@@ -39,7 +43,7 @@ const (
 // Valid reports whether the host has a closed configuration policy.
 func (h AgentHost) Valid() bool {
 	switch h {
-	case AgentHostGeneric, AgentHostCodex, AgentHostClaude, AgentHostGemini, AgentHostGLM:
+	case AgentHostGeneric, AgentHostCodex, AgentHostClaude, AgentHostGemini, AgentHostCursor, AgentHostGLM:
 		return true
 	default:
 		return false

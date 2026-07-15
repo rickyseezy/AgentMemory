@@ -2,6 +2,7 @@ package artifacthttp
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net/http"
@@ -135,10 +136,140 @@ func TestPF001HTTPFetcherExplicitProxyPolicyIsClosed(t *testing.T) {
 	}
 }
 
+func TestPF001HTTPFetcherUsesSystemResolverPerExactRequestWithoutAmbientAuthority(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "https://ambient.invalid:9443")
+	resolver := &proxyResolverStub{routes: map[string]string{
+		"https://a.example/artifact.bin": "http://proxy.example:8080",
+		"https://b.example/artifact.bin": "direct://",
+	}}
+	fetcher, err := New(ProxyPolicy{Mode: ProxySystem, Resolver: resolver}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := fetcher.transport.(*http.Transport)
+	for target, expected := range resolver.routes {
+		request, requestError := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+		if requestError != nil {
+			t.Fatal(requestError)
+		}
+		proxy, proxyError := transport.Proxy(request)
+		if proxyError != nil {
+			t.Fatalf("Proxy(%q): %v", target, proxyError)
+		}
+		if expected == "direct://" {
+			if proxy != nil {
+				t.Fatalf("Proxy(%q)=%v, want direct", target, proxy)
+			}
+		} else if proxy == nil || proxy.String() != expected {
+			t.Fatalf("Proxy(%q)=%v, want %q", target, proxy, expected)
+		}
+	}
+	if len(resolver.targets) != 2 || os.Getenv("HTTPS_PROXY") != "https://ambient.invalid:9443" {
+		t.Fatalf("targets=%v ambient=%q", resolver.targets, os.Getenv("HTTPS_PROXY"))
+	}
+}
+
+func TestPF001HTTPFetcherRejectsUnsafeSystemRoutesAndClosedPolicyShapes(t *testing.T) {
+	t.Parallel()
+	valid := &proxyResolverStub{routes: map[string]string{}}
+	for _, policy := range []ProxyPolicy{
+		{Mode: ProxySystem},
+		{Mode: ProxySystem, URL: "https://proxy.example", Resolver: valid},
+		{Mode: ProxyDisabled, Resolver: valid},
+		{Mode: ProxyExplicit, URL: "https://proxy.example", Resolver: valid},
+	} {
+		if _, err := New(policy, time.Minute); err == nil {
+			t.Fatalf("New(%+v) succeeded", policy)
+		}
+	}
+	for _, route := range []string{
+		"", "ftp://proxy.example", "http://proxy.example/path", "http://proxy.example?query",
+		"http://proxy.example#fragment", "http://proxy.example:0", "http://proxy.example:\n80",
+		"http://owner:secret@proxy.example:8080",
+	} {
+		resolver := &proxyResolverStub{routes: map[string]string{"https://a.example/artifact.bin": route}}
+		fetcher, err := New(ProxyPolicy{Mode: ProxySystem, Resolver: resolver}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://a.example/artifact.bin", nil)
+		if _, err := fetcher.transport.(*http.Transport).Proxy(request); !errors.Is(err, errProxyResolution) {
+			t.Fatalf("route %q error=%v", route, err)
+		}
+	}
+}
+
+func TestPF001HTTPFetcherBindsTransportChoiceToSignedProxyMode(t *testing.T) {
+	t.Parallel()
+	artifact, chunk := httpFixtureForMode(t, artifactacquisition.ProxyModeSystem)
+	direct, err := New(ProxyPolicy{Mode: ProxyDisabled}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTripper := &scriptedRoundTripper{responses: []*http.Response{partialResponse(chunk, artifact.Size(), "abc")}}
+	direct.transport = roundTripper
+	if _, err := direct.Fetch(t.Context(), artifact, artifact.Sources()[0], chunk); !errors.Is(err, artifactapp.ErrFetchIntegrity) || len(roundTripper.requests) != 0 {
+		t.Fatalf("direct fetch error=%v calls=%d", err, len(roundTripper.requests))
+	}
+
+	system, err := New(ProxyPolicy{Mode: ProxySystem, Resolver: &proxyResolverStub{
+		routes: map[string]string{artifact.Sources()[0]: "direct://"},
+	}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTripper = &scriptedRoundTripper{responses: []*http.Response{partialResponse(chunk, artifact.Size(), "abc")}}
+	system.transport = roundTripper
+	if value, err := system.Fetch(t.Context(), artifact, artifact.Sources()[0], chunk); err != nil || string(value) != "abc" {
+		t.Fatalf("system fetch=(%q,%v)", value, err)
+	}
+}
+
+func TestPF001HTTPFetcherClassifiesProxyTLSAndCaptivePortalWithoutRawDiagnostics(t *testing.T) {
+	t.Parallel()
+	artifact, chunk := httpFixture(t)
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "proxy resolution", err: errors.Join(errProxyResolution, errors.New("secret PAC URL")), want: artifactapp.ErrFetchProxyConfiguration},
+		{name: "proxy authentication", err: errProxyAuthentication, want: artifactapp.ErrFetchProxyAuthentication},
+		{name: "TLS interception", err: x509.UnknownAuthorityError{}, want: artifactapp.ErrFetchTLSInterception},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fetcher := &Fetcher{transport: &scriptedRoundTripper{err: test.err}, timeout: time.Minute}
+			_, err := fetcher.Fetch(t.Context(), artifact, artifact.Sources()[0], chunk)
+			if !errors.Is(err, artifactapp.ErrFetchUnavailable) || !errors.Is(err, test.want) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("Fetch() error=%v want unavailable+%v", err, test.want)
+			}
+		})
+	}
+
+	fetcher := &Fetcher{transport: &scriptedRoundTripper{responses: []*http.Response{
+		redirectResponse("https://login.captive.example/portal"),
+	}}, timeout: time.Minute}
+	_, err := fetcher.Fetch(t.Context(), artifact, artifact.Sources()[0], chunk)
+	if !errors.Is(err, artifactapp.ErrFetchIntegrity) || !errors.Is(err, artifactapp.ErrFetchNetworkInterception) {
+		t.Fatalf("captive portal error=%v", err)
+	}
+}
+
 func httpFixture(t *testing.T) (artifactacquisition.Artifact, artifactacquisition.Chunk) {
+	t.Helper()
+	return httpFixtureForMode(t, artifactacquisition.ProxyModeDirectAndSystem)
+}
+
+func httpFixtureForMode(
+	t *testing.T,
+	proxyMode artifactacquisition.ProxyMode,
+) (artifactacquisition.Artifact, artifactacquisition.Chunk) {
 	t.Helper()
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+		ProxyMode:  proxyMode,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "artifact", Digest: releaseinventory.DigestBytes([]byte("abcdef")), Size: 6,
 			Sources: []string{"https://a.example/artifact.bin", "https://b.example/artifact.bin"},
@@ -200,6 +331,20 @@ type scriptedRoundTripper struct {
 	responses []*http.Response
 	requests  []*http.Request
 	err       error
+}
+
+type proxyResolverStub struct {
+	routes  map[string]string
+	targets []string
+	err     error
+}
+
+func (r *proxyResolverStub) ProxyForURL(_ context.Context, target string) (string, error) {
+	r.targets = append(r.targets, target)
+	if r.err != nil {
+		return "", r.err
+	}
+	return r.routes[target], nil
 }
 
 func (r *scriptedRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {

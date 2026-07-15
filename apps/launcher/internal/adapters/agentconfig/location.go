@@ -66,6 +66,8 @@ func (r *LocationResolver) Resolve(
 		path = filepath.Join(home, ".claude.json")
 	case domain.AgentHostGemini:
 		path = filepath.Join(home, ".gemini", "settings.json")
+	case domain.AgentHostCursor:
+		path = filepath.Join(home, ".cursor", "mcp.json")
 	case domain.AgentHostGeneric, domain.AgentHostGLM:
 		return port.ConfigLocation{}, ErrLocationUnsupported
 	default:

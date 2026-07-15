@@ -113,6 +113,7 @@ func capacityAggregateFixture(t *testing.T) (*artifactacquisition.CapacityAggreg
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("capacity-journal-plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "core", Digest: digest, Size: 3, ExpandedBytes: 3, ExpandedDigest: digest,
 			TargetKind: targetAuthority.Kind(), TargetStorageID: targetAuthority.StorageID(), TargetAuthorityDigest: targetAuthority.AuthorityDigest(),

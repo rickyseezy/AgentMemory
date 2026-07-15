@@ -47,7 +47,7 @@ func New(store port.Store, verifier port.InvocationVerifier, policies ...port.Do
 		matched := domain.AgentHost("")
 		for _, host := range []domain.AgentHost{
 			domain.AgentHostGeneric, domain.AgentHostCodex, domain.AgentHostClaude,
-			domain.AgentHostGemini, domain.AgentHostGLM,
+			domain.AgentHostGemini, domain.AgentHostCursor, domain.AgentHostGLM,
 		} {
 			if policy.Supports(host) {
 				if matched != "" || host != domain.AgentHostCodex {

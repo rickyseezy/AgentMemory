@@ -20,6 +20,7 @@ func TestPF001AcquisitionPlanCalculatesExactSignedHeadroom(t *testing.T) {
 	}
 	artifact := plan.Artifacts()[0]
 	if artifact.ID() != "core" || artifact.Size() != 6 || artifact.ExpandedBytes() != 6 ||
+		artifact.ProxyMode() != ProxyModeSystem || plan.ProxyMode() != ProxyModeSystem ||
 		!artifact.ExpandedDigest().Equal(releaseinventory.DigestBytes([]byte("abcdef"))) ||
 		artifact.TargetKind() != releaseinventory.ExpandedTargetComposeBundle ||
 		artifact.TargetStorageID() != "compose/compose.yaml" || artifact.TargetAuthorityDigest().IsZero() ||
@@ -42,6 +43,8 @@ func TestPF001AcquisitionPlanRejectsUnsignedMismatchOverflowAndMutableSources(t 
 	base := testPlanInput()
 	mutations := []func(*PlanInput){
 		func(input *PlanInput) { input.PlanDigest = releaseinventory.Digest{} },
+		func(input *PlanInput) { input.ProxyMode = "" },
+		func(input *PlanInput) { input.ProxyMode = "ambient_environment" },
 		func(input *PlanInput) { input.Totals.DownloadBytes++ },
 		func(input *PlanInput) { input.Totals.ExpandedBytes++ },
 		func(input *PlanInput) { input.Totals.RequiredBytes++ },
@@ -363,6 +366,7 @@ func testPlanInput() PlanInput {
 	})
 	return PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("signed-plan")),
+		ProxyMode:  ProxyModeSystem,
 		Artifacts: []ArtifactInput{{
 			ID: "core", Digest: digest, Size: 6, ExpandedBytes: 6, ExpandedDigest: digest,
 			TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),

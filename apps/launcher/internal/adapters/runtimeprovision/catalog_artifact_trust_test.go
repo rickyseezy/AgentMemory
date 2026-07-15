@@ -172,7 +172,8 @@ func trustReaderPlan(t testing.TB) (artifactacquisition.Plan, map[string][]byte)
 	}
 	download := uint64(len(content["repo-docker-stable-signing_key"]) + len(content["docker-ce"]))
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
-		PlanDigest: releaseinventory.DigestBytes([]byte("catalog")), Artifacts: artifacts,
+		PlanDigest: releaseinventory.DigestBytes([]byte("catalog")), ProxyMode: artifactacquisition.ProxyModeSystem,
+		Artifacts: artifacts,
 		Totals: artifactacquisition.TotalsInput{
 			DownloadBytes: download, RollbackHeadroomBytes: 1, SafetyHeadroomBytes: 1, RequiredBytes: download + 2,
 		},

@@ -423,6 +423,7 @@ func fsPlan(t *testing.T, sources []string) artifactacquisition.Plan {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "core", Digest: digest, Size: 6, ExpandedBytes: 6, ExpandedDigest: digest,
 			TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),

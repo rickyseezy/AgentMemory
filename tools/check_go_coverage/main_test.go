@@ -228,6 +228,18 @@ func TestReadProfileSizeAndPathRules(t *testing.T) {
 	}
 }
 
+func TestMaximumProfileSizeSupportsFullAtomicCoverpkgMatrix(t *testing.T) {
+	t.Parallel()
+
+	const requiredHeadroom = 512 << 20
+	if maximumProfileBytes < requiredHeadroom {
+		t.Fatalf("maximumProfileBytes = %d, want at least %d", maximumProfileBytes, requiredHeadroom)
+	}
+	if maximumProfileBytes > 1<<30 {
+		t.Fatalf("maximumProfileBytes = %d, want a bounded limit no larger than 1 GiB", maximumProfileBytes)
+	}
+}
+
 func TestPathEscapesRoot(t *testing.T) {
 	t.Parallel()
 

@@ -477,6 +477,16 @@ func (a *Application) fetchChunk(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, errors.Join(appError(ErrorSource, "fetch-cancelled"), err)
 		}
+		if errors.Is(err, ErrFetchNetworkInterception) {
+			return nil, errors.Join(appError(ErrorIntegrity, "fetch-range"), ErrFetchNetworkInterception)
+		}
+		for _, category := range []error{
+			ErrFetchProxyConfiguration, ErrFetchProxyAuthentication, ErrFetchTLSInterception,
+		} {
+			if errors.Is(err, category) {
+				return nil, errors.Join(appError(ErrorSource, "fetch-range"), category)
+			}
+		}
 		if errors.Is(err, ErrFetchIntegrity) {
 			return nil, appError(ErrorIntegrity, "fetch-range")
 		}

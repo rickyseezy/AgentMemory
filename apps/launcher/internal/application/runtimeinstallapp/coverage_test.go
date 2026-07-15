@@ -152,7 +152,13 @@ func TestPF001RuntimeApplicationRejectsInvalidEntryAndRepositoryResults(t *testi
 	t.Parallel()
 
 	harnessRepository := newMemoryRepository()
-	harness := &phaseHarness{repository: harnessRepository}
+	// Parallel subtests share only immutable dependency capabilities. Initialize
+	// the ownership repository before they start so dependency construction does
+	// not race on lazy fixture state.
+	harness := &phaseHarness{
+		repository: harnessRepository,
+		ownership:  &memoryOwnershipRepository{},
+	}
 	tests := []struct {
 		name    string
 		command Command

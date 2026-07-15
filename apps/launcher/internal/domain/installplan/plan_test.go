@@ -32,6 +32,7 @@ func TestCanonicalPlanRoundTripsExactImmutableBindings(t *testing.T) {
 		decoded.RuntimeEndpoint() != input.RuntimeEndpoint || decoded.RuntimeOwnership() != input.RuntimeOwnership ||
 		decoded.SecurityEpoch() != input.SecurityEpoch || decoded.RuntimeCatalogResourceID() != "runtime-catalog" ||
 		decoded.RuntimeCatalogDigest().IsZero() || decoded.ComposeArtifactID() != "compose" ||
+		decoded.AcquisitionPlan().ProxyMode() != artifactacquisition.ProxyModeSystem ||
 		!decoded.SignedHostPlan().Valid() ||
 		!decoded.SignedHostPlan().Plan().Digest().Equal(input.SignedHostPlan.Plan().Digest()) ||
 		decoded.Product().ReleaseDirectory() != input.Product.ReleaseDirectory ||
@@ -122,6 +123,7 @@ func TestPlanRejectsMissingCrossBindingsAndMutableReleaseReference(t *testing.T)
 		{name: "host policy", mutate: func(input *Input) { input.SignedHostPlan = hostverification.SignedPlan{} }},
 		{name: "catalog binding", mutate: func(input *Input) { input.RuntimeCatalog.ResourceID = "compose" }},
 		{name: "compose binding", mutate: func(input *Input) { input.Artifacts.ComposeArtifactID = "runtime-catalog" }},
+		{name: "proxy mode", mutate: func(input *Input) { input.Artifacts.ProxyMode = "ambient_environment" }},
 		{name: "artifact digest", mutate: func(input *Input) {
 			input.Artifacts.Artifacts[0].Digest = releaseinventory.DigestBytes([]byte("foreign"))
 		}},
@@ -425,6 +427,7 @@ func validPlanInput(t testing.TB) Input {
 		RuntimeCatalog:   RuntimeCatalogInput{ResourceID: "runtime-catalog"},
 		Artifacts: ArtifactInput{
 			ComposeArtifactID:     "compose",
+			ProxyMode:             artifactacquisition.ProxyModeSystem,
 			Artifacts:             planArtifactInputs(signed.Manifest()),
 			RollbackHeadroomBytes: 1024,
 			SafetyHeadroomBytes:   2048,

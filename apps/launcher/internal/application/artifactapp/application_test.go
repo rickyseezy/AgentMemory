@@ -324,6 +324,17 @@ func TestPF001ArtifactApplicationFailsClosedOnSourceAndPersistenceBoundaries(t *
 			t.Fatalf("source error %v succeeded", fetchError)
 		}
 	}
+	for _, networkError := range []error{
+		ErrFetchProxyConfiguration, ErrFetchProxyAuthentication, ErrFetchTLSInterception, ErrFetchNetworkInterception,
+	} {
+		application := newApplication(t, newMemoryRepository(), &fakeReservation{}, &fakeFetcher{
+			forcedError: errors.Join(ErrFetchUnavailable, networkError),
+		}, newMemoryStore(nil))
+		_, err := application.fetchChunk(context.Background(), artifact, chunk)
+		if !errors.Is(err, networkError) {
+			t.Fatalf("network error %v was not preserved: %v", networkError, err)
+		}
+	}
 
 	createFailure := newMemoryRepository()
 	createFailure.saveErr = errors.New("raw repository failure")
@@ -497,6 +508,7 @@ func testCommand(t *testing.T) Command {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("signed-plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "core", Digest: digest, Size: 6, ExpandedBytes: 6, ExpandedDigest: digest,
 			TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),

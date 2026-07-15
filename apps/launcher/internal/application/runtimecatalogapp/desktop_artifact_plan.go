@@ -40,6 +40,7 @@ func (c VerifiedCatalog) DesktopArtifactPlan(
 	digest := releaseinventory.Digest(artifact.SHA256())
 	return artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.Digest(c.manifest.Digest()),
+		ProxyMode:  artifactacquisition.ProxyMode(artifact.ProxyMode()),
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: desktopInstallerArtifactID, Digest: digest, Size: artifact.DownloadBytes(),
 			Sources: []string{authority.ArtifactSourceURL()},

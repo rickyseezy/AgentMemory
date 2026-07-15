@@ -43,6 +43,7 @@ type CapacityInput struct {
 // artifact is independently cross-bound to the nested signed release manifest.
 type ArtifactInput struct {
 	ComposeArtifactID     string
+	ProxyMode             artifactacquisition.ProxyMode
 	Artifacts             []artifactacquisition.ArtifactInput
 	RollbackHeadroomBytes uint64
 	SafetyHeadroomBytes   uint64
@@ -707,6 +708,7 @@ func inputFromDocument(document canonicalPlan) (Input, error) {
 
 func canonicalAcquisitionFromInput(input ArtifactInput, manifest releaseinventory.Manifest) (canonicalArtifactAcquisition, error) {
 	if input.ComposeArtifactID == "" || input.RollbackHeadroomBytes == 0 || input.SafetyHeadroomBytes == 0 ||
+		!input.ProxyMode.Valid() ||
 		!validBoundedText(input.Capacity.HostCAS) || !validBoundedText(input.Capacity.HostRelease) ||
 		!validBoundedText(input.Capacity.DockerEngine) ||
 		!validBoundedText(input.Capacity.DockerDataVolume) {
@@ -777,6 +779,7 @@ func canonicalAcquisitionFromInput(input ArtifactInput, manifest releaseinventor
 	document := canonicalArtifactAcquisition{
 		Artifacts:                   documents,
 		ComposeArtifactID:           input.ComposeArtifactID,
+		ProxyMode:                   input.ProxyMode,
 		DockerEngineCapacityLocator: input.Capacity.DockerEngine,
 		DockerVolumeCapacityLocator: input.Capacity.DockerDataVolume,
 		HostCASCapacityLocator:      input.Capacity.HostCAS,
@@ -854,6 +857,7 @@ func acquisitionFromCanonical(document canonicalArtifactAcquisition) (artifactac
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes(canonical),
+		ProxyMode:  document.ProxyMode,
 		Artifacts:  inputs,
 		Totals: artifactacquisition.TotalsInput{
 			DownloadBytes: download, ExpandedBytes: expanded,
@@ -899,6 +903,7 @@ func artifactInputFromCanonical(document canonicalArtifactAcquisition) (Artifact
 	}
 	return ArtifactInput{
 		ComposeArtifactID:     document.ComposeArtifactID,
+		ProxyMode:             document.ProxyMode,
 		Artifacts:             artifacts,
 		RollbackHeadroomBytes: document.RollbackHeadroomBytes,
 		SafetyHeadroomBytes:   document.SafetyHeadroomBytes,
@@ -1390,14 +1395,15 @@ type canonicalAgentConfiguration struct {
 }
 
 type canonicalArtifactAcquisition struct {
-	Artifacts                   []canonicalArtifact `json:"artifacts"`
-	ComposeArtifactID           string              `json:"compose_artifact_id"`
-	DockerEngineCapacityLocator string              `json:"docker_engine_capacity_locator"`
-	DockerVolumeCapacityLocator string              `json:"docker_volume_capacity_locator"`
-	HostCASCapacityLocator      string              `json:"host_cas_capacity_locator"`
-	HostReleaseCapacityLocator  string              `json:"host_release_capacity_locator"`
-	RollbackHeadroomBytes       uint64              `json:"rollback_headroom_bytes"`
-	SafetyHeadroomBytes         uint64              `json:"safety_headroom_bytes"`
+	Artifacts                   []canonicalArtifact           `json:"artifacts"`
+	ComposeArtifactID           string                        `json:"compose_artifact_id"`
+	DockerEngineCapacityLocator string                        `json:"docker_engine_capacity_locator"`
+	DockerVolumeCapacityLocator string                        `json:"docker_volume_capacity_locator"`
+	HostCASCapacityLocator      string                        `json:"host_cas_capacity_locator"`
+	HostReleaseCapacityLocator  string                        `json:"host_release_capacity_locator"`
+	ProxyMode                   artifactacquisition.ProxyMode `json:"proxy_mode"`
+	RollbackHeadroomBytes       uint64                        `json:"rollback_headroom_bytes"`
+	SafetyHeadroomBytes         uint64                        `json:"safety_headroom_bytes"`
 }
 
 type canonicalArtifact struct {

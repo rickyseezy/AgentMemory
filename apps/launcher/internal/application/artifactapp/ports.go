@@ -28,6 +28,20 @@ var (
 	ErrFetchUnavailable = errors.New("artifact source unavailable")
 	// ErrFetchIntegrity means transport metadata or bytes contradicted the plan.
 	ErrFetchIntegrity = errors.New("artifact fetch integrity failure")
+	// ErrFetchProxyConfiguration means the invoking user's OS proxy/PAC
+	// authority could not produce a safe route for the exact destination.
+	ErrFetchProxyConfiguration = errors.New("artifact proxy configuration unavailable")
+	// ErrFetchProxyAuthentication means the selected OS proxy requires the
+	// invoking user's native credential interaction. Credentials are never
+	// accepted by this application boundary or persisted in acquisition state.
+	ErrFetchProxyAuthentication = errors.New("artifact proxy authentication required")
+	// ErrFetchTLSInterception means the TLS peer did not validate against the
+	// invoking user's native trust store. The launcher never disables
+	// verification or silently installs a certificate authority.
+	ErrFetchTLSInterception = errors.New("artifact TLS interception detected")
+	// ErrFetchNetworkInterception means a proxy or captive portal attempted to
+	// redirect acquisition outside the signed source allowlist.
+	ErrFetchNetworkInterception = errors.New("artifact network interception detected")
 	// ErrStoreIntegrity means retained or published bytes are invalid.
 	ErrStoreIntegrity = errors.New("artifact store integrity failure")
 	// ErrStoreOperation means a bounded local persistence operation failed.

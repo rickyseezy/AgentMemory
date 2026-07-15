@@ -376,6 +376,7 @@ func pristineSnapshot(t *testing.T) artifactacquisition.Snapshot {
 	t.Helper()
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "artifact", Digest: releaseinventory.DigestBytes([]byte("abc")), Size: 3,
 			Sources: []string{"bundle://artifact"},

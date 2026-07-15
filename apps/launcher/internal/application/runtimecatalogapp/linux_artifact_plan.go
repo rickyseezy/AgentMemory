@@ -64,6 +64,7 @@ func (c VerifiedCatalog) LinuxArtifactPlan(
 		// repository trust-chain input. The package-set digest alone would permit
 		// distinct metadata snapshots to share an acquisition identity.
 		PlanDigest: releaseinventory.Digest(c.manifest.Digest()),
+		ProxyMode:  artifactacquisition.ProxyMode(c.manifest.Artifact().ProxyMode()),
 		Artifacts:  artifacts,
 		Totals: artifactacquisition.TotalsInput{
 			DownloadBytes: download, ExpandedBytes: 0,

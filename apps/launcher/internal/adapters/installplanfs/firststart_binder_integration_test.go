@@ -9,6 +9,7 @@ import (
 	firststartadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/firststart"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/firststartapp"
 	agentconfigdomain "github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/agentconfig"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/artifactacquisition"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/hostverification"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/install"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/installplan"
@@ -142,7 +143,8 @@ func ownerSelectedTemplatePlan(t testing.TB) installplan.Plan {
 		SignedRelease: signed, Product: product,
 		RuntimeCatalog: installplan.RuntimeCatalogInput{ResourceID: "runtime-catalog"},
 		Artifacts: installplan.ArtifactInput{
-			ComposeArtifactID: "compose", Artifacts: filesystemArtifactInputs(signed.Manifest()),
+			ComposeArtifactID: "compose", ProxyMode: artifactacquisition.ProxyModeSystem,
+			Artifacts:             filesystemArtifactInputs(signed.Manifest()),
 			RollbackHeadroomBytes: 1024, SafetyHeadroomBytes: 2048,
 			Capacity: installplan.CapacityInput{
 				HostCAS: "/home/user/.agentmemory/cas", HostRelease: product.ReleaseDirectory,

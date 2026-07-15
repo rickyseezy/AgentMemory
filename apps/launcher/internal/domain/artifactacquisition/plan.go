@@ -25,6 +25,26 @@ var (
 	ErrUnauthorizedPartial = errors.New("artifact partial mutation is unauthorized")
 )
 
+// ProxyMode is the signed, closed network-mediation policy inherited by every
+// artifact in one acquisition plan.
+type ProxyMode string
+
+const (
+	// ProxyModeSystem requires the invoking user's native per-URL proxy/PAC
+	// authority and never process environment.
+	ProxyModeSystem ProxyMode = "system_proxy"
+	// ProxyModeDirectAndSystem permits the certified native resolver's ordered
+	// direct/proxy result for each exact destination.
+	ProxyModeDirectAndSystem ProxyMode = "direct_and_system_proxy"
+)
+
+func (m ProxyMode) valid() bool {
+	return m == ProxyModeSystem || m == ProxyModeDirectAndSystem
+}
+
+// Valid reports whether the mode belongs to the closed signed vocabulary.
+func (m ProxyMode) Valid() bool { return m.valid() }
+
 // Chunk is one signed contiguous byte-range digest.
 type Chunk struct {
 	index  uint32
@@ -86,6 +106,7 @@ type Artifact struct {
 	targetAuthorityDigest releaseinventory.Digest
 	sources               []string
 	chunks                []Chunk
+	proxyMode             ProxyMode
 }
 
 // ID returns the signed logical resource ID.
@@ -118,6 +139,9 @@ func (a Artifact) Sources() []string { return append([]string(nil), a.sources...
 // Chunks returns immutable-by-copy contiguous chunk descriptors.
 func (a Artifact) Chunks() []Chunk { return append([]Chunk(nil), a.chunks...) }
 
+// ProxyMode returns the signed per-destination acquisition policy.
+func (a Artifact) ProxyMode() ProxyMode { return a.proxyMode }
+
 // ContentKey returns the canonical relative CAS key.
 func (a Artifact) ContentKey() string {
 	hexDigest := a.digest.Hex()
@@ -142,6 +166,7 @@ type TotalsInput struct {
 // PlanInput is the verified release projection consumed by acquisition.
 type PlanInput struct {
 	PlanDigest releaseinventory.Digest
+	ProxyMode  ProxyMode
 	Artifacts  []ArtifactInput
 	Totals     TotalsInput
 }
@@ -173,13 +198,14 @@ func (t Totals) RequiredBytes() uint64 { return t.required }
 // Plan is a closed, signed, immutable acquisition plan.
 type Plan struct {
 	digest    releaseinventory.Digest
+	proxyMode ProxyMode
 	artifacts []Artifact
 	totals    Totals
 }
 
 // NewPlan validates signed totals, sources, ranges, digests, and overflow.
 func NewPlan(input PlanInput) (Plan, error) {
-	if input.PlanDigest.IsZero() || len(input.Artifacts) == 0 || len(input.Artifacts) > 4096 {
+	if input.PlanDigest.IsZero() || !input.ProxyMode.valid() || len(input.Artifacts) == 0 || len(input.Artifacts) > 4096 {
 		return Plan{}, ErrInvalidPlan
 	}
 	artifacts := make([]Artifact, 0, len(input.Artifacts))
@@ -191,6 +217,7 @@ func NewPlan(input PlanInput) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
+		artifact.proxyMode = input.ProxyMode
 		if _, duplicate := seenIDs[artifact.id]; duplicate {
 			return Plan{}, ErrInvalidPlan
 		}
@@ -224,7 +251,7 @@ func NewPlan(input PlanInput) (Plan, error) {
 		return Plan{}, ErrInvalidPlan
 	}
 	return Plan{
-		digest: input.PlanDigest, artifacts: artifacts,
+		digest: input.PlanDigest, proxyMode: input.ProxyMode, artifacts: artifacts,
 		totals: Totals{download: download, expanded: expanded, rollback: input.Totals.RollbackHeadroomBytes,
 			safety: input.Totals.SafetyHeadroomBytes, required: required},
 	}, nil
@@ -232,6 +259,9 @@ func NewPlan(input PlanInput) (Plan, error) {
 
 // Digest returns the signed plan binding.
 func (p Plan) Digest() releaseinventory.Digest { return p.digest }
+
+// ProxyMode returns the signed network-mediation policy.
+func (p Plan) ProxyMode() ProxyMode { return p.proxyMode }
 
 // Artifacts returns immutable-by-copy descriptors in signed order.
 func (p Plan) Artifacts() []Artifact { return append([]Artifact(nil), p.artifacts...) }

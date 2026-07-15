@@ -623,6 +623,7 @@ func testArtifactPlan(t *testing.T) artifactacquisition.Plan {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("expanded-plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "core", Digest: digest, Size: uint64(len(source)),
 			ExpandedBytes: uint64(len(source)), ExpandedDigest: digest,

@@ -408,6 +408,7 @@ func artifactPhasePlan(t *testing.T) artifactacquisition.Plan {
 	}
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("signed acquisition plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "compose", Digest: digest, Size: 13, ExpandedBytes: 13, ExpandedDigest: digest,
 			TargetKind: target.Kind(), TargetStorageID: target.StorageID(), TargetAuthorityDigest: target.AuthorityDigest(),

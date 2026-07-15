@@ -259,7 +259,7 @@ func TestPF001MergeActionStringsAreStable(t *testing.T) {
 
 func TestPF001HostSpecificValidationAndAdapterPlansRemainClosed(t *testing.T) {
 	t.Parallel()
-	for _, host := range []AgentHost{AgentHostGeneric, AgentHostClaude, AgentHostGemini, AgentHostGLM} {
+	for _, host := range []AgentHost{AgentHostGeneric, AgentHostClaude, AgentHostGemini, AgentHostCursor, AgentHostGLM} {
 		if err := ValidateDocumentFor(host, []byte(`{"mcpServers":{}}`)); err != nil {
 			t.Fatalf("ValidateDocumentFor(%s) error = %v", host, err)
 		}

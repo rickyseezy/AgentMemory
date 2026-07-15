@@ -6,14 +6,16 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactfs"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifacthttp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifactsource"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/systemproxy"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 )
 
 const nativeArtifactFetchTimeout = 2 * time.Minute
 
 // newNativeArtifactApplication composes the only production acquisition
-// routes: strict TLS 1.3 HTTPS without ambient proxy authority and the exact
-// retained bundle already owned by the verified release authority.
+// routes: strict TLS 1.3 HTTPS through the invoking user's native per-URL
+// proxy/PAC authority (never process environment) and the exact retained
+// bundle already owned by the verified release authority.
 func newNativeArtifactApplication(
 	repository artifactapp.Repository,
 	store *artifactfs.Store,
@@ -22,9 +24,13 @@ func newNativeArtifactApplication(
 	if nilAny(repository) || store == nil || release == nil || release.source == nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	https, err := artifacthttp.New(
-		artifacthttp.ProxyPolicy{Mode: artifacthttp.ProxyDisabled}, nativeArtifactFetchTimeout,
-	)
+	proxy, err := systemproxy.New()
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
+	https, err := artifacthttp.New(artifacthttp.ProxyPolicy{
+		Mode: artifacthttp.ProxySystem, Resolver: proxy,
+	}, nativeArtifactFetchTimeout)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}

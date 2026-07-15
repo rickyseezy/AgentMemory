@@ -11,7 +11,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 )
 
-func TestPF001NativeArtifactApplicationUsesVerifiedBundleAndStrictHTTPS(t *testing.T) {
+func TestPF001NativeArtifactApplicationUsesVerifiedBundleAndNativeSystemProxyHTTPS(t *testing.T) {
 	t.Parallel()
 	repository, err := artifactjournal.New(nativeMissingJournalProvider{}, setuphost.Clock{})
 	if err != nil {
@@ -56,6 +56,12 @@ func TestPF001NativeArtifactApplicationRejectsPartialAcquisitionAuthority(t *tes
 		{name: "repository", store: store, release: release},
 		{name: "store", repository: repository, release: release},
 		{name: "release", repository: repository, store: store},
+		{
+			name:       "release without verified bundle source",
+			repository: &artifactjournal.Repository{},
+			store:      &artifactfs.Store{},
+			release:    &nativeReleaseAuthority{},
+		},
 	} {
 		if application, err := newNativeArtifactApplication(test.repository, test.store, test.release); application != nil ||
 			!errors.Is(err, errNativeInstallerIntegrity) {

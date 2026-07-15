@@ -18,7 +18,10 @@ import (
 const (
 	defaultPackageThreshold = 80
 	defaultChangedThreshold = 80
-	maximumProfileBytes     = 256 << 20
+	// Atomic -coverpkg profiles repeat the launcher block inventory for each
+	// package under test. Keep reads bounded while leaving production growth
+	// headroom above the current full launcher matrix.
+	maximumProfileBytes = 512 << 20
 )
 
 var safeGitRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)

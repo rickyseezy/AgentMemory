@@ -77,6 +77,7 @@ func sourceFixture(t *testing.T) (artifactacquisition.Artifact, artifactacquisit
 	t.Helper()
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "artifact", Digest: releaseinventory.DigestBytes([]byte("abc")), Size: 3,
 			Sources: []string{"https://release.example/artifact", "bundle://release/artifact"},

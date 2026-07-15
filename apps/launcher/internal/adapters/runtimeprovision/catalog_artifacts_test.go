@@ -266,6 +266,7 @@ func adapterDesktopArtifactPlan(
 	digest := releaseinventory.Digest(authority.ArtifactSHA256())
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: releaseinventory.Digest(authority.CatalogDigest()),
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "docker-desktop-installer", Digest: digest, Size: authority.ArtifactBytes(),
 			Sources: []string{authority.ArtifactSourceURL()},
@@ -325,6 +326,7 @@ func adapterLinuxArtifactPlanWithDigest(t *testing.T, planDigest releaseinventor
 	digest := releaseinventory.DigestBytes(contents)
 	plan, err := artifactacquisition.NewPlan(artifactacquisition.PlanInput{
 		PlanDigest: planDigest,
+		ProxyMode:  artifactacquisition.ProxyModeSystem,
 		Artifacts: []artifactacquisition.ArtifactInput{{
 			ID: "docker-ce", Digest: digest, Size: uint64(len(contents)),
 			Sources: []string{"https://download.docker.com/linux/ubuntu/pool/stable/docker-ce.deb"},

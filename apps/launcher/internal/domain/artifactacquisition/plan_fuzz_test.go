@@ -12,6 +12,7 @@ func FuzzPF001ArtifactSourceAndRangeValidation(f *testing.F) {
 	f.Fuzz(func(_ *testing.T, source string, offset uint64, size uint64) {
 		_, _ = NewPlan(PlanInput{
 			PlanDigest: releaseinventory.DigestBytes([]byte("plan")),
+			ProxyMode:  ProxyModeSystem,
 			Artifacts: []ArtifactInput{{
 				ID: "artifact", Digest: releaseinventory.DigestBytes([]byte("content")), Size: size,
 				Sources: []string{source}, Chunks: []ChunkInput{{Offset: offset, Size: size, Digest: releaseinventory.DigestBytes([]byte("chunk"))}},

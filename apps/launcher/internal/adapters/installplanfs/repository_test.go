@@ -358,6 +358,7 @@ func filesystemPlan(t testing.TB) installplan.Plan {
 		RuntimeCatalog: installplan.RuntimeCatalogInput{ResourceID: "runtime-catalog"},
 		Artifacts: installplan.ArtifactInput{
 			ComposeArtifactID:     "compose",
+			ProxyMode:             artifactacquisition.ProxyModeSystem,
 			Artifacts:             filesystemArtifactInputs(signed.Manifest()),
 			RollbackHeadroomBytes: 1024, SafetyHeadroomBytes: 2048,
 			Capacity: installplan.CapacityInput{HostCAS: "/var/lib/agentmemory/cas", HostRelease: product.ReleaseDirectory,

@@ -10,7 +10,7 @@ import (
 
 const (
 	maximumStandardInputBytes    = 1024 * 1024
-	maximumPrivilegeRequestBytes = 16 * 1024 * 1024
+	maximumPrivilegeRequestBytes = 64 * 1024 * 1024
 )
 
 // ErrInvalidInvocation rejects an unsafe executable or argument contract.

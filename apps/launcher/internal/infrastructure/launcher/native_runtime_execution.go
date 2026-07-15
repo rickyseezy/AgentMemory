@@ -66,7 +66,7 @@ func (v *nativeRuntimeExecutionVerifier) verifyAuthenticated(
 	}
 	return nativeVerifiedRuntimeExecution{
 		authority: authority, catalog: verified.verified, runtime: verified.runtime, request: request,
-		manifestDigest: verified.manifestDigest,
+		manifestDigest: verified.manifestDigest, signedCatalog: envelope.Signed,
 	}, nil
 }
 
@@ -75,6 +75,7 @@ type nativeVerifiedRuntimeExecution struct {
 	catalog        runtimecatalogapp.VerifiedCatalog
 	runtime        runtimeinstall.CertifiedRuntime
 	manifestDigest runtimecatalog.Digest
+	signedCatalog  runtimecatalog.SignedManifest
 	request        installplanapp.RuntimeEvidenceRequest
 }
 

@@ -92,11 +92,4 @@ func (f *nativePlatformRuntimeFactory) BuildRuntimeApplication(
 	}
 }
 
-func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
-	context.Context,
-	nativeVerifiedRuntimeExecution,
-) (installphase.RuntimeEnsurer, error) {
-	return nil, errNativeInstallerUnavailable
-}
-
 var _ nativePlatformRuntimeApplicationFactory = (*nativePlatformRuntimeFactory)(nil)

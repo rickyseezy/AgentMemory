@@ -122,7 +122,10 @@ the plan digest and argument allowlist:
 - Windows uses `ShellExecuteEx` `runas` and a `WinVerifyTrust`-verified helper;
 - certified graphical Linux uses the exact signed `/usr/bin/pkexec` package receipt with
   `--disable-internal-agent` and the fixed verified AgentMemory helper. The helper request is bounded
-  canonical stdin; no password, shell string, arbitrary program, or caller environment is accepted.
+  canonical stdin containing the retained signed release, signed runtime catalog, exact PF-006 plan,
+  release resource IDs, and one typed nonce-bound operation; no password, shell string, arbitrary
+  program, or caller environment is accepted. Duplicate, unknown, normalized, or cross-plan fields
+  fail before a privileged transaction can be selected.
 
 The helper validates caller UID/SID, executable and plan hashes, artifact descriptor/hash, IPC owner/
 ACL, nonce, expiry, operation state, and typed parameters. It starts from a trusted directory and

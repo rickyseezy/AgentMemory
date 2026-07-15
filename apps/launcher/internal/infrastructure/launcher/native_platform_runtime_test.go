@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
@@ -58,10 +59,14 @@ func TestPF006NativePlatformRuntimeFactoryRejectsMissingAuthority(t *testing.T) 
 		!errors.Is(err, errNativeInstallerIntegrity) {
 		t.Fatalf("absent desktop application=%+v error=%v", application, err)
 	}
+	wantLinuxError := errNativeInstallerUnavailable
+	if runtime.GOOS == "linux" {
+		wantLinuxError = errNativeInstallerIntegrity
+	}
 	if application, err := (&nativePlatformRuntimeFactory{}).buildLinuxRuntimeApplication(
 		t.Context(), nativeVerifiedRuntimeExecution{},
-	); application != nil || !errors.Is(err, errNativeInstallerUnavailable) {
-		t.Fatalf("pending Linux application=%+v error=%v", application, err)
+	); application != nil || !errors.Is(err, wantLinuxError) {
+		t.Fatalf("Linux application=%+v error=%v want=%v", application, err, wantLinuxError)
 	}
 }
 

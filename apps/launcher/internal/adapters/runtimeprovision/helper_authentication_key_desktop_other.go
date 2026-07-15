@@ -12,6 +12,8 @@ import (
 type unavailableDesktopMutationPublicKeySource struct{}
 type unavailableDesktopMutationSigningKeySource struct{}
 
+// NewProtectedDesktopMutationReceiptPublicKeySource returns the fail-closed
+// desktop mutation receipt verifier on unsupported hosts.
 func NewProtectedDesktopMutationReceiptPublicKeySource(
 	string,
 ) (DesktopMutationReceiptPublicKeySource, error) {
@@ -25,6 +27,8 @@ func (unavailableDesktopMutationPublicKeySource) LoadDesktopMutationPublicKey(
 	return nil, ErrUnsupportedHost
 }
 
+// NewNativeDesktopMutationReceiptSigner returns the fail-closed desktop
+// mutation receipt signer on unsupported hosts.
 func NewNativeDesktopMutationReceiptSigner() (DesktopMutationReceiptSigner, error) {
 	return NewProtectedDesktopMutationReceiptSigner(unavailableDesktopMutationSigningKeySource{})
 }

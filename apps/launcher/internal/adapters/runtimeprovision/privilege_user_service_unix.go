@@ -286,7 +286,7 @@ func verifyPrivilegeUserServiceUnit(
 	var metadata unix.Stat_t
 	if unix.Fstat(descriptor, &metadata) != nil || metadata.Mode&unix.S_IFMT != unix.S_IFREG ||
 		metadata.Uid != authority.InvokingUID() || metadata.Gid != authority.InvokingGID() || metadata.Nlink != 1 ||
-		uint32(metadata.Mode)&0o022 != 0 || metadata.Size <= 0 || metadata.Size > maximumPrivilegeServiceUnitBytes {
+		nativePrivilegeStatMode(&metadata)&0o022 != 0 || metadata.Size <= 0 || metadata.Size > maximumPrivilegeServiceUnitBytes {
 		return runtimeinstall.Hash{}, runtimeport.ErrPrivilegeIntegrity
 	}
 	hasher := sha256.New()

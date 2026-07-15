@@ -218,7 +218,7 @@ func privilegeProtectedDescriptorMatches(
 	var metadata unix.Stat_t
 	return unix.Fstat(descriptor, &metadata) == nil && metadata.Mode&unix.S_IFMT == unix.S_IFREG &&
 		metadata.Uid == uid && metadata.Gid == gid && metadata.Nlink == 1 && metadata.Size >= 0 &&
-		uint64(metadata.Size) == size && uint32(metadata.Mode)&0o7777 == mode
+		uint64(metadata.Size) == size && nativePrivilegeStatMode(&metadata)&0o7777 == mode
 }
 
 func canonicalPrivilegeTransactionDigest(value string) bool {

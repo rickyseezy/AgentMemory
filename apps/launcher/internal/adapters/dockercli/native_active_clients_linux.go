@@ -128,7 +128,7 @@ func validLinuxSocketHex(value string, colon bool) bool {
 }
 
 func linuxSocketRecord(
-	number, refCount, protocol, flags, socketType, state, inode, path string,
+	number, refCount, flags, socketType, state, inode, path string,
 ) string {
-	return fmt.Sprintf("%s: %s %s %s %s %s %s %s", number, refCount, protocol, flags, socketType, state, inode, path)
+	return fmt.Sprintf("%s: %s 00000000 %s %s %s %s %s", number, refCount, flags, socketType, state, inode, path)
 }

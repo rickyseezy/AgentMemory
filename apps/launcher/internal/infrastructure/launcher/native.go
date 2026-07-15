@@ -628,7 +628,7 @@ func composeNative(
 	if err != nil {
 		return nativeComposition{}, err
 	}
-	if err := os.Mkdir(roots.ArtifactCAS, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := ensureNativePrivateDirectory(ctx, roots.ArtifactCAS); err != nil {
 		_ = plans.Close()
 		return nativeComposition{}, err
 	}

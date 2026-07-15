@@ -144,7 +144,7 @@ func copyPrivilegeArtifact(
 	}()
 	digest := sha256.New()
 	written, err := io.CopyN(io.MultiWriter(target, digest), source, int64(artifact.size)) // #nosec G115 -- size is bounded to the exact JSON-safe catalog field.
-	if err != nil || uint64(written) != artifact.size {
+	if err != nil || !nonNegativeInt64EqualsUint64(written, artifact.size) {
 		return ErrProvisionIntegrity
 	}
 	var extra [1]byte
@@ -199,12 +199,19 @@ func existingPrivilegeArtifactMatches(
 	}
 	hasher := sha256.New()
 	written, err := io.Copy(hasher, io.LimitReader(file, int64(size)+1)) // #nosec G115 -- size is a JSON-safe signed field.
-	if err != nil || uint64(written) != size {
+	if err != nil || !nonNegativeInt64EqualsUint64(written, size) {
 		return false
 	}
 	var actual runtimeinstall.Hash
 	copy(actual[:], hasher.Sum(nil))
 	return actual == digest
+}
+
+func nonNegativeInt64EqualsUint64(value int64, expected uint64) bool {
+	if value < 0 {
+		return false
+	}
+	return uint64(value) == expected // #nosec G115 -- negativity is proven above.
 }
 
 func syncPrivilegeDirectory(path string) error {

@@ -118,7 +118,7 @@ func (p *NativePrivilegeRepositoryStateProbe) readPrivilegeRepositoryFile(
 	var metadata unix.Stat_t
 	if unix.Fstat(descriptor, &metadata) != nil || metadata.Mode&unix.S_IFMT != unix.S_IFREG ||
 		metadata.Uid != p.uid || metadata.Gid != p.gid || metadata.Nlink != 1 ||
-		uint32(metadata.Mode)&0o7777 != privilegeRepositoryFileMode || metadata.Size <= 0 ||
+		nativePrivilegeStatMode(&metadata)&0o7777 != privilegeRepositoryFileMode || metadata.Size <= 0 ||
 		metadata.Size > maximumPrivilegeConfigurationBytes {
 		return nil, false, runtimeport.ErrPrivilegeIntegrity
 	}

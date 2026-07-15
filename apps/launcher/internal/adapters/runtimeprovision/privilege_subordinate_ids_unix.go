@@ -500,7 +500,7 @@ func removePrivilegeSubIDTemporary(directory int, name string, uid uint32, gid u
 		return nil
 	}
 	if err != nil || metadata.Mode&unix.S_IFMT != unix.S_IFREG || metadata.Uid != uid || metadata.Gid != gid ||
-		metadata.Nlink != 1 || uint32(metadata.Mode)&0o7777 != 0o600 {
+		metadata.Nlink != 1 || nativePrivilegeStatMode(&metadata)&0o7777 != 0o600 {
 		return runtimeport.ErrPrivilegeIntegrity
 	}
 	return unix.Unlinkat(directory, name, 0)
@@ -509,7 +509,7 @@ func removePrivilegeSubIDTemporary(directory int, name string, uid uint32, gid u
 func privilegeSubIDDirectoryMatches(descriptor int, uid uint32, gid uint32) bool {
 	var metadata unix.Stat_t
 	return unix.Fstat(descriptor, &metadata) == nil && metadata.Mode&unix.S_IFMT == unix.S_IFDIR &&
-		metadata.Uid == uid && metadata.Gid == gid && uint32(metadata.Mode)&0o022 == 0
+		metadata.Uid == uid && metadata.Gid == gid && nativePrivilegeStatMode(&metadata)&0o022 == 0
 }
 
 func privilegeSubIDDescriptorMatches(
@@ -522,7 +522,7 @@ func privilegeSubIDDescriptorMatches(
 	var metadata unix.Stat_t
 	return unix.Fstat(descriptor, &metadata) == nil && metadata.Mode&unix.S_IFMT == unix.S_IFREG &&
 		metadata.Uid == uid && metadata.Gid == gid && metadata.Nlink == 1 && metadata.Size >= 0 &&
-		metadata.Size <= maximumSize && uint32(metadata.Mode)&0o7777 == mode
+		metadata.Size <= maximumSize && nativePrivilegeStatMode(&metadata)&0o7777 == mode
 }
 
 var _ PrivilegeSubordinateIDManager = (*NativePrivilegeSubordinateIDManager)(nil)

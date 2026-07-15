@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,7 +17,7 @@ func TestPF001NativeArtifactApplicationUsesVerifiedBundleAndNativeSystemProxyHTT
 		t.Fatal(err)
 	}
 	storeRoot := filepath.Join(nativeReleaseAuthorityBundleRoot(t), "cas")
-	if err := os.Mkdir(storeRoot, 0o700); err != nil {
+	if err := ensureNativePrivateDirectory(t.Context(), storeRoot); err != nil {
 		t.Fatal(err)
 	}
 	store, err := artifactfs.NewStore(storeRoot)

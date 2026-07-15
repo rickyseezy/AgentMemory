@@ -61,7 +61,7 @@ func TestPF006VerifiedLinuxCatalogProductionProjectorsPreserveExactAuthorityAndA
 	}
 
 	materializer := &desktopArtifactMaterializerFake{}
-	stager, err := NewCatalogPrivilegeArtifactStager(catalog, materializer, t.TempDir())
+	stager, err := NewCatalogPrivilegeArtifactStager(catalog, materializer, "/home/agentmemory/.agentmemory")
 	if err != nil {
 		t.Fatal(err)
 	}

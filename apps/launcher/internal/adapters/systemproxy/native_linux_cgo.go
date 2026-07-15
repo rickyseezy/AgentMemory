@@ -131,7 +131,6 @@ func linuxGIOProxyRaw(ctx context.Context, target string) ([]byte, error) {
 	targetValue := C.CString(target)
 	defer C.free(unsafe.Pointer(targetValue))
 	route := make([]byte, maximumNativeProxyRouteBytes)
-	//nolint:gosec // G103: GIO copies one bounded proxy URI into the supplied buffer; owner=security expiry=2027-07-15.
 	result := C.am_gio_proxy_for_url(targetValue, (*C.char)(unsafe.Pointer(&route[0])), C.size_t(len(route)))
 	if err := ctx.Err(); err != nil {
 		clear(route)

@@ -31,6 +31,8 @@ func NewPrivilegedLinuxCatalogHostProvider(
 	return &PrivilegedLinuxCatalogHostProvider{bindings: bindings}, nil
 }
 
+// CurrentHost derives the exact signed-catalog host facts from the privileged
+// Linux helper's independently verified invoking-user binding.
 func (p *PrivilegedLinuxCatalogHostProvider) CurrentHost(
 	ctx context.Context,
 ) (runtimecatalog.Host, error) {
@@ -78,6 +80,8 @@ func (p *PrivilegedLinuxCatalogHostProvider) CurrentHost(
 		catalogArchitecture = runtimecatalog.ArchitectureX8664
 	case runtimeinstall.ArchitectureARM64:
 		catalogArchitecture = runtimecatalog.ArchitectureARM64
+	case runtimeinstall.ArchitectureUnknown:
+		return runtimecatalog.Host{}, runtimecatalogapp.ErrDependencyUnavailable
 	default:
 		return runtimecatalog.Host{}, runtimecatalogapp.ErrDependencyUnavailable
 	}

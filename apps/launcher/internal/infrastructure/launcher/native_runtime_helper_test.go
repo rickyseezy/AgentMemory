@@ -234,6 +234,9 @@ func launcherDesktopAuthorityForDigests(
 		ProbeImageDigest:      runtimeinstall.Sum([]byte("probe")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("capability")),
 	}
+	if platform == runtimeinstall.PlatformDarwin && architecture == runtimeinstall.ArchitectureAMD64 {
+		input.ArtifactSourceURL = "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
+	}
 	if platform == runtimeinstall.PlatformWindows {
 		input.Architecture = runtimeinstall.ArchitectureAMD64
 		input.PrincipalID, input.UserName = "sid:S-1-5-21-1000-1001-1002-1003", "Agent User"

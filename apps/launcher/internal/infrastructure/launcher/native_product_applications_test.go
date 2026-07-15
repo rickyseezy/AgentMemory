@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -203,7 +202,7 @@ func TestPF001NativeProductApplicationsFailClosedBeforeDelegation(t *testing.T) 
 
 	executors, _ := nativeProductExecutors(t)
 	storeRoot := filepath.Join(nativeReleaseAuthorityBundleRoot(t), "product-cas")
-	if err := os.Mkdir(storeRoot, 0o700); err != nil {
+	if err := ensureNativePrivateDirectory(t.Context(), storeRoot); err != nil {
 		t.Fatal(err)
 	}
 	store, err := artifactfs.NewStore(storeRoot)

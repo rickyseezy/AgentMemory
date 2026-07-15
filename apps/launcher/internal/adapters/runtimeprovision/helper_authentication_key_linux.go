@@ -112,7 +112,7 @@ func (rootPrivilegeReceiptSigningKeySource) LoadPrivilegeReceiptSigningKey(
 		clear(private)
 		return nil, err
 	}
-	return ed25519.PrivateKey(private), nil
+	return private, nil
 }
 
 func openRootPrivilegeKeyLock() (*os.File, error) {

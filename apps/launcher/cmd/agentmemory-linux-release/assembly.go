@@ -501,5 +501,9 @@ func mergedEnvironment(overrides map[string]string) []string {
 	for _, key := range keys {
 		result = append(result, key+"="+values[key])
 	}
+	// Windows permits mixed-case environment names inherited from the host.
+	// Sorting the final wire values, rather than only the map keys, keeps the
+	// command contract deterministic on every supported build host.
+	sort.Strings(result)
 	return result
 }

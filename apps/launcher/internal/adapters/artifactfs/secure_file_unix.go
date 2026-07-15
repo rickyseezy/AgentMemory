@@ -506,7 +506,8 @@ func safeBundleFileStat(stat *unix.Stat_t, policy bundleAccessPolicy) bool {
 	if stat == nil {
 		return false
 	}
-	return safeInstalledBundleFileValues(uint32(stat.Mode), stat.Uid, uint64(stat.Nlink), policy)
+	mode, links := nativeUnixStatValues(stat)
+	return safeInstalledBundleFileValues(mode, stat.Uid, links, policy)
 }
 
 func safeInstalledBundleFileValues(mode uint32, owner uint32, links uint64, policy bundleAccessPolicy) bool {
@@ -535,7 +536,8 @@ func safeBundleFileInfo(info os.FileInfo, size uint64, policy bundleAccessPolicy
 	if !ok {
 		return false
 	}
-	return safeInstalledBundleFileValues(uint32(stat.Mode), stat.Uid, uint64(stat.Nlink), policy)
+	mode, links := nativeSystemStatValues(stat)
+	return safeInstalledBundleFileValues(mode, stat.Uid, links, policy)
 }
 
 func safeDirectoryInfo(info os.FileInfo) bool {

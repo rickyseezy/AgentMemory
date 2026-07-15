@@ -3,7 +3,7 @@ package runtimeprovision
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"path"
 	"testing"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
@@ -126,7 +126,7 @@ func TestCatalogPrivilegeArtifactStagerMaterializesExactCASObjectsForHelper(t *t
 	_, authority := adapterAuthority(t)
 	plan := adapterLinuxArtifactPlan(t, authority)
 	materializer := &desktopArtifactMaterializerFake{}
-	boundary := filepath.Join(t.TempDir(), "helper-staging")
+	boundary := path.Join("/home/agentmemory", "helper-staging")
 	stager, err := newCatalogPrivilegeArtifactStager(
 		&artifactPlanProjectorFake{plan: plan}, materializer, boundary,
 	)
@@ -135,7 +135,7 @@ func TestCatalogPrivilegeArtifactStagerMaterializesExactCASObjectsForHelper(t *t
 	}
 	bindings, err := stager.StagePrivilegeArtifacts(t.Context(), authority)
 	artifact := plan.Artifacts()[0]
-	wantTarget := filepath.Join(
+	wantTarget := path.Join(
 		boundary, authority.Digest().String(), artifact.ID()+"-"+artifact.Digest().Hex()+".deb",
 	)
 	if err != nil || len(bindings) != 1 || bindings[0].ArtifactID() != artifact.ID() ||
@@ -149,7 +149,7 @@ func TestCatalogPrivilegeArtifactStagerMaterializesExactCASObjectsForHelper(t *t
 func TestCatalogPrivilegeArtifactStagerRejectsInvalidAuthorityPlanAndMaterialization(t *testing.T) {
 	_, authority := adapterAuthority(t)
 	plan := adapterLinuxArtifactPlan(t, authority)
-	boundary := filepath.Join(t.TempDir(), "helper-staging")
+	boundary := path.Join("/home/agentmemory", "helper-staging")
 	tests := []struct {
 		name         string
 		projector    linuxArtifactPlanProjector
@@ -188,7 +188,7 @@ func TestCatalogDesktopArtifactAcquirerMaterializesExactSignedInstaller(t *testi
 	if err != nil || !evidence.AcquiredFor(authority) || evidence.VerifiedFor(authority) {
 		t.Fatalf("AcquireDesktopArtifact() acquired=%t verified=%t error=%v", evidence.AcquiredFor(authority), evidence.VerifiedFor(authority), err)
 	}
-	wantBoundary := filepath.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
+	wantBoundary := path.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
 	if cas.reserveCalls != 1 || cas.acquireCalls != 1 || materializer.calls != 1 ||
 		materializer.boundary != wantBoundary || materializer.target != authority.ArtifactPath() ||
 		!materializer.artifact.Digest().Equal(releaseinventory.Digest(authority.ArtifactSHA256())) {

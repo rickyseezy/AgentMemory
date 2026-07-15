@@ -54,6 +54,92 @@ func TestPF001SystemProxyResolverFailsClosedAndDoesNotLeakNativeDiagnostics(t *t
 	}
 }
 
+func TestPF001SystemProxyStripsNativeCredentialsUntilExactChallenge(t *testing.T) {
+	t.Parallel()
+	raw := []byte("http://owner:sec%72et@proxy.example:8080")
+	route, username, password, err := splitNativeProxyRouteBytes(raw)
+	if err != nil || route != "http://proxy.example:8080" || string(username) != "owner" || string(password) != "secret" {
+		t.Fatalf("splitNativeProxyRouteBytes()=(%q,%q,%q,%v)", route, username, password, err)
+	}
+	clear(raw)
+	if string(username) != "owner" || string(password) != "secret" {
+		t.Fatal("credential bytes alias the native proxy URI buffer")
+	}
+	clear(username)
+	clear(password)
+
+	credentialCalls := 0
+	resolver, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return route, nil },
+		func(_ context.Context, target string, proxy string) ([]byte, []byte, error) {
+			credentialCalls++
+			if target != "https://downloads.example/artifact.bin" || proxy != route {
+				return nil, nil, ErrUnavailable
+			}
+			return []byte("owner"), []byte("secret"), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := resolver.credentialsForProxy(
+		t.Context(), "https://downloads.example/artifact.bin", route, true,
+	)
+	if err != nil || credential == nil || credentialCalls != 1 {
+		t.Fatalf("credentialsForProxy()=(%T,%v) calls=%d", credential, err, credentialCalls)
+	}
+	credential.Destroy()
+	if credential, err := resolver.credentialsForProxy(
+		t.Context(), "https://downloads.example/artifact.bin", route, false,
+	); credential != nil || !errors.Is(err, ErrUnavailable) || credentialCalls != 1 {
+		t.Fatalf("unchallenged credential=(%T,%v) calls=%d", credential, err, credentialCalls)
+	}
+
+	for _, value := range []string{
+		"http://owner:secret@proxy.example/path", "ftp://owner:secret@proxy.example",
+		"http://owner%0a:secret@proxy.example", "http://owner%zz:secret@proxy.example",
+		"http://owner:secret@other@proxy.example", "direct://owner:secret@",
+	} {
+		if route, username, password, err := splitNativeProxyRoute(value); err == nil || route != "" ||
+			username != nil || password != nil {
+			t.Fatalf("unsafe native route %q accepted as %q/%q/%q", value, route, username, password)
+		}
+	}
+}
+
+func TestPF001WindowsCredentialUTF16ConversionIsMutableAndFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value []uint16
+		want  string
+	}{
+		{name: "ascii", value: []uint16{'o', 'w', 'n', 'e', 'r', 0}, want: "owner"},
+		{name: "empty", value: []uint16{0}, want: ""},
+		{name: "surrogate pair", value: []uint16{0xD83D, 0xDD10, 0}, want: "🔐"},
+		{name: "bounded at null", value: []uint16{'a', 0, 'b'}, want: "a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := utf16CredentialBytes(test.value)
+			if !ok || string(got) != test.want {
+				t.Fatalf("utf16CredentialBytes()=(%q,%t), want %q", got, ok, test.want)
+			}
+			clear(got)
+		})
+	}
+	for _, value := range [][]uint16{
+		nil,
+		{'n', 'o', '-', 'n', 'u', 'l', 'l'},
+		{0xD83D, 0},
+		{0xDD10, 0},
+	} {
+		if got, ok := utf16CredentialBytes(value); ok || got != nil {
+			clear(got)
+			t.Fatalf("invalid UTF-16 accepted: %#v", value)
+		}
+	}
+}
+
 func TestPF001WindowsProxyListSelectsHTTPSWithoutAcceptingAmbiguity(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

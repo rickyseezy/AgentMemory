@@ -29,7 +29,7 @@ func newNativeArtifactApplication(
 		return nil, errNativeInstallerIntegrity
 	}
 	https, err := artifacthttp.New(artifacthttp.ProxyPolicy{
-		Mode: artifacthttp.ProxySystem, Resolver: proxy,
+		Mode: artifacthttp.ProxySystem, Resolver: proxy, CredentialProvider: proxy,
 	}, nativeArtifactFetchTimeout)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity

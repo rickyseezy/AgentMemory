@@ -52,16 +52,18 @@ type ProxyResolver interface {
 
 // ProxyPolicy never reads process environment.
 type ProxyPolicy struct {
-	Mode     ProxyMode
-	URL      string
-	Resolver ProxyResolver
+	Mode               ProxyMode
+	URL                string
+	Resolver           ProxyResolver
+	CredentialProvider ProxyCredentialProvider
 }
 
 // Fetcher performs bounded strict HTTP range requests.
 type Fetcher struct {
-	transport http.RoundTripper
-	timeout   time.Duration
-	proxyMode ProxyMode
+	transport   http.RoundTripper
+	timeout     time.Duration
+	proxyMode   ProxyMode
+	credentials ProxyCredentialProvider
 }
 
 // New creates a TLS-1.3 HTTPS fetcher with bounded dialing, headers, and total
@@ -73,12 +75,13 @@ func New(policy ProxyPolicy, timeout time.Duration) (*Fetcher, error) {
 	var proxy func(*http.Request) (*url.URL, error)
 	switch policy.Mode {
 	case ProxyDisabled:
-		if policy.URL != "" || !nilProxyResolver(policy.Resolver) {
+		if policy.URL != "" || !nilProxyResolver(policy.Resolver) ||
+			!nilProxyCredentialProvider(policy.CredentialProvider) {
 			return nil, artifactapp.ErrFetchIntegrity
 		}
 		proxy = nil
 	case ProxyExplicit:
-		if !nilProxyResolver(policy.Resolver) {
+		if !nilProxyResolver(policy.Resolver) || !nilProxyCredentialProvider(policy.CredentialProvider) {
 			return nil, artifactapp.ErrFetchIntegrity
 		}
 		proxyURL, err := parseExplicitProxy(policy.URL)
@@ -117,14 +120,26 @@ func New(policy ProxyPolicy, timeout time.Duration) (*Fetcher, error) {
 		MaxResponseHeaderBytes: 64 * 1024,
 		DisableCompression:     true,
 		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS13},
-		OnProxyConnectResponse: func(_ context.Context, _ *url.URL, _ *http.Request, response *http.Response) error {
+		GetProxyConnectHeader:  proxyConnectHeader,
+		OnProxyConnectResponse: func(
+			ctx context.Context,
+			proxyURL *url.URL,
+			connectRequest *http.Request,
+			response *http.Response,
+		) error {
 			if response != nil && response.StatusCode == http.StatusProxyAuthRequired {
-				return errProxyAuthentication
+				challenge, err := proxyChallenge(ctx, proxyURL, connectRequest, response)
+				if err != nil {
+					return errProxyAuthentication
+				}
+				return &proxyChallengeError{challenge: challenge}
 			}
 			return nil
 		},
 	}
-	return &Fetcher{transport: transport, timeout: timeout, proxyMode: policy.Mode}, nil
+	return &Fetcher{
+		transport: transport, timeout: timeout, proxyMode: policy.Mode, credentials: policy.CredentialProvider,
+	}, nil
 }
 
 // Fetch obtains and verifies one exact range. Redirects are accepted only when
@@ -147,6 +162,7 @@ func (f *Fetcher) Fetch(
 	request.Header.Set("Range", rangeValue)
 	request.Header.Set("Accept-Encoding", "identity")
 	request.Header.Set("User-Agent", "AgentMemory-Launcher/1")
+	request = bindProxyRequest(request, source, "", "", "")
 
 	client := &http.Client{
 		Transport: f.transport,
@@ -157,11 +173,30 @@ func (f *Fetcher) Fetch(
 				next.Header.Get("Range") != rangeValue || next.Header.Get("Accept-Encoding") != "identity" {
 				return errRedirectUnauthorized
 			}
+			// A redirect is a new CONNECT authority. Drop any challenge state so
+			// credentials can only be requested and supplied for this exact signed
+			// destination after its own 407 response.
+			bound := bindProxyRequest(next, next.URL.String(), "", "", "")
+			*next = *bound
 			return nil
 		},
 	}
 	response, err := client.Do(request)
+	var challenge *proxyChallengeError
+	if errors.As(err, &challenge) {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+			response = nil
+		}
+		if !artifact.SourceAuthorized(challenge.challenge.TargetURL()) {
+			return nil, errors.Join(artifactapp.ErrFetchIntegrity, artifactapp.ErrFetchNetworkInterception)
+		}
+		response, err = f.retryProxyChallenge(ctx, client, request, challenge.challenge)
+	}
 	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, errors.Join(artifactapp.ErrFetchUnavailable, err)
 		}
@@ -204,6 +239,56 @@ func (f *Fetcher) Fetch(
 		return nil, artifactapp.ErrFetchIntegrity
 	}
 	return value, nil
+}
+
+func (f *Fetcher) retryProxyChallenge(
+	ctx context.Context,
+	client *http.Client,
+	request *http.Request,
+	challenge ProxyCredentialChallenge,
+) (*http.Response, error) {
+	if f == nil || client == nil || request == nil || !challenge.BasicAvailable() ||
+		nilProxyCredentialProvider(f.credentials) {
+		return nil, errProxyAuthentication
+	}
+	credential, err := f.credentials.CredentialsForProxy(ctx, challenge)
+	if err != nil || credential == nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return nil, contextError
+		}
+		return nil, errProxyAuthentication
+	}
+	defer credential.Destroy()
+	authorization, err := credential.basicAuthorization()
+	if err != nil {
+		return nil, errProxyAuthentication
+	}
+	retryRequest := request.Clone(ctx)
+	if challenge.TargetURL() != request.URL.String() {
+		redirectTarget, parseError := url.Parse(challenge.TargetURL())
+		if parseError != nil || !strictHTTPS(challenge.TargetURL()) {
+			return nil, errProxyAuthentication
+		}
+		retryRequest.URL = redirectTarget
+		retryRequest.Host = ""
+		retryRequest.RequestURI = ""
+	}
+	retry := bindProxyRequest(
+		retryRequest,
+		challenge.TargetURL(),
+		challenge.ProxyURL(),
+		challenge.connectTarget,
+		authorization,
+	)
+	response, err := client.Do(retry)
+	if authority, ok := retry.Context().Value(proxyRequestContextKey{}).(*proxyRequestAuthority); ok && authority != nil {
+		authority.authorization = ""
+	}
+	var repeated *proxyChallengeError
+	if errors.As(err, &repeated) {
+		return nil, errProxyAuthentication
+	}
+	return response, err
 }
 
 func proxyModeAuthorizes(configured ProxyMode, signed artifactacquisition.ProxyMode) bool {
@@ -273,6 +358,14 @@ func certificateFailure(err error) bool {
 }
 
 func nilProxyResolver(value ProxyResolver) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
+}
+
+func nilProxyCredentialProvider(value ProxyCredentialProvider) bool {
 	if value == nil {
 		return true
 	}

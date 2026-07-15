@@ -3,8 +3,10 @@
 package systemproxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"runtime"
 	"unsafe"
 
@@ -19,6 +21,11 @@ const (
 	winHTTPAutoProxyConfigURL     = uint32(2)
 	winHTTPAutoDetectDHCP         = uint32(1)
 	winHTTPAutoDetectDNSA         = uint32(2)
+	credUIWinGeneric              = uint32(1)
+	maximumWindowsAuthBufferBytes = uint32(64 * 1024)
+	maximumWindowsUsernameUTF16   = uint32(514)
+	maximumWindowsDomainUTF16     = uint32(338)
+	maximumWindowsPasswordUTF16   = uint32(257)
 )
 
 var (
@@ -29,7 +36,20 @@ var (
 	winHTTPCloseHandle               = winhttpDLL.NewProc("WinHttpCloseHandle")
 	systemProxyKernel32              = windows.NewLazySystemDLL("kernel32.dll")
 	systemProxyGlobalFree            = systemProxyKernel32.NewProc("GlobalFree")
+	systemProxyCredUI                = windows.NewLazySystemDLL("credui.dll")
+	credUIPromptWindowsCredentials   = systemProxyCredUI.NewProc("CredUIPromptForWindowsCredentialsW")
+	credUIUnpackAuthenticationBuffer = systemProxyCredUI.NewProc("CredUnPackAuthenticationBufferW")
+	systemProxyOLE32                 = windows.NewLazySystemDLL("ole32.dll")
+	systemProxyCoTaskMemFree         = systemProxyOLE32.NewProc("CoTaskMemFree")
 )
+
+type credUIInfo struct {
+	Size    uint32
+	Parent  uintptr
+	Message *uint16
+	Caption *uint16
+	Banner  uintptr
+}
 
 type winHTTPCurrentUserProxyConfig struct {
 	AutoDetect    int32
@@ -54,6 +74,119 @@ type winHTTPProxyInfo struct {
 }
 
 func newNativeLookup() (nativeLookup, error) { return windowsSystemProxyLookup, nil }
+
+func nativeCredentialsForProxy(ctx context.Context, target string, proxy string) ([]byte, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	observed, err := windowsSystemProxyLookup(ctx, target)
+	if err != nil || observed != proxy {
+		return nil, nil, ErrUnavailable
+	}
+	parsed, err := url.Parse(proxy)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
+		parsed.User != nil {
+		return nil, nil, ErrUnavailable
+	}
+	return promptWindowsProxyCredentials(ctx, parsed.Hostname())
+}
+
+func promptWindowsProxyCredentials(ctx context.Context, proxyHostname string) ([]byte, []byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	message, err := windows.UTF16PtrFromString(
+		"Enter credentials for system proxy " + proxyHostname + " for AgentMemory.",
+	)
+	if err != nil {
+		return nil, nil, ErrUnavailable
+	}
+	caption, err := windows.UTF16PtrFromString("AgentMemory proxy authentication")
+	if err != nil {
+		return nil, nil, ErrUnavailable
+	}
+	information := credUIInfo{
+		Size: uint32(unsafe.Sizeof(credUIInfo{})), Message: message, Caption: caption,
+	}
+	var authenticationPackage uint32
+	var authenticationBuffer unsafe.Pointer
+	var authenticationBufferSize uint32
+	result, _, _ := credUIPromptWindowsCredentials.Call(
+		uintptr(unsafe.Pointer(&information)), 0, uintptr(unsafe.Pointer(&authenticationPackage)),
+		0, 0, uintptr(unsafe.Pointer(&authenticationBuffer)), uintptr(unsafe.Pointer(&authenticationBufferSize)),
+		0, uintptr(credUIWinGeneric),
+	)
+	runtime.KeepAlive(message)
+	runtime.KeepAlive(caption)
+	if authenticationBuffer != nil {
+		defer zeroAndFreeWindowsAuthBuffer(authenticationBuffer, authenticationBufferSize)
+	}
+	if uint32(result) != uint32(windows.ERROR_SUCCESS) || authenticationBuffer == nil ||
+		authenticationBufferSize == 0 || authenticationBufferSize > maximumWindowsAuthBufferBytes {
+		return nil, nil, ErrUnavailable
+	}
+	usernameBuffer := make([]uint16, maximumWindowsUsernameUTF16)
+	domainBuffer := make([]uint16, maximumWindowsDomainUTF16)
+	passwordBuffer := make([]uint16, maximumWindowsPasswordUTF16)
+	defer clear(usernameBuffer)
+	defer clear(domainBuffer)
+	defer clear(passwordBuffer)
+	usernameSize := uint32(len(usernameBuffer))
+	domainSize := uint32(len(domainBuffer))
+	passwordSize := uint32(len(passwordBuffer))
+	unpacked, _, _ := credUIUnpackAuthenticationBuffer.Call(
+		0, uintptr(authenticationBuffer), uintptr(authenticationBufferSize),
+		uintptr(unsafe.Pointer(&usernameBuffer[0])), uintptr(unsafe.Pointer(&usernameSize)),
+		uintptr(unsafe.Pointer(&domainBuffer[0])), uintptr(unsafe.Pointer(&domainSize)),
+		uintptr(unsafe.Pointer(&passwordBuffer[0])), uintptr(unsafe.Pointer(&passwordSize)),
+	)
+	if unpacked == 0 {
+		return nil, nil, ErrUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	username, usernameValid := utf16CredentialBytes(usernameBuffer)
+	domain, domainValid := utf16CredentialBytes(domainBuffer)
+	password, passwordValid := utf16CredentialBytes(passwordBuffer)
+	defer clear(domain)
+	if !usernameValid || !domainValid || !passwordValid {
+		clear(username)
+		clear(password)
+		return nil, nil, ErrUnavailable
+	}
+	if len(domain) != 0 && bytes.IndexByte(username, '\\') < 0 && bytes.IndexByte(username, '@') < 0 {
+		qualified := make([]byte, 0, len(domain)+1+len(username))
+		qualified = append(qualified, domain...)
+		qualified = append(qualified, '\\')
+		qualified = append(qualified, username...)
+		clear(username)
+		username = qualified
+	}
+	if len(username) == 0 {
+		clear(username)
+		clear(password)
+		return nil, nil, ErrUnavailable
+	}
+	return username, password, nil
+}
+
+func zeroAndFreeWindowsAuthBuffer(value unsafe.Pointer, size uint32) {
+	if value == nil {
+		return
+	}
+	for offset := uint32(0); offset < size; {
+		length := size - offset
+		if length > maximumWindowsAuthBufferBytes {
+			length = maximumWindowsAuthBufferBytes
+		}
+		//nolint:gosec // G103: each slice stays inside the exact CredUI-owned buffer returned with this size.
+		clear(unsafe.Slice((*byte)(unsafe.Add(value, uintptr(offset))), int(length)))
+		offset += length
+	}
+	runtime.KeepAlive(value)
+	_, _, _ = systemProxyCoTaskMemFree.Call(uintptr(value))
+}
 
 func windowsSystemProxyLookup(ctx context.Context, target string) (string, error) {
 	if err := ctx.Err(); err != nil {

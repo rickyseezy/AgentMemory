@@ -91,8 +91,42 @@ func newNativeLookup() (nativeLookup, error) {
 }
 
 func linuxGIOProxyLookup(ctx context.Context, target string) (string, error) {
-	if err := ctx.Err(); err != nil {
+	value, err := linuxGIOProxyRaw(ctx, target)
+	if err != nil {
 		return "", err
+	}
+	defer clear(value)
+	route, username, password, err := splitNativeProxyRouteBytes(value)
+	clear(username)
+	clear(password)
+	if err != nil {
+		return "", ErrUnavailable
+	}
+	return route, nil
+}
+
+func nativeCredentialsForProxy(
+	ctx context.Context,
+	target string,
+	proxy string,
+) ([]byte, []byte, error) {
+	value, err := linuxGIOProxyRaw(ctx, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer clear(value)
+	route, username, password, err := splitNativeProxyRouteBytes(value)
+	if err != nil || route != proxy || len(username) == 0 {
+		clear(username)
+		clear(password)
+		return nil, nil, ErrUnavailable
+	}
+	return username, password, nil
+}
+
+func linuxGIOProxyRaw(ctx context.Context, target string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	targetValue := C.CString(target)
 	defer C.free(unsafe.Pointer(targetValue))
@@ -101,20 +135,19 @@ func linuxGIOProxyLookup(ctx context.Context, target string) (string, error) {
 	result := C.am_gio_proxy_for_url(targetValue, (*C.char)(unsafe.Pointer(&route[0])), C.size_t(len(route)))
 	if err := ctx.Err(); err != nil {
 		clear(route)
-		return "", err
+		return nil, err
 	}
 	if result == 0 {
 		clear(route)
-		return "", ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	end := 0
 	for end < len(route) && route[end] != 0 {
 		end++
 	}
-	value := string(route[:end])
-	clear(route)
-	if value == "" {
-		return "", ErrUnavailable
+	if end == 0 || end == len(route) {
+		clear(route)
+		return nil, ErrUnavailable
 	}
-	return value, nil
+	return route[:end], nil
 }

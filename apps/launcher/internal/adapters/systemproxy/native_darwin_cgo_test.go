@@ -20,6 +20,18 @@ func TestPF001DarwinNativeSystemProxyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("native proxy lookup after %s: %v", time.Since(started), err)
 	}
+	username, password, credentialError := nativeCredentialsForProxy(
+		ctx, "https://example.com/agentmemory-proxy-probe", route,
+	)
+	if credentialError == nil {
+		if route == "direct://" || len(username) == 0 {
+			t.Fatalf("native credential accepted for route %q", route)
+		}
+		clear(username)
+		clear(password)
+	} else if !errors.Is(credentialError, ErrUnavailable) {
+		t.Fatalf("native credential lookup error=%v", credentialError)
+	}
 	if route == "direct://" {
 		return
 	}
@@ -61,4 +73,21 @@ func TestPF001DarwinNativeProxyResultProjectionIsClosed(t *testing.T) {
 			t.Fatalf("darwinProxyRoute(%+v) error=%v", test, err)
 		}
 	}
+}
+
+func TestPF001DarwinNativeCredentialBuffersCopyOnlyBoundedCString(t *testing.T) {
+	t.Parallel()
+	buffer := []byte{'o', 'w', 'n', 'e', 'r', 0, 's', 'e', 'c', 'r', 'e', 't'}
+	if got := nativeCString(buffer); got != "owner" {
+		t.Fatalf("nativeCString()=%q", got)
+	}
+	credential := nativeCStringBytes(buffer)
+	if string(credential) != "owner" {
+		t.Fatalf("nativeCStringBytes()=%q", credential)
+	}
+	buffer[0] = 'x'
+	if string(credential) != "owner" {
+		t.Fatal("credential bytes alias the native buffer")
+	}
+	clear(credential)
 }

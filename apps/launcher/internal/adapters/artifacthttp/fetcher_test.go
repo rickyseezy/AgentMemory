@@ -121,10 +121,12 @@ func TestPF001HTTPFetcherExplicitProxyPolicyIsClosed(t *testing.T) {
 	}
 	for _, policy := range []ProxyPolicy{
 		{Mode: ProxyDisabled, URL: "https://proxy.example"},
+		{Mode: ProxyDisabled, CredentialProvider: &proxyCredentialProviderStub{}},
 		{Mode: ProxyExplicit},
 		{Mode: ProxyExplicit, URL: "http://proxy.example"},
 		{Mode: ProxyExplicit, URL: "https://user@proxy.example"},
 		{Mode: ProxyExplicit, URL: "https://proxy.example/path"},
+		{Mode: ProxyExplicit, URL: "https://proxy.example", CredentialProvider: &proxyCredentialProviderStub{}},
 		{Mode: 99},
 	} {
 		if _, err := New(policy, time.Minute); err == nil {

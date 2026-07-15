@@ -82,8 +82,8 @@ func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	authenticator, err := runtimeprovision.NewEd25519PrivilegeReceiptAuthenticator(
-		f.release.runtimeHelperAuthenticationKey(), helper.SHA256(),
+	authenticator, err := runtimeprovision.NewProtectedEd25519PrivilegeReceiptAuthenticator(
+		runtimeprovision.NewRootPrivilegeReceiptPublicKeySource(), helper.SHA256(),
 	)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity

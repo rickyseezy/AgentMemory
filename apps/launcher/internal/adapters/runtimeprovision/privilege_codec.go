@@ -333,7 +333,9 @@ func validPrivilegeArtifactBindings(
 		if binding.sha256.IsZero() || binding.size == 0 || !validPrivilegeWireID(binding.artifactID) ||
 			!validPrivilegeArtifactPath(binding.path) ||
 			index > 0 && bindings[index-1].artifactID == binding.artifactID ||
-			filepath.Base(filepath.Dir(binding.path)) != authority.Digest().String() {
+			filepath.Dir(binding.path) != filepath.Join(
+				authority.HomeDirectory(), ".agentmemory", authority.Digest().String(),
+			) {
 			return false
 		}
 		extension := filepath.Ext(binding.path)

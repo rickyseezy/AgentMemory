@@ -108,6 +108,16 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 	}
 	environment := invocation.Environment()
 	switch invocation.EnvironmentProfile() {
+	case argvprocess.EnvironmentProfileAPTTransaction:
+		if r.authority.Role() != argvprocess.ExecutableRoleAPTTransaction || len(environment) != 5 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = environment
+	case argvprocess.EnvironmentProfileDNFTransaction:
+		if r.authority.Role() != argvprocess.ExecutableRoleDNFTransaction || len(environment) != 4 {
+			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation
+		}
+		command.Env = environment
 	case argvprocess.EnvironmentProfileRootlessSetup:
 		if r.authority.Role() != argvprocess.ExecutableRoleRootlessSetup || len(environment) != 8 {
 			return argvprocess.Result{}, argvprocess.ErrInvalidInvocation

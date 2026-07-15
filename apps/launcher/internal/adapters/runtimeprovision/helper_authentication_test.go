@@ -63,6 +63,101 @@ func TestEd25519PrivilegeReceiptAuthenticatorVerifiesExactHelperAndRequest(t *te
 	}
 }
 
+func TestProtectedPrivilegeReceiptAuthenticatorLoadsRootOwnedLocalPublicKey(t *testing.T) {
+	t.Parallel()
+	plan, authority, request, receipt := privilegeCodecFixture(t)
+	_ = plan
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := receipt.TransportInput()
+	input.Signature = ed25519.Sign(private, receipt.AuthenticationPayload())
+	signed, err := runtimeport.NewPrivilegeReceipt(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &privilegeReceiptKeySourceStub{key: public}
+	authenticator, err := NewProtectedEd25519PrivilegeReceiptAuthenticator(source, signed.HelperDigest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authenticator.VerifyPrivilegeReceipt(t.Context(), request, signed); err != nil || source.calls != 1 {
+		t.Fatalf("VerifyPrivilegeReceipt() error=%v calls=%d", err, source.calls)
+	}
+	foreignPublic, _, _ := ed25519.GenerateKey(nil)
+	source.key = foreignPublic
+	if err := authenticator.VerifyPrivilegeReceipt(t.Context(), request, signed); !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) {
+		t.Fatalf("foreign protected key error=%v", err)
+	}
+	source.err = errors.New("protected key unavailable")
+	if err := authenticator.VerifyPrivilegeReceipt(t.Context(), request, signed); !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) {
+		t.Fatalf("key source error escaped: %v", err)
+	}
+	_ = authority
+}
+
+func TestProtectedPrivilegeReceiptSignerProducesAuthenticatorCompatibleReceipt(t *testing.T) {
+	t.Parallel()
+	_, _, request, receipt := privilegeCodecFixture(t)
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signingKeys := &privilegeReceiptSigningKeySourceStub{key: private}
+	signer, err := newProtectedPrivilegeReceiptSigner(signingKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := receipt.TransportInput()
+	input.Signature = nil
+	signed, err := signer.SignPrivilegeReceipt(t.Context(), input)
+	if err != nil || signingKeys.calls != 1 || len(signed.Signature()) != ed25519.SignatureSize {
+		t.Fatalf("signed receipt=%+v calls=%d error=%v", signed, signingKeys.calls, err)
+	}
+	authenticator, err := NewProtectedEd25519PrivilegeReceiptAuthenticator(
+		&privilegeReceiptKeySourceStub{key: public}, signed.HelperDigest(),
+	)
+	if err != nil || authenticator.VerifyPrivilegeReceipt(t.Context(), request, signed) != nil {
+		t.Fatalf("signed receipt did not authenticate: %v", err)
+	}
+	input.Signature = make([]byte, ed25519.SignatureSize)
+	if _, err := signer.SignPrivilegeReceipt(t.Context(), input); !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) {
+		t.Fatalf("caller signature accepted: %v", err)
+	}
+	signingKeys.err = errors.New("protected signing key unavailable")
+	input.Signature = nil
+	if _, err := signer.SignPrivilegeReceipt(t.Context(), input); !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) {
+		t.Fatalf("signing source error escaped: %v", err)
+	}
+}
+
+type privilegeReceiptKeySourceStub struct {
+	key   ed25519.PublicKey
+	err   error
+	calls int
+}
+
+type privilegeReceiptSigningKeySourceStub struct {
+	key   ed25519.PrivateKey
+	err   error
+	calls int
+}
+
+func (s *privilegeReceiptSigningKeySourceStub) LoadPrivilegeReceiptSigningKey(
+	context.Context,
+) (ed25519.PrivateKey, error) {
+	s.calls++
+	return append(ed25519.PrivateKey(nil), s.key...), s.err
+}
+
+func (s *privilegeReceiptKeySourceStub) LoadPrivilegeReceiptPublicKey(
+	context.Context,
+) (ed25519.PublicKey, error) {
+	s.calls++
+	return append(ed25519.PublicKey(nil), s.key...), s.err
+}
+
 func TestEd25519DesktopMutationAuthenticatorVerifiesDomainSeparatedStatement(t *testing.T) {
 	t.Parallel()
 	public, private, err := ed25519.GenerateKey(nil)

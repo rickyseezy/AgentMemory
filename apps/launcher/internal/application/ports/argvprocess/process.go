@@ -4,6 +4,7 @@ package argvprocess
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,9 @@ import (
 const (
 	maximumStandardInputBytes    = 1024 * 1024
 	maximumPrivilegeRequestBytes = 64 * 1024 * 1024
+	maximumInvocationArguments   = 1024
+	maximumPackageArtifacts      = 512
+	linuxTransactionRoot         = "/var/lib/agentmemory/runtime-helper/transactions"
 )
 
 // ErrInvalidInvocation rejects an unsafe executable or argument contract.
@@ -42,6 +46,12 @@ const (
 	// EnvironmentProfilePrivilegeBroker marks the fixed pkexec/helper stdin
 	// contract. The process runner admits it only for the privilege-broker role.
 	EnvironmentProfilePrivilegeBroker
+	// EnvironmentProfileAPTTransaction supplies only the noninteractive APT
+	// variables required by the fixed, network-disabled package transaction.
+	EnvironmentProfileAPTTransaction
+	// EnvironmentProfileDNFTransaction supplies the fixed root package-manager
+	// environment without inheriting proxy, repository, or plugin variables.
+	EnvironmentProfileDNFTransaction
 )
 
 // NewInvocation validates bounded, NUL-free argv values. The outbound adapter
@@ -121,6 +131,136 @@ func NewPrivilegeBrokerInvocation(
 	return invocation, nil
 }
 
+// NewAPTInstallInvocation constructs the only admitted APT mutation. Every
+// package must already live in the root-owned transaction directory; APT may
+// neither download, remove, recommend, retry, nor select a caller argument.
+func NewAPTInstallInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/apt-get" || !validLinuxTransactionArtifacts(packages, ".deb") {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 11+len(packages))
+	arguments = append(arguments,
+		"--assume-yes", "--no-download", "--no-remove", "--no-install-recommends",
+		"-o", "Acquire::Retries=0", "-o", "APT::Get::List-Cleanup=false", "-o", "Dpkg::Use-Pty=0",
+		"install",
+	)
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileAPTTransaction
+	invocation.environment = []string{
+		"DEBIAN_FRONTEND=noninteractive", "HOME=/root", "LANG=C", "LC_ALL=C",
+		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	return invocation, nil
+}
+
+// NewDNFInstallInvocation constructs the only admitted DNF5 mutation. It uses
+// only the exact local RPM set with plugins and repositories disabled.
+func NewDNFInstallInvocation(executable string, packages []string) (Invocation, error) {
+	if executable != "/usr/bin/dnf5" || !validLinuxTransactionArtifacts(packages, ".rpm") {
+		return Invocation{}, ErrInvalidInvocation
+	}
+	arguments := make([]string, 0, 7+len(packages))
+	arguments = append(arguments,
+		"--assumeyes", "--cacheonly", "--no-plugins", "--disable-repo=*",
+		"--setopt=localpkg_gpgcheck=True", "--setopt=keepcache=False", "install",
+	)
+	arguments = append(arguments, packages...)
+	invocation, err := newInvocation(executable, arguments, nil)
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.profile = EnvironmentProfileDNFTransaction
+	invocation.environment = []string{
+		"HOME=/root", "LANG=C", "LC_ALL=C", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	return invocation, nil
+}
+
+func validLinuxTransactionArtifacts(paths []string, extension string) bool {
+	if len(paths) == 0 || len(paths) > maximumPackageArtifacts ||
+		!slices.IsSorted(paths) || extension != ".deb" && extension != ".rpm" {
+		return false
+	}
+	for index, value := range paths {
+		if index > 0 && paths[index-1] == value || !validLinuxTransactionArtifact(value, extension) {
+			return false
+		}
+	}
+	return true
+}
+
+func validLinuxTransactionArtifact(value string, extension string) bool {
+	if value == "" || len(value) > 4096 || !safeClosedLinuxPath(value) ||
+		!strings.HasPrefix(value, linuxTransactionRoot+"/") || !strings.HasSuffix(value, extension) ||
+		strings.ContainsAny(value, "\x00\r\n") {
+		return false
+	}
+	relative, err := filepathRel(linuxTransactionRoot, value)
+	if err != nil {
+		return false
+	}
+	components := strings.Split(relative, "/")
+	if len(components) != 2 || !canonicalLowerSHA256(components[0]) {
+		return false
+	}
+	stem := strings.TrimSuffix(components[1], extension)
+	separator := strings.LastIndexByte(stem, '-')
+	return separator > 0 && validPackageArtifactID(stem[:separator]) && canonicalLowerSHA256(stem[separator+1:])
+}
+
+func safeClosedLinuxPath(value string) bool {
+	if !strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") {
+		return false
+	}
+	for _, component := range strings.Split(value, "/") {
+		if component == "." || component == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func filepathRel(base string, target string) (string, error) {
+	if !strings.HasPrefix(target, base+"/") {
+		return "", ErrInvalidInvocation
+	}
+	return strings.TrimPrefix(target, base+"/"), nil
+}
+
+func canonicalLowerSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return value != strings.Repeat("0", 64)
+}
+
+func validPackageArtifactID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			continue
+		}
+		if index > 0 && strings.ContainsRune("+.-_", character) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func safeLinuxDirectory(value string) bool {
 	if !strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") ||
 		strings.ContainsAny(value, "\x00\r\n") || len(value) > 4096 {
@@ -138,7 +278,7 @@ func newInvocation(executable string, arguments []string, standardInput []byte) 
 	if strings.TrimSpace(executable) == "" || len(executable) > 4096 || strings.IndexByte(executable, 0) >= 0 {
 		return Invocation{}, ErrInvalidInvocation
 	}
-	if len(arguments) > 256 {
+	if len(arguments) > maximumInvocationArguments {
 		return Invocation{}, ErrInvalidInvocation
 	}
 	copied := make([]string, len(arguments))

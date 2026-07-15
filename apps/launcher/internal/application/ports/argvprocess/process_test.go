@@ -20,7 +20,7 @@ func TestPF001ArgvInvocationRejectsNULAndBounds(t *testing.T) {
 		{name: "NUL executable", executable: "/bin/x\x00"},
 		{name: "NUL argument", executable: "/bin/x", arguments: []string{"a\x00b"}},
 		{name: "oversized argument", executable: "/bin/x", arguments: []string{strings.Repeat("a", 32*1024+1)}},
-		{name: "too many arguments", executable: "/bin/x", arguments: make([]string, 257)},
+		{name: "too many arguments", executable: "/bin/x", arguments: make([]string, maximumInvocationArguments+1)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -143,6 +143,51 @@ func TestPF006PrivilegeBrokerInvocationIsFixedAndStdinOnly(t *testing.T) {
 	} {
 		if _, err := NewPrivilegeBrokerInvocation(input.pkexec, input.helper, input.body); !errors.Is(err, ErrInvalidInvocation) {
 			t.Fatalf("unsafe privilege invocation=%+v error=%v", input, err)
+		}
+	}
+}
+
+func TestPF006LinuxPackageTransactionInvocationsAreOfflineAndClosed(t *testing.T) {
+	t.Parallel()
+	digest := strings.Repeat("a", 64)
+	root := "/var/lib/agentmemory/runtime-helper/transactions/" + digest
+	deb := root + "/docker-ce-" + digest + ".deb"
+	rpm := root + "/docker-ce-" + digest + ".rpm"
+	apt, err := NewAPTInstallInvocation("/usr/bin/apt-get", []string{deb})
+	wantAPT := []string{
+		"--assume-yes", "--no-download", "--no-remove", "--no-install-recommends",
+		"-o", "Acquire::Retries=0", "-o", "APT::Get::List-Cleanup=false", "-o", "Dpkg::Use-Pty=0",
+		"install", deb,
+	}
+	if err != nil || apt.Executable() != "/usr/bin/apt-get" || !slices.Equal(apt.Arguments(), wantAPT) ||
+		apt.EnvironmentProfile() != EnvironmentProfileAPTTransaction {
+		t.Fatalf("APT invocation=%+v error=%v", apt, err)
+	}
+	dnf, err := NewDNFInstallInvocation("/usr/bin/dnf5", []string{rpm})
+	wantDNF := []string{
+		"--assumeyes", "--cacheonly", "--no-plugins", "--disable-repo=*",
+		"--setopt=localpkg_gpgcheck=True", "--setopt=keepcache=False", "install", rpm,
+	}
+	if err != nil || dnf.Executable() != "/usr/bin/dnf5" || !slices.Equal(dnf.Arguments(), wantDNF) ||
+		dnf.EnvironmentProfile() != EnvironmentProfileDNFTransaction {
+		t.Fatalf("DNF invocation=%+v error=%v", dnf, err)
+	}
+	for name, invoke := range map[string]func() error{
+		"APT path": func() error { _, callErr := NewAPTInstallInvocation("apt-get", []string{deb}); return callErr },
+		"APT artifact": func() error {
+			_, callErr := NewAPTInstallInvocation("/usr/bin/apt-get", []string{"/tmp/x.deb"})
+			return callErr
+		},
+		"APT extension": func() error { _, callErr := NewAPTInstallInvocation("/usr/bin/apt-get", []string{rpm}); return callErr },
+		"DNF path":      func() error { _, callErr := NewDNFInstallInvocation("/usr/bin/dnf", []string{rpm}); return callErr },
+		"DNF artifact": func() error {
+			_, callErr := NewDNFInstallInvocation("/usr/bin/dnf5", []string{"/tmp/x.rpm"})
+			return callErr
+		},
+		"DNF extension": func() error { _, callErr := NewDNFInstallInvocation("/usr/bin/dnf5", []string{deb}); return callErr },
+	} {
+		if err := invoke(); !errors.Is(err, ErrInvalidInvocation) {
+			t.Fatalf("%s error=%v", name, err)
 		}
 	}
 }

@@ -44,7 +44,7 @@ func TestPF006CanonicalPrivilegeCodecRoundTripsAuthenticatedRequestEnvelope(t *t
 		!bytes.Equal(decoded.SignedRuntimeCatalog(), input.SignedRuntimeCatalog) ||
 		!bytes.Equal(decoded.CanonicalPlan(), input.CanonicalPlan) || len(decoded.Artifacts()) != 7 ||
 		decoded.Artifacts()[2].ArtifactID() != "docker-ce" ||
-		decoded.Artifacts()[2].Path() != "/home/agentmemory/.cache/agentmemory/"+authority.Digest().String()+"/"+
+		decoded.Artifacts()[2].Path() != "/home/agentmemory/.agentmemory/"+authority.Digest().String()+"/"+
 			"docker-ce-"+decoded.Artifacts()[2].SHA256().String()+".deb" {
 		t.Fatalf("decoded request mismatch: request=%+v error=%v", bound, err)
 	}
@@ -84,7 +84,7 @@ func privilegeCodecArtifactStager(authority runtimeport.LinuxAuthority) *privile
 		bindings = append(bindings, PrivilegeArtifactBinding{
 			artifactID: pkg.Name(),
 			path: filepath.Join(
-				"/home/agentmemory/.cache/agentmemory", authority.Digest().String(),
+				"/home/agentmemory/.agentmemory", authority.Digest().String(),
 				pkg.Name()+"-"+digest.String()+".deb",
 			),
 			sha256: digest, size: 1024,

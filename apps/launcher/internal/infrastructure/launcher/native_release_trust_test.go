@@ -20,6 +20,7 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
 	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
 		len(trust.RuntimeCatalogKeys) != 1 || len(trust.RuntimeHelperReceiptKey) != ed25519.PublicKeySize ||
+		len(trust.RuntimeHelperPublisherCertificates) != 2 ||
 		len(trust.RuntimePublishers) != 1 ||
 		len(trust.Offline.RevocationAuthorities) != 1 || len(trust.Offline.TimeAuthorities) != 1 ||
 		trust.Offline.TrustDomain != "agentmemory.release" || trust.Offline.MaximumFutureSkew.Seconds() != 300 ||
@@ -46,6 +47,12 @@ func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testi
 		"runtime helper receipt key": func(document *nativeReleaseTrustDocument) { document.RuntimeHelperReceiptKey = "" },
 		"runtime helper receipt key bytes": func(document *nativeReleaseTrustDocument) {
 			document.RuntimeHelperReceiptKey = base64.StdEncoding.EncodeToString([]byte("short"))
+		},
+		"runtime helper publisher certificates": func(document *nativeReleaseTrustDocument) {
+			document.RuntimeHelperPublisherCertificates = nil
+		},
+		"runtime helper publisher certificate digest": func(document *nativeReleaseTrustDocument) {
+			document.RuntimeHelperPublisherCertificates["runtime-helper-darwin-arm64"] = "invalid"
 		},
 		"runtime publishers": func(document *nativeReleaseTrustDocument) { document.RuntimePublishers = nil },
 		"duplicate runtime publisher": func(document *nativeReleaseTrustDocument) {
@@ -147,6 +154,10 @@ func nativeReleaseTrustFixture() nativeReleaseTrustDocument {
 		HostPolicyKeys:          map[string]string{"host-policy-root": key},
 		RuntimeCatalogKeys:      map[string]string{"runtime-catalog-root": key},
 		RuntimeHelperReceiptKey: key,
+		RuntimeHelperPublisherCertificates: map[string]string{
+			"runtime-helper-darwin-arm64":  releaseinventory.DigestBytes([]byte("helper publisher certificate darwin")).Hex(),
+			"runtime-helper-windows-amd64": releaseinventory.DigestBytes([]byte("helper publisher certificate windows")).Hex(),
+		},
 		RuntimePublishers: []runtimeprovision.RuntimePublisherPolicyInput{{
 			Verification:       runtimecatalog.NativeVerificationAppleNotarized,
 			Identity:           "developer-id-application-docker-inc-9bnsxjn65r",

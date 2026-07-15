@@ -25,16 +25,17 @@ const (
 var embeddedNativeReleaseTrustBase64 string
 
 type nativeReleaseTrustDocument struct {
-	SchemaVersion           uint16                                         `json:"schemaVersion"`
-	ManifestKeys            map[string]string                              `json:"manifestKeys"`
-	HostPolicyKeys          map[string]string                              `json:"hostPolicyKeys"`
-	RuntimeCatalogKeys      map[string]string                              `json:"runtimeCatalogKeys"`
-	RuntimeHelperReceiptKey string                                         `json:"runtimeHelperReceiptKey"`
-	RuntimePublishers       []runtimeprovision.RuntimePublisherPolicyInput `json:"runtimeNativePublishers"`
-	Offline                 nativeOfflineTrustDocument                     `json:"offline"`
-	Provenance              nativeProvenanceDocument                       `json:"provenance"`
-	Qualification           nativeQualificationDocument                    `json:"qualification"`
-	Publishers              map[string][]string                            `json:"nativePublishers"`
+	SchemaVersion                      uint16                                         `json:"schemaVersion"`
+	ManifestKeys                       map[string]string                              `json:"manifestKeys"`
+	HostPolicyKeys                     map[string]string                              `json:"hostPolicyKeys"`
+	RuntimeCatalogKeys                 map[string]string                              `json:"runtimeCatalogKeys"`
+	RuntimeHelperReceiptKey            string                                         `json:"runtimeHelperReceiptKey"`
+	RuntimeHelperPublisherCertificates map[string]string                              `json:"runtimeHelperPublisherCertificates"`
+	RuntimePublishers                  []runtimeprovision.RuntimePublisherPolicyInput `json:"runtimeNativePublishers"`
+	Offline                            nativeOfflineTrustDocument                     `json:"offline"`
+	Provenance                         nativeProvenanceDocument                       `json:"provenance"`
+	Qualification                      nativeQualificationDocument                    `json:"qualification"`
+	Publishers                         map[string][]string                            `json:"nativePublishers"`
 }
 
 type nativeOfflineTrustDocument struct {
@@ -94,6 +95,12 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
+	runtimeHelperPublisherCertificates, err := decodeNativeReleaseDigestBindings(
+		document.RuntimeHelperPublisherCertificates,
+	)
+	if err != nil {
+		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	}
 	revocationKeys, err := decodeNativeReleaseKeys(document.Offline.RevocationAuthorities)
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
@@ -122,9 +129,10 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	}
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
-		RuntimeCatalogKeys:      runtimeCatalogKeys,
-		RuntimeHelperReceiptKey: runtimeHelperReceiptKey,
-		RuntimePublishers:       append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
+		RuntimeCatalogKeys:                 runtimeCatalogKeys,
+		RuntimeHelperReceiptKey:            runtimeHelperReceiptKey,
+		RuntimeHelperPublisherCertificates: runtimeHelperPublisherCertificates,
+		RuntimePublishers:                  append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
 			TrustDomain:           document.Offline.TrustDomain,
 			RevocationAuthorities: revocationKeys, TimeAuthorities: timeKeys,
@@ -168,6 +176,21 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	return trust, nil
+}
+
+func decodeNativeReleaseDigestBindings(values map[string]string) (map[string]releaseinventory.Digest, error) {
+	if len(values) == 0 {
+		return nil, errNativeInstallerIntegrity
+	}
+	result := make(map[string]releaseinventory.Digest, len(values))
+	for resourceID, value := range values {
+		digest, err := releaseinventory.ParseDigest(value)
+		if resourceID == "" || len(resourceID) > 128 || err != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		result[resourceID] = digest
+	}
+	return result, nil
 }
 
 func copyNativePublisherPolicy(

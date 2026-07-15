@@ -32,6 +32,11 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 	if authority.runtimeHelperAuthenticationKey()[0] == helperKey[0] {
 		t.Fatal("runtime helper authentication key aliases caller memory")
 	}
+	if authority.runtimeHelperPublisherCertificateDigest("runtime-helper-darwin-arm64").IsZero() ||
+		authority.runtimeHelperPublisherCertificateDigest("runtime-helper-windows-amd64").IsZero() ||
+		!authority.runtimeHelperPublisherCertificateDigest("foreign").IsZero() {
+		t.Fatal("runtime helper publisher certificate is unavailable")
+	}
 	if err := authority.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}

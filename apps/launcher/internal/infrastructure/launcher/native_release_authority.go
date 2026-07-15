@@ -13,6 +13,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/hostverifyapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 	appreleaseverify "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/releaseverify"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
 )
 
 type nativeReleaseBundleRootResolver func() (string, error)
@@ -30,17 +31,18 @@ type nativeReleaseAuthorityDependencies struct {
 // No environment variable, working directory, network locator, or MCP input
 // participates in its construction.
 type nativeReleaseAuthority struct {
-	source                  *artifactfs.BundleFetcher
-	stack                   nativeReleaseStack
-	hostProbe               *hostverify.NativeProbe
-	hostVerifier            *hostverifyapp.Application
-	releaseVerifier         *installphase.ReleaseApplicationAdapter
-	runtimeCatalog          *nativeRuntimeCatalogLoader
-	runtimeCatalogSignature *runtimeprovision.CatalogSignatureVerifier
-	runtimeCatalogPublisher *runtimeprovision.RuntimePublisherPolicyVerifier
-	runtimeHelperReceiptKey ed25519.PublicKey
-	closeOnce               sync.Once
-	closeError              error
+	source                             *artifactfs.BundleFetcher
+	stack                              nativeReleaseStack
+	hostProbe                          *hostverify.NativeProbe
+	hostVerifier                       *hostverifyapp.Application
+	releaseVerifier                    *installphase.ReleaseApplicationAdapter
+	runtimeCatalog                     *nativeRuntimeCatalogLoader
+	runtimeCatalogSignature            *runtimeprovision.CatalogSignatureVerifier
+	runtimeCatalogPublisher            *runtimeprovision.RuntimePublisherPolicyVerifier
+	runtimeHelperReceiptKey            ed25519.PublicKey
+	runtimeHelperPublisherCertificates map[string]releaseinventory.Digest
+	closeOnce                          sync.Once
+	closeError                         error
 }
 
 func newNativeReleaseAuthority(
@@ -110,6 +112,9 @@ func newNativeReleaseAuthority(
 		runtimeCatalogSignature: runtimeCatalogSignature,
 		runtimeCatalogPublisher: runtimeCatalogPublisher,
 		runtimeHelperReceiptKey: append(ed25519.PublicKey(nil), trust.RuntimeHelperReceiptKey...),
+		runtimeHelperPublisherCertificates: copyNativeHelperCertificateBindings(
+			trust.RuntimeHelperPublisherCertificates,
+		),
 	}
 	runtimeCatalog, err := newNativeRuntimeCatalogLoader(authority)
 	if err != nil {
@@ -126,6 +131,23 @@ func (a *nativeReleaseAuthority) runtimeHelperAuthenticationKey() ed25519.Public
 		return nil
 	}
 	return append(ed25519.PublicKey(nil), a.runtimeHelperReceiptKey...)
+}
+
+func (a *nativeReleaseAuthority) runtimeHelperPublisherCertificateDigest(resourceID string) releaseinventory.Digest {
+	if a == nil || resourceID == "" {
+		return releaseinventory.Digest{}
+	}
+	return a.runtimeHelperPublisherCertificates[resourceID]
+}
+
+func copyNativeHelperCertificateBindings(
+	values map[string]releaseinventory.Digest,
+) map[string]releaseinventory.Digest {
+	result := make(map[string]releaseinventory.Digest, len(values))
+	for resourceID, digest := range values {
+		result[resourceID] = digest
+	}
+	return result
 }
 
 func (a *nativeReleaseAuthority) templates() firststartapp.VerifiedTemplateSource {

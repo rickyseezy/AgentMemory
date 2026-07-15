@@ -69,6 +69,15 @@ an installer log, or launcher memory. Linux privilege receipts and macOS/
 Windows mutation receipts use different domain-separated statements even when
 one platform release authorizes the same helper key.
 
+The release owner must also provide the SHA-256 digest of the native signing
+certificate for every helper resource ID. The reproducible release build writes
+these public, per-resource bindings into `runtimeHelperPublisherCertificates`;
+Darwin and Windows helpers must never share an inferred or ambient certificate
+identity. The release manifest still binds each helper's exact executable
+digest, publisher identity, publisher policy, platform, and architecture. A
+missing, zero, duplicate-platform, foreign, or non-release helper binding makes
+runtime mutation unavailable before elevation.
+
 Every published artifact must carry an offline-verifiable Sigstore bundle or
 equivalent manifest-bound evidence. Sigstore documents that a verification
 bundle contains the material required for offline verification:

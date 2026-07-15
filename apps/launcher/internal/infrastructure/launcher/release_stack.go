@@ -25,15 +25,16 @@ type nativeReleaseContentSource interface {
 // release pipeline and compiled into a signed launcher build. It deliberately
 // contains no private key or credential.
 type nativeReleaseTrustMaterial struct {
-	ManifestKeys            map[string]ed25519.PublicKey
-	HostPolicyKeys          map[string]ed25519.PublicKey
-	RuntimeCatalogKeys      map[string]ed25519.PublicKey
-	RuntimeHelperReceiptKey ed25519.PublicKey
-	RuntimePublishers       []runtimeprovision.RuntimePublisherPolicyInput
-	Offline                 releaseverifyadapter.OfflineTrustPolicyInput
-	Provenance              releaseverifyadapter.ProvenanceTrustPolicyInput
-	Qualification           releaseverifyadapter.QualificationTrustPolicyInput
-	Publishers              releaseverifyadapter.NativePublisherPolicyInput
+	ManifestKeys                       map[string]ed25519.PublicKey
+	HostPolicyKeys                     map[string]ed25519.PublicKey
+	RuntimeCatalogKeys                 map[string]ed25519.PublicKey
+	RuntimeHelperReceiptKey            ed25519.PublicKey
+	RuntimeHelperPublisherCertificates map[string]releaseinventory.Digest
+	RuntimePublishers                  []runtimeprovision.RuntimePublisherPolicyInput
+	Offline                            releaseverifyadapter.OfflineTrustPolicyInput
+	Provenance                         releaseverifyadapter.ProvenanceTrustPolicyInput
+	Qualification                      releaseverifyadapter.QualificationTrustPolicyInput
+	Publishers                         releaseverifyadapter.NativePublisherPolicyInput
 }
 
 type nativeReleaseStackDependencies struct {
@@ -59,7 +60,7 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 	}
 	if _, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(
 		dependencies.Trust.RuntimeHelperReceiptKey,
-	); err != nil {
+	); err != nil || !validNativeHelperCertificateBindings(dependencies.Trust.RuntimeHelperPublisherCertificates) {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	signature, err := releaseverifyadapter.NewEd25519KeyIDVerifier(dependencies.Trust.ManifestKeys)
@@ -134,6 +135,18 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	return nativeReleaseStack{application: application, templates: templates}, nil
+}
+
+func validNativeHelperCertificateBindings(values map[string]releaseinventory.Digest) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for resourceID, digest := range values {
+		if resourceID == "" || digest.IsZero() {
+			return false
+		}
+	}
+	return true
 }
 
 type nativeReleasePlatform struct{}

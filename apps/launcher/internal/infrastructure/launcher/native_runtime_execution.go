@@ -65,7 +65,7 @@ func (v *nativeRuntimeExecutionVerifier) verifyAuthenticated(
 		return nativeVerifiedRuntimeExecution{}, installplanapp.ErrRuntimeEvidenceUnavailable
 	}
 	return nativeVerifiedRuntimeExecution{
-		authority: authority, catalog: verified.verified, runtime: verified.runtime,
+		authority: authority, catalog: verified.verified, runtime: verified.runtime, request: request,
 		manifestDigest: verified.manifestDigest,
 	}, nil
 }
@@ -75,6 +75,7 @@ type nativeVerifiedRuntimeExecution struct {
 	catalog        runtimecatalogapp.VerifiedCatalog
 	runtime        runtimeinstall.CertifiedRuntime
 	manifestDigest runtimecatalog.Digest
+	request        installplanapp.RuntimeEvidenceRequest
 }
 
 func runtimeSelectionMatches(plan runtimeinstall.Plan, catalog runtimeinstall.CertifiedRuntime) bool {

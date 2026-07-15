@@ -103,7 +103,9 @@ func TestCheckRejectsSymlinkAndNonExecutableScript(t *testing.T) {
 	}
 
 	violations := Check(Options{RepositoryRoot: root})
-	if len(violations) != 2 {
+	if len(violations) != 2 ||
+		!strings.Contains(violations[0].Error()+violations[1].Error(), "must be a regular file") ||
+		!strings.Contains(violations[0].Error()+violations[1].Error(), "mode is 0600") {
 		t.Fatalf("Check() violations = %v, want symlink and mode violations", violations)
 	}
 }

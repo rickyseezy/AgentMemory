@@ -115,6 +115,13 @@ func Check(options Options) []error {
 		if statErr != nil {
 			continue
 		}
+		// readRegularFile already reports non-regular objects. Symlink permission
+		// bits are platform-defined (0777 on Linux and commonly 0755 on macOS),
+		// so a second mode violation would make this closed checker depend on the
+		// host used to execute it rather than the package contract.
+		if !info.Mode().IsRegular() {
+			continue
+		}
 		if info.Mode().Perm() != 0o755 {
 			violations = append(violations, fmt.Errorf("%s: mode is %04o, want 0755", script, info.Mode().Perm()))
 		}

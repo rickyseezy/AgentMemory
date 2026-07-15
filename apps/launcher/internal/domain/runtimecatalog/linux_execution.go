@@ -11,6 +11,7 @@ import (
 // one Linux runtime catalog cell.
 type LinuxPackageManager string
 
+// Closed helper tool roles admitted by one package-manager-specific catalog cell.
 const (
 	// LinuxPackageManagerAPT selects an exact Debian-family package transaction.
 	LinuxPackageManagerAPT LinuxPackageManager = "apt"
@@ -408,6 +409,114 @@ func (p LinuxPackage) NativeReceiptDigest() Digest { return p.nativeReceiptDiges
 // Source returns the exact official package artifact URL.
 func (p LinuxPackage) Source() SourceLocation { return p.source }
 
+// LinuxHelperToolRole is a closed privileged capability used by the Linux
+// runtime helper. It is intentionally narrower than an executable name: each
+// role admits one fixed path and one fixed owning distribution package.
+type LinuxHelperToolRole string
+
+const (
+	// LinuxHelperToolAPTGet binds the fixed offline APT transaction tool.
+	LinuxHelperToolAPTGet LinuxHelperToolRole = "apt-get"
+	// LinuxHelperToolDNF5 binds the fixed local-RPM DNF5 transaction tool.
+	LinuxHelperToolDNF5 LinuxHelperToolRole = "dnf5"
+	// LinuxHelperToolDPKGQuery binds installed Debian receipt queries.
+	LinuxHelperToolDPKGQuery LinuxHelperToolRole = "dpkg-query"
+	// LinuxHelperToolLoginCTL binds numeric-UID linger operations.
+	LinuxHelperToolLoginCTL LinuxHelperToolRole = "loginctl"
+	// LinuxHelperToolRPMQuery binds installed RPM receipt queries.
+	LinuxHelperToolRPMQuery LinuxHelperToolRole = "rpm-query"
+	// LinuxHelperToolSystemCTL binds managed user-service operations.
+	LinuxHelperToolSystemCTL LinuxHelperToolRole = "systemctl"
+)
+
+// LinuxHelperToolInput is signed release authority for one executable the
+// root helper may invoke. The digest binds the bytes while the package fields
+// bind those bytes to the native package database independently.
+type LinuxHelperToolInput struct {
+	Role                 LinuxHelperToolRole
+	Path                 string
+	SHA256               Digest
+	Package              string
+	PackageVersion       string
+	PackageReceiptDigest Digest
+}
+
+// LinuxHelperTool is immutable signed authority for a privileged executable.
+type LinuxHelperTool struct {
+	role                 LinuxHelperToolRole
+	path                 string
+	sha256               Digest
+	packageName          string
+	packageVersion       string
+	packageReceiptDigest Digest
+}
+
+// Role returns the closed privileged capability.
+func (t LinuxHelperTool) Role() LinuxHelperToolRole { return t.role }
+
+// Path returns the fixed absolute native executable path.
+func (t LinuxHelperTool) Path() string { return t.path }
+
+// SHA256 returns the exact executable byte digest.
+func (t LinuxHelperTool) SHA256() Digest { return t.sha256 }
+
+// Package returns the exact owning distribution package.
+func (t LinuxHelperTool) Package() string { return t.packageName }
+
+// PackageVersion returns the exact installed distribution package version.
+func (t LinuxHelperTool) PackageVersion() string { return t.packageVersion }
+
+// PackageReceiptDigest returns the signed native package receipt binding.
+func (t LinuxHelperTool) PackageReceiptDigest() Digest { return t.packageReceiptDigest }
+
+type linuxHelperToolSpec struct {
+	path        string
+	packageName string
+}
+
+func linuxHelperToolSpecs(manager LinuxPackageManager) map[LinuxHelperToolRole]linuxHelperToolSpec {
+	common := map[LinuxHelperToolRole]linuxHelperToolSpec{
+		LinuxHelperToolLoginCTL:  {path: "/usr/bin/loginctl", packageName: "systemd"},
+		LinuxHelperToolSystemCTL: {path: "/usr/bin/systemctl", packageName: "systemd"},
+	}
+	switch manager {
+	case LinuxPackageManagerAPT:
+		common[LinuxHelperToolAPTGet] = linuxHelperToolSpec{path: "/usr/bin/apt-get", packageName: "apt"}
+		common[LinuxHelperToolDPKGQuery] = linuxHelperToolSpec{path: "/usr/bin/dpkg-query", packageName: "dpkg"}
+	case LinuxPackageManagerDNF:
+		common[LinuxHelperToolDNF5] = linuxHelperToolSpec{path: "/usr/bin/dnf5", packageName: "dnf5"}
+		common[LinuxHelperToolRPMQuery] = linuxHelperToolSpec{path: "/usr/bin/rpm", packageName: "rpm"}
+	}
+	return common
+}
+
+func newLinuxHelperTools(
+	manager LinuxPackageManager,
+	inputs []LinuxHelperToolInput,
+) ([]LinuxHelperTool, error) {
+	specs := linuxHelperToolSpecs(manager)
+	if len(specs) != 4 || len(inputs) != len(specs) || !sort.SliceIsSorted(inputs, func(left, right int) bool {
+		return inputs[left].Role < inputs[right].Role
+	}) {
+		return nil, ErrManifestIntegrity
+	}
+	tools := make([]LinuxHelperTool, 0, len(inputs))
+	for index, input := range inputs {
+		spec, present := specs[input.Role]
+		if !present || index > 0 && inputs[index-1].Role == input.Role || input.Path != spec.path ||
+			input.Package != spec.packageName || input.SHA256.IsZero() ||
+			!validLinuxPackageVersion(input.PackageVersion) || input.PackageReceiptDigest.IsZero() {
+			return nil, ErrManifestIntegrity
+		}
+		tools = append(tools, LinuxHelperTool{
+			role: input.Role, path: input.Path, sha256: input.SHA256,
+			packageName: input.Package, packageVersion: input.PackageVersion,
+			packageReceiptDigest: input.PackageReceiptDigest,
+		})
+	}
+	return tools, nil
+}
+
 // LinuxExecutionPolicyInput is the complete signed Linux-only execution
 // projection. Host identity and observations are deliberately supplied later
 // by a native probe and cannot be declared by the catalog.
@@ -440,6 +549,7 @@ type LinuxExecutionPolicyInput struct {
 	PrivilegeToolPackage              string
 	PrivilegeToolPackageVersion       string
 	PrivilegeToolPackageReceiptDigest Digest
+	HelperTools                       []LinuxHelperToolInput
 	RootlessToolPath                  string
 	RootlessToolDigest                Digest
 	ProbeImage                        string
@@ -478,6 +588,7 @@ type LinuxExecutionPolicy struct {
 	privilegeToolPackage              string
 	privilegeToolPackageVersion       string
 	privilegeToolPackageReceiptDigest Digest
+	helperTools                       []LinuxHelperTool
 	rootlessToolPath                  string
 	rootlessToolDigest                Digest
 	probeImage                        string
@@ -510,6 +621,10 @@ func newLinuxExecutionPolicy(
 	verificationRepositories, err := newLinuxVerificationRepositories(
 		input.VerificationRepositories, input.Codename, input.PackageManager, repository, artifact,
 	)
+	if err != nil {
+		return LinuxExecutionPolicy{}, ErrManifestIntegrity
+	}
+	helperTools, err := newLinuxHelperTools(input.PackageManager, input.HelperTools)
 	if err != nil {
 		return LinuxExecutionPolicy{}, ErrManifestIntegrity
 	}
@@ -551,6 +666,7 @@ func newLinuxExecutionPolicy(
 		privilegeToolPackage:              input.PrivilegeToolPackage,
 		privilegeToolPackageVersion:       input.PrivilegeToolPackageVersion,
 		privilegeToolPackageReceiptDigest: input.PrivilegeToolPackageReceiptDigest,
+		helperTools:                       helperTools,
 		rootlessToolPath:                  input.RootlessToolPath, rootlessToolDigest: input.RootlessToolDigest,
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion:   input.ProbeContractVersion,
@@ -1049,6 +1165,12 @@ func (p LinuxExecutionPolicy) PrivilegeToolPackageReceiptDigest() Digest {
 	return p.privilegeToolPackageReceiptDigest
 }
 
+// HelperTools returns a defensive copy of every signed executable the
+// privileged helper may invoke.
+func (p LinuxExecutionPolicy) HelperTools() []LinuxHelperTool {
+	return append([]LinuxHelperTool(nil), p.helperTools...)
+}
+
 // RootlessToolPath returns the fixed packaged setup-tool path.
 func (p LinuxExecutionPolicy) RootlessToolPath() string { return p.rootlessToolPath }
 
@@ -1111,6 +1233,13 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 			},
 		})
 	}
+	helperTools := make([]LinuxHelperToolInput, 0, len(p.helperTools))
+	for _, tool := range p.helperTools {
+		helperTools = append(helperTools, LinuxHelperToolInput{
+			Role: tool.role, Path: tool.path, SHA256: tool.sha256, Package: tool.packageName,
+			PackageVersion: tool.packageVersion, PackageReceiptDigest: tool.packageReceiptDigest,
+		})
+	}
 	validated, err := newLinuxExecutionPolicy(LinuxExecutionPolicyInput{
 		PackageManager: p.packageManager, PackageManagerVersion: p.packageManagerVersion,
 		Codename: p.codename, MinimumKernel: p.minimumKernel,
@@ -1143,11 +1272,13 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 		PrivilegeToolPackage:              p.privilegeToolPackage,
 		PrivilegeToolPackageVersion:       p.privilegeToolPackageVersion,
 		PrivilegeToolPackageReceiptDigest: p.privilegeToolPackageReceiptDigest,
+		HelperTools:                       helperTools,
 		RootlessToolPath:                  p.rootlessToolPath, RootlessToolDigest: p.rootlessToolDigest,
 		ProbeImage: p.probeImage, ProbeImageDigest: p.probeImageDigest,
 		ProbeContractVersion:   p.probeContractVersion,
 		CapabilityPolicyDigest: p.capabilityPolicyDigest,
 	}, artifact)
 	return err == nil && len(validated.packages) == len(p.packages) &&
+		len(validated.helperTools) == len(p.helperTools) &&
 		len(validated.verificationRepositories) == len(p.verificationRepositories)
 }

@@ -43,6 +43,26 @@ func TestPF006LinuxExecutableAuthoritiesBindExactSignedPackageReceipts(t *testin
 			digest: authority.PrivilegeToolSHA256(), publisher: "package:pkexec",
 			receipt: authority.PrivilegeToolPackageReceiptDigest(),
 		},
+		{
+			role: argvprocess.ExecutableRoleAPTTransaction, path: "/usr/bin/apt-get",
+			digest: authority.HelperTools()[0].SHA256(), publisher: "package:apt",
+			receipt: authority.HelperTools()[0].PackageReceiptDigest(),
+		},
+		{
+			role: argvprocess.ExecutableRoleDPKGQuery, path: "/usr/bin/dpkg-query",
+			digest: authority.HelperTools()[1].SHA256(), publisher: "package:dpkg",
+			receipt: authority.HelperTools()[1].PackageReceiptDigest(),
+		},
+		{
+			role: argvprocess.ExecutableRoleLoginCTL, path: "/usr/bin/loginctl",
+			digest: authority.HelperTools()[2].SHA256(), publisher: "package:systemd",
+			receipt: authority.HelperTools()[2].PackageReceiptDigest(),
+		},
+		{
+			role: argvprocess.ExecutableRoleSystemCTL, path: "/usr/bin/systemctl",
+			digest: authority.HelperTools()[3].SHA256(), publisher: "package:systemd",
+			receipt: authority.HelperTools()[3].PackageReceiptDigest(),
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -85,6 +105,17 @@ func TestPF006LinuxRPMKeysAuthorityUsesIndependentDistributionReceipt(t *testing
 	if err != nil || privilege.PublisherIdentity() != "package:polkit" ||
 		privilege.PublisherTrustDigest() != authority.PrivilegeToolPackageReceiptDigest() {
 		t.Fatalf("privilege authority=%+v error=%v", privilege, err)
+	}
+	for _, role := range []argvprocess.ExecutableRole{
+		argvprocess.ExecutableRoleDNFTransaction,
+		argvprocess.ExecutableRoleLoginCTL,
+		argvprocess.ExecutableRoleRPMQuery,
+		argvprocess.ExecutableRoleSystemCTL,
+	} {
+		helper, helperError := newNativeLinuxExecutableAuthority(authority, release, role)
+		if helperError != nil || !helper.Valid() {
+			t.Fatalf("DNF helper authority role=%s valid=%v error=%v", role, helper.Valid(), helperError)
+		}
 	}
 }
 
@@ -234,6 +265,7 @@ func launcherLinuxAuthority(t testing.TB, manager runtimeport.PackageManager) ru
 		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: runtimeinstall.Sum([]byte("pkexec")),
 		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
 		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
+		HelperTools:                       launcherHelperTools(manager),
 		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh",
 		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless setup")),
 		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
@@ -254,6 +286,23 @@ func launcherLinuxAuthority(t testing.TB, manager runtimeport.PackageManager) ru
 		t.Fatal(err)
 	}
 	return authority
+}
+
+func launcherHelperTools(manager runtimeport.PackageManager) []runtimeport.HelperToolInput {
+	if manager == runtimeport.PackageManagerDNF {
+		return []runtimeport.HelperToolInput{
+			{Role: runtimeport.HelperToolDNF5, Path: "/usr/bin/dnf5", SHA256: runtimeinstall.Sum([]byte("dnf5")), Package: "dnf5", PackageVersion: "5.2.15.0-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("dnf5 receipt"))},
+			{Role: runtimeport.HelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: runtimeinstall.Sum([]byte("loginctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+			{Role: runtimeport.HelperToolRPMQuery, Path: "/usr/bin/rpm", SHA256: runtimeinstall.Sum([]byte("rpm")), Package: "rpm", PackageVersion: "4.20.1-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("rpm receipt"))},
+			{Role: runtimeport.HelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: runtimeinstall.Sum([]byte("systemctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+		}
+	}
+	return []runtimeport.HelperToolInput{
+		{Role: runtimeport.HelperToolAPTGet, Path: "/usr/bin/apt-get", SHA256: runtimeinstall.Sum([]byte("apt-get")), Package: "apt", PackageVersion: "2.8.3", PackageReceiptDigest: runtimeinstall.Sum([]byte("apt receipt"))},
+		{Role: runtimeport.HelperToolDPKGQuery, Path: "/usr/bin/dpkg-query", SHA256: runtimeinstall.Sum([]byte("dpkg-query")), Package: "dpkg", PackageVersion: "1.22.6ubuntu6.5", PackageReceiptDigest: runtimeinstall.Sum([]byte("dpkg receipt"))},
+		{Role: runtimeport.HelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: runtimeinstall.Sum([]byte("loginctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+		{Role: runtimeport.HelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: runtimeinstall.Sum([]byte("systemctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+	}
 }
 
 func launcherLinuxPackage(t testing.TB, authority runtimeport.LinuxAuthority, name string) runtimeport.Package {

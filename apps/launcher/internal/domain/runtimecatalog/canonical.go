@@ -87,6 +87,7 @@ type canonicalLinuxExecution struct {
 	ComposePluginSHA256               string                     `json:"compose_plugin_sha256"`
 	DockerCLIPath                     string                     `json:"docker_cli_path"`
 	DockerCLISHA256                   string                     `json:"docker_cli_sha256"`
+	HelperTools                       []canonicalLinuxHelperTool `json:"helper_tools"`
 	MinimumAvailableMemory            uint64                     `json:"minimum_available_memory"`
 	MinimumKernel                     string                     `json:"minimum_kernel"`
 	PackageManager                    LinuxPackageManager        `json:"package_manager"`
@@ -114,6 +115,15 @@ type canonicalLinuxExecution struct {
 	ServiceID                         string                     `json:"service_id"`
 	ServiceUnitDigest                 string                     `json:"service_unit_digest"`
 	SubordinateIDCount                uint32                     `json:"subordinate_id_count"`
+}
+
+type canonicalLinuxHelperTool struct {
+	Package              string              `json:"package"`
+	PackageReceiptDigest string              `json:"package_receipt_digest"`
+	PackageVersion       string              `json:"package_version"`
+	Path                 string              `json:"path"`
+	Role                 LinuxHelperToolRole `json:"role"`
+	SHA256               string              `json:"sha256"`
 }
 
 type canonicalLinuxRepository struct {
@@ -234,6 +244,13 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			})
 		}
 		policy := manifest.linuxExecution
+		helperTools := make([]canonicalLinuxHelperTool, 0, len(policy.helperTools))
+		for _, tool := range policy.helperTools {
+			helperTools = append(helperTools, canonicalLinuxHelperTool{
+				Package: tool.packageName, PackageReceiptDigest: tool.packageReceiptDigest.Hex(),
+				PackageVersion: tool.packageVersion, Path: tool.path, Role: tool.role, SHA256: tool.sha256.Hex(),
+			})
+		}
 		rpmKeysSHA256 := ""
 		rpmKeysPackageReceipt := ""
 		if !policy.rpmKeysSHA256.IsZero() {
@@ -247,6 +264,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(), Codename: policy.codename,
 			ComposePluginPath: policy.composePluginPath, ComposePluginSHA256: policy.composePluginSHA256.Hex(),
 			DockerCLIPath: policy.dockerCLIPath, DockerCLISHA256: policy.dockerCLISHA256.Hex(),
+			HelperTools:            helperTools,
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumKernel: policy.minimumKernel,
 			PackageManager: policy.packageManager, PackageManagerVersion: policy.packageManagerVersion,
 			PackageSetDigest: policy.packageSetDigest.Hex(), Packages: packages,

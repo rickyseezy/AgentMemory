@@ -206,8 +206,14 @@ func brokerLinuxAuthority(t testing.TB) runtimeport.LinuxAuthority {
 		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: runtimeinstall.Sum([]byte("pkexec")),
 		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
 		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
-		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless")),
-		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
+		HelperTools: []runtimeport.HelperToolInput{
+			{Role: runtimeport.HelperToolAPTGet, Path: "/usr/bin/apt-get", SHA256: runtimeinstall.Sum([]byte("apt-get")), Package: "apt", PackageVersion: "2.8.3", PackageReceiptDigest: runtimeinstall.Sum([]byte("apt receipt"))},
+			{Role: runtimeport.HelperToolDPKGQuery, Path: "/usr/bin/dpkg-query", SHA256: runtimeinstall.Sum([]byte("dpkg-query")), Package: "dpkg", PackageVersion: "1.22.6ubuntu6.5", PackageReceiptDigest: runtimeinstall.Sum([]byte("dpkg receipt"))},
+			{Role: runtimeport.HelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: runtimeinstall.Sum([]byte("loginctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+			{Role: runtimeport.HelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: runtimeinstall.Sum([]byte("systemctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+		},
+		RootlessToolDigest: runtimeinstall.Sum([]byte("rootless")),
+		ProbeImage:         "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
 		ProbeContractVersion: "1", CapabilityPolicyDigest: runtimeinstall.Sum([]byte("policy")),
 	})
 	if err != nil {

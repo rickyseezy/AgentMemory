@@ -270,6 +270,21 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 			Source:              OfficialSourceInput{Scheme: pkg.Source.Scheme, Host: pkg.Source.Host, PathPrefix: pkg.Source.PathPrefix},
 		})
 	}
+	helperTools := make([]LinuxHelperToolInput, 0, len(document.HelperTools))
+	for _, tool := range document.HelperTools {
+		toolDigest, parseError := ParseDigest(tool.SHA256)
+		if parseError != nil {
+			return LinuxExecutionPolicyInput{}, parseError
+		}
+		receiptDigest, parseError := ParseDigest(tool.PackageReceiptDigest)
+		if parseError != nil {
+			return LinuxExecutionPolicyInput{}, parseError
+		}
+		helperTools = append(helperTools, LinuxHelperToolInput{
+			Role: tool.Role, Path: tool.Path, SHA256: toolDigest, Package: tool.Package,
+			PackageVersion: tool.PackageVersion, PackageReceiptDigest: receiptDigest,
+		})
+	}
 	return LinuxExecutionPolicyInput{
 		PackageManager: document.PackageManager, PackageManagerVersion: document.PackageManagerVersion,
 		Codename: document.Codename, MinimumKernel: document.MinimumKernel,
@@ -287,6 +302,7 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 		PrivilegeToolPackage:              document.PrivilegeToolPackage,
 		PrivilegeToolPackageVersion:       document.PrivilegeToolPackageVersion,
 		PrivilegeToolPackageReceiptDigest: privilegeToolPackageReceipt,
+		HelperTools:                       helperTools,
 		RPMKeysPath:                       document.RPMKeysPath, RPMKeysSHA256: rpmKeysDigest,
 		RPMKeysPackageVersion:       document.RPMKeysPackageVersion,
 		RPMKeysPackageReceiptDigest: rpmKeysPackageReceipt,

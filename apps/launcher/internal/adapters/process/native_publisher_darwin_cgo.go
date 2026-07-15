@@ -123,7 +123,13 @@ func darwinPublisherRequirement(
 		identifier, teamID = "docker-compose", strings.TrimPrefix(dockerPublisherIdentity, "teamid:")
 	case argvprocess.ExecutableRoleRootlessSetup,
 		argvprocess.ExecutableRoleRPMKeys,
-		argvprocess.ExecutableRolePrivilegeBroker:
+		argvprocess.ExecutableRolePrivilegeBroker,
+		argvprocess.ExecutableRoleAPTTransaction,
+		argvprocess.ExecutableRoleDNFTransaction,
+		argvprocess.ExecutableRoleDPKGQuery,
+		argvprocess.ExecutableRoleRPMQuery,
+		argvprocess.ExecutableRoleLoginCTL,
+		argvprocess.ExecutableRoleSystemCTL:
 		// Rootless Engine setup is never authorized by Docker Desktop's
 		// macOS code-signing identity.
 		return "", argvprocess.ErrInvalidInvocation

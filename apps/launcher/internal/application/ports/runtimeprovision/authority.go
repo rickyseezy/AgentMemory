@@ -14,6 +14,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
 
+// Closed helper tool roles admitted by one package-manager-specific catalog cell.
 const (
 	maximumAuthorityBytes = 64 * 1024
 	minimumSubordinateIDs = uint32(65536)
@@ -90,6 +91,108 @@ func (p Package) RepositoryID() string { return p.repositoryID }
 
 // NativeReceiptDigest returns the expected package-manager publisher receipt.
 func (p Package) NativeReceiptDigest() runtimeinstall.Hash { return p.receipt }
+
+// HelperToolRole is the closed privileged capability granted to one native
+// distribution executable by signed runtime authority.
+type HelperToolRole string
+
+const (
+	// HelperToolAPTGet grants only the fixed offline APT transaction capability.
+	HelperToolAPTGet HelperToolRole = "apt-get"
+	// HelperToolDNF5 grants only the fixed local-RPM DNF5 transaction capability.
+	HelperToolDNF5 HelperToolRole = "dnf5"
+	// HelperToolDPKGQuery grants only installed Debian receipt queries.
+	HelperToolDPKGQuery HelperToolRole = "dpkg-query"
+	// HelperToolLoginCTL grants only numeric-UID linger operations.
+	HelperToolLoginCTL HelperToolRole = "loginctl"
+	// HelperToolRPMQuery grants only installed RPM receipt queries.
+	HelperToolRPMQuery HelperToolRole = "rpm-query"
+	// HelperToolSystemCTL grants only managed user-service operations.
+	HelperToolSystemCTL HelperToolRole = "systemctl"
+)
+
+// HelperToolInput is the authenticated transport projection for one helper
+// executable. Construction remains closed to verified catalog projection.
+type HelperToolInput struct {
+	Role                 HelperToolRole
+	Path                 string
+	SHA256               runtimeinstall.Hash
+	Package              string
+	PackageVersion       string
+	PackageReceiptDigest runtimeinstall.Hash
+}
+
+// HelperTool is immutable signed execution authority for one native tool.
+type HelperTool struct {
+	role                 HelperToolRole
+	path                 string
+	sha256               runtimeinstall.Hash
+	packageName          string
+	packageVersion       string
+	packageReceiptDigest runtimeinstall.Hash
+}
+
+// Role returns the closed helper capability.
+func (t HelperTool) Role() HelperToolRole { return t.role }
+
+// Path returns the fixed absolute native executable path.
+func (t HelperTool) Path() string { return t.path }
+
+// SHA256 returns the exact executable byte digest.
+func (t HelperTool) SHA256() runtimeinstall.Hash { return t.sha256 }
+
+// Package returns the exact owning distribution package.
+func (t HelperTool) Package() string { return t.packageName }
+
+// PackageVersion returns the exact installed distribution package version.
+func (t HelperTool) PackageVersion() string { return t.packageVersion }
+
+// PackageReceiptDigest returns the signed native package receipt binding.
+func (t HelperTool) PackageReceiptDigest() runtimeinstall.Hash { return t.packageReceiptDigest }
+
+type helperToolSpec struct {
+	path        string
+	packageName string
+}
+
+func helperToolSpecs(manager PackageManager) map[HelperToolRole]helperToolSpec {
+	result := map[HelperToolRole]helperToolSpec{
+		HelperToolLoginCTL:  {path: "/usr/bin/loginctl", packageName: "systemd"},
+		HelperToolSystemCTL: {path: "/usr/bin/systemctl", packageName: "systemd"},
+	}
+	switch manager {
+	case PackageManagerAPT:
+		result[HelperToolAPTGet] = helperToolSpec{path: "/usr/bin/apt-get", packageName: "apt"}
+		result[HelperToolDPKGQuery] = helperToolSpec{path: "/usr/bin/dpkg-query", packageName: "dpkg"}
+	case PackageManagerDNF:
+		result[HelperToolDNF5] = helperToolSpec{path: "/usr/bin/dnf5", packageName: "dnf5"}
+		result[HelperToolRPMQuery] = helperToolSpec{path: "/usr/bin/rpm", packageName: "rpm"}
+	}
+	return result
+}
+
+func newHelperTools(manager PackageManager, inputs []HelperToolInput) ([]HelperTool, error) {
+	specs := helperToolSpecs(manager)
+	if len(specs) != 4 || len(inputs) != len(specs) || !slices.IsSortedFunc(inputs, func(left, right HelperToolInput) int {
+		return strings.Compare(string(left.Role), string(right.Role))
+	}) {
+		return nil, ErrAuthorityInvalid
+	}
+	result := make([]HelperTool, 0, len(inputs))
+	for index, input := range inputs {
+		spec, present := specs[input.Role]
+		if !present || index > 0 && inputs[index-1].Role == input.Role || input.Path != spec.path ||
+			input.Package != spec.packageName || input.SHA256.IsZero() ||
+			!validPackageVersion(input.PackageVersion) || input.PackageReceiptDigest.IsZero() {
+			return nil, ErrAuthorityInvalid
+		}
+		result = append(result, HelperTool{
+			role: input.Role, path: input.Path, sha256: input.SHA256, packageName: input.Package,
+			packageVersion: input.PackageVersion, packageReceiptDigest: input.PackageReceiptDigest,
+		})
+	}
+	return result, nil
+}
 
 // RepositoryInput declares the exact official stable repository and all
 // security-relevant state digests written or consumed by the helper.
@@ -194,6 +297,7 @@ type LinuxAuthorityInput struct {
 	PrivilegeToolPackage              string
 	PrivilegeToolPackageVersion       string
 	PrivilegeToolPackageReceiptDigest runtimeinstall.Hash
+	HelperTools                       []HelperToolInput
 	RootlessToolPath                  string
 	RootlessToolDigest                runtimeinstall.Hash
 	ProbeImage                        string
@@ -206,10 +310,11 @@ type LinuxAuthorityInput struct {
 // digest is evidence identity, not a signature; AuthorityResolver must verify
 // the signed envelope before returning it.
 type LinuxAuthority struct {
-	input      LinuxAuthorityInput
-	repository Repository
-	packages   []Package
-	digest     runtimeinstall.Hash
+	input       LinuxAuthorityInput
+	repository  Repository
+	packages    []Package
+	helperTools []HelperTool
+	digest      runtimeinstall.Hash
 }
 
 // NewLinuxAuthority validates and copies one already authenticated projection.
@@ -222,8 +327,13 @@ func NewLinuxAuthority(input LinuxAuthorityInput) (LinuxAuthority, error) {
 	if err != nil {
 		return LinuxAuthority{}, ErrAuthorityInvalid
 	}
+	helperTools, err := newHelperTools(input.PackageManager, input.HelperTools)
+	if err != nil {
+		return LinuxAuthority{}, ErrAuthorityInvalid
+	}
 	input.Packages = append([]PackageInput(nil), input.Packages...)
-	authority := LinuxAuthority{input: input, repository: repository, packages: packages}
+	input.HelperTools = append([]HelperToolInput(nil), input.HelperTools...)
+	authority := LinuxAuthority{input: input, repository: repository, packages: packages, helperTools: helperTools}
 	canonical, err := authority.canonicalBytes()
 	if err != nil || len(canonical) == 0 || len(canonical) > maximumAuthorityBytes {
 		return LinuxAuthority{}, ErrAuthorityInvalid
@@ -455,6 +565,14 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		Repository string `json:"repository_id"`
 		Version    string `json:"version"`
 	}
+	type canonicalHelperTool struct {
+		Package        string `json:"package"`
+		Receipt        string `json:"package_receipt_digest"`
+		PackageVersion string `json:"package_version"`
+		Path           string `json:"path"`
+		Role           string `json:"role"`
+		SHA256         string `json:"sha256"`
+	}
 	packages := make([]canonicalPackage, 0, len(a.packages))
 	for _, pkg := range a.packages {
 		packages = append(packages, canonicalPackage{
@@ -462,63 +580,71 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 			Repository: pkg.repositoryID, Version: pkg.version,
 		})
 	}
+	helperTools := make([]canonicalHelperTool, 0, len(a.helperTools))
+	for _, tool := range a.helperTools {
+		helperTools = append(helperTools, canonicalHelperTool{
+			Package: tool.packageName, Receipt: tool.packageReceiptDigest.String(),
+			PackageVersion: tool.packageVersion, Path: tool.path, Role: string(tool.role), SHA256: tool.sha256.String(),
+		})
+	}
 	document := struct {
-		Architecture          string             `json:"architecture"`
-		AccountName           string             `json:"account_name"`
-		Artifact              string             `json:"artifact_digest"`
-		Capability            string             `json:"capability_policy_digest"`
-		Catalog               string             `json:"catalog_digest"`
-		Codename              string             `json:"codename"`
-		Compose               string             `json:"compose_version"`
-		ComposePath           string             `json:"compose_plugin_path"`
-		ComposeSHA            string             `json:"compose_plugin_sha256"`
-		Distribution          string             `json:"distribution"`
-		DockerPath            string             `json:"docker_cli_path"`
-		DockerSHA             string             `json:"docker_cli_sha256"`
-		Endpoint              string             `json:"endpoint"`
-		GID                   uint32             `json:"gid"`
-		Home                  string             `json:"home"`
-		Kernel                string             `json:"minimum_kernel"`
-		Machine               string             `json:"machine_digest"`
-		Manager               string             `json:"package_manager"`
-		ManagerVer            string             `json:"package_manager_version"`
-		MinimumCPUs           uint16             `json:"minimum_cpus"`
-		MinimumDisk           uint64             `json:"minimum_free_disk"`
-		MinimumFree           uint64             `json:"minimum_available_memory"`
-		MinimumTotal          uint64             `json:"minimum_total_memory"`
-		Packages              []canonicalPackage `json:"packages"`
-		Plan                  string             `json:"plan_digest"`
-		Principal             string             `json:"principal"`
-		PrivilegePackage      string             `json:"privilege_tool_package"`
-		PrivilegeReceipt      string             `json:"privilege_tool_package_receipt_digest"`
-		PrivilegeVersion      string             `json:"privilege_tool_package_version"`
-		PrivilegePath         string             `json:"privilege_tool_path"`
-		PrivilegeSHA          string             `json:"privilege_tool_sha256"`
-		Repository            RepositoryInput    `json:"repository"`
-		RPMKeysPath           string             `json:"rpm_keys_path"`
-		RPMKeysPackageVersion string             `json:"rpm_keys_package_version"`
-		RPMKeysPackageReceipt string             `json:"rpm_keys_package_receipt_digest"`
-		RPMKeysSHA            string             `json:"rpm_keys_sha256"`
-		RootlessPath          string             `json:"rootless_tool_path"`
-		RootlessSHA           string             `json:"rootless_tool_digest"`
-		ProbeImage            string             `json:"probe_image"`
-		ProbeSHA              string             `json:"probe_image_digest"`
-		ProbeVersion          string             `json:"probe_contract_version"`
-		Runtime               string             `json:"runtime_version"`
-		RuntimeDir            string             `json:"runtime_directory"`
-		SELinux               bool               `json:"selinux_enforcing_supported"`
-		Service               string             `json:"service_id"`
-		ServiceSHA            string             `json:"service_unit_digest"`
-		SigningKey            string             `json:"signing_key_id"`
-		SubIDs                uint32             `json:"subordinate_id_count"`
-		Terms                 string             `json:"terms_digest"`
-		TermsID               string             `json:"terms_id"`
-		TermsMode             string             `json:"terms_presentation"`
-		TermsURL              string             `json:"terms_url"`
-		TermsVersion          string             `json:"terms_version"`
-		UID                   uint32             `json:"uid"`
-		Workloads             uint32             `json:"unrelated_workloads"`
-		Version               string             `json:"version_id"`
+		Architecture          string                `json:"architecture"`
+		AccountName           string                `json:"account_name"`
+		Artifact              string                `json:"artifact_digest"`
+		Capability            string                `json:"capability_policy_digest"`
+		Catalog               string                `json:"catalog_digest"`
+		Codename              string                `json:"codename"`
+		Compose               string                `json:"compose_version"`
+		ComposePath           string                `json:"compose_plugin_path"`
+		ComposeSHA            string                `json:"compose_plugin_sha256"`
+		Distribution          string                `json:"distribution"`
+		DockerPath            string                `json:"docker_cli_path"`
+		DockerSHA             string                `json:"docker_cli_sha256"`
+		Endpoint              string                `json:"endpoint"`
+		GID                   uint32                `json:"gid"`
+		Home                  string                `json:"home"`
+		HelperTools           []canonicalHelperTool `json:"helper_tools"`
+		Kernel                string                `json:"minimum_kernel"`
+		Machine               string                `json:"machine_digest"`
+		Manager               string                `json:"package_manager"`
+		ManagerVer            string                `json:"package_manager_version"`
+		MinimumCPUs           uint16                `json:"minimum_cpus"`
+		MinimumDisk           uint64                `json:"minimum_free_disk"`
+		MinimumFree           uint64                `json:"minimum_available_memory"`
+		MinimumTotal          uint64                `json:"minimum_total_memory"`
+		Packages              []canonicalPackage    `json:"packages"`
+		Plan                  string                `json:"plan_digest"`
+		Principal             string                `json:"principal"`
+		PrivilegePackage      string                `json:"privilege_tool_package"`
+		PrivilegeReceipt      string                `json:"privilege_tool_package_receipt_digest"`
+		PrivilegeVersion      string                `json:"privilege_tool_package_version"`
+		PrivilegePath         string                `json:"privilege_tool_path"`
+		PrivilegeSHA          string                `json:"privilege_tool_sha256"`
+		Repository            RepositoryInput       `json:"repository"`
+		RPMKeysPath           string                `json:"rpm_keys_path"`
+		RPMKeysPackageVersion string                `json:"rpm_keys_package_version"`
+		RPMKeysPackageReceipt string                `json:"rpm_keys_package_receipt_digest"`
+		RPMKeysSHA            string                `json:"rpm_keys_sha256"`
+		RootlessPath          string                `json:"rootless_tool_path"`
+		RootlessSHA           string                `json:"rootless_tool_digest"`
+		ProbeImage            string                `json:"probe_image"`
+		ProbeSHA              string                `json:"probe_image_digest"`
+		ProbeVersion          string                `json:"probe_contract_version"`
+		Runtime               string                `json:"runtime_version"`
+		RuntimeDir            string                `json:"runtime_directory"`
+		SELinux               bool                  `json:"selinux_enforcing_supported"`
+		Service               string                `json:"service_id"`
+		ServiceSHA            string                `json:"service_unit_digest"`
+		SigningKey            string                `json:"signing_key_id"`
+		SubIDs                uint32                `json:"subordinate_id_count"`
+		Terms                 string                `json:"terms_digest"`
+		TermsID               string                `json:"terms_id"`
+		TermsMode             string                `json:"terms_presentation"`
+		TermsURL              string                `json:"terms_url"`
+		TermsVersion          string                `json:"terms_version"`
+		UID                   uint32                `json:"uid"`
+		Workloads             uint32                `json:"unrelated_workloads"`
+		Version               string                `json:"version_id"`
 	}{
 		Architecture: a.input.Architecture.String(), AccountName: a.input.AccountName,
 		Artifact:   a.input.ArtifactDigest.String(),
@@ -528,7 +654,8 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		Distribution: a.input.Distribution, DockerPath: a.input.DockerCLIPath,
 		DockerSHA: a.input.DockerCLISHA256.String(),
 		Endpoint:  a.input.Endpoint, GID: a.input.InvokingGID, Home: a.input.HomeDirectory,
-		Kernel: a.input.MinimumKernel, Machine: a.input.MachineDigest.String(), Manager: string(a.input.PackageManager),
+		HelperTools: helperTools,
+		Kernel:      a.input.MinimumKernel, Machine: a.input.MachineDigest.String(), Manager: string(a.input.PackageManager),
 		ManagerVer: a.input.PackageManagerVersion, MinimumCPUs: a.input.MinimumCPUs,
 		MinimumDisk: a.input.MinimumFreeDisk, MinimumFree: a.input.MinimumAvailableMemory,
 		MinimumTotal: a.input.MinimumTotalMemory, Packages: packages, Plan: a.input.PlanDigest.String(),
@@ -559,7 +686,8 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 // Valid reports whether every copied field still reconstructs the authority.
 func (a LinuxAuthority) Valid() bool {
 	rebuilt, err := NewLinuxAuthority(a.input)
-	return err == nil && rebuilt.digest == a.digest && slices.Equal(rebuilt.packages, a.packages)
+	return err == nil && rebuilt.digest == a.digest && slices.Equal(rebuilt.packages, a.packages) &&
+		slices.Equal(rebuilt.helperTools, a.helperTools)
 }
 
 // ValidFor binds this projection to a decoded canonical PF-006 plan.
@@ -641,6 +769,7 @@ func (a LinuxAuthority) Packages() []Package { return append([]Package(nil), a.p
 func (a LinuxAuthority) TransportInput() LinuxAuthorityInput {
 	input := a.input
 	input.Packages = append([]PackageInput(nil), a.input.Packages...)
+	input.HelperTools = append([]HelperToolInput(nil), a.input.HelperTools...)
 	return input
 }
 
@@ -732,6 +861,12 @@ func (a LinuxAuthority) PrivilegeToolPackageVersion() string {
 // PrivilegeToolPackageReceiptDigest returns the signed native receipt for the pkexec package.
 func (a LinuxAuthority) PrivilegeToolPackageReceiptDigest() runtimeinstall.Hash {
 	return a.input.PrivilegeToolPackageReceiptDigest
+}
+
+// HelperTools returns a defensive copy of every signed executable admitted to
+// the privileged helper.
+func (a LinuxAuthority) HelperTools() []HelperTool {
+	return append([]HelperTool(nil), a.helperTools...)
 }
 
 // RootlessToolPath returns the packaged setup tool's fixed path.

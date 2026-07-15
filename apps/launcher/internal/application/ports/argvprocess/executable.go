@@ -25,6 +25,18 @@ const (
 	// ExecutableRolePrivilegeBroker authorizes only the signed `/usr/bin/pkexec`
 	// transport that launches AgentMemory's immutable typed Linux helper.
 	ExecutableRolePrivilegeBroker ExecutableRole = "privilege-broker"
+	// ExecutableRoleAPTTransaction authorizes the fixed offline apt transaction adapter.
+	ExecutableRoleAPTTransaction ExecutableRole = "apt-transaction"
+	// ExecutableRoleDNFTransaction authorizes the fixed local-RPM DNF5 transaction adapter.
+	ExecutableRoleDNFTransaction ExecutableRole = "dnf-transaction"
+	// ExecutableRoleDPKGQuery authorizes exact installed Debian package receipt queries.
+	ExecutableRoleDPKGQuery ExecutableRole = "dpkg-query"
+	// ExecutableRoleRPMQuery authorizes exact installed RPM package receipt queries.
+	ExecutableRoleRPMQuery ExecutableRole = "rpm-query"
+	// ExecutableRoleLoginCTL authorizes only numeric-UID linger operations.
+	ExecutableRoleLoginCTL ExecutableRole = "loginctl"
+	// ExecutableRoleSystemCTL authorizes only the managed user-service operations.
+	ExecutableRoleSystemCTL ExecutableRole = "systemctl"
 	// ExecutableRoleAgentMemoryLauncher authorizes only the signed host launcher.
 	ExecutableRoleAgentMemoryLauncher ExecutableRole = "agentmemory-launcher"
 )
@@ -32,7 +44,9 @@ const (
 func (r ExecutableRole) valid() bool {
 	return r == ExecutableRoleDockerCLI || r == ExecutableRoleComposePlugin ||
 		r == ExecutableRoleRootlessSetup || r == ExecutableRoleRPMKeys ||
-		r == ExecutableRolePrivilegeBroker ||
+		r == ExecutableRolePrivilegeBroker || r == ExecutableRoleAPTTransaction ||
+		r == ExecutableRoleDNFTransaction || r == ExecutableRoleDPKGQuery ||
+		r == ExecutableRoleRPMQuery || r == ExecutableRoleLoginCTL || r == ExecutableRoleSystemCTL ||
 		r == ExecutableRoleAgentMemoryLauncher
 }
 

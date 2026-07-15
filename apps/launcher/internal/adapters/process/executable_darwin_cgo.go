@@ -60,7 +60,13 @@ func platformExecutablePathSupported(
 		expectedPath = "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose"
 	case argvprocess.ExecutableRoleRootlessSetup,
 		argvprocess.ExecutableRoleRPMKeys,
-		argvprocess.ExecutableRolePrivilegeBroker:
+		argvprocess.ExecutableRolePrivilegeBroker,
+		argvprocess.ExecutableRoleAPTTransaction,
+		argvprocess.ExecutableRoleDNFTransaction,
+		argvprocess.ExecutableRoleDPKGQuery,
+		argvprocess.ExecutableRoleRPMQuery,
+		argvprocess.ExecutableRoleLoginCTL,
+		argvprocess.ExecutableRoleSystemCTL:
 		// Rootless Engine setup is a Linux-only package capability.
 		return false
 	case argvprocess.ExecutableRoleAgentMemoryLauncher:

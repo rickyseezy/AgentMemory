@@ -76,6 +76,10 @@ func (c VerifiedCatalog) LinuxAuthority(
 	if err != nil {
 		return runtimeport.LinuxAuthority{}, runtimeport.ErrAuthorityInvalid
 	}
+	helperTools, err := linuxAuthorityHelperTools(execution.HelperTools())
+	if err != nil {
+		return runtimeport.LinuxAuthority{}, runtimeport.ErrAuthorityInvalid
+	}
 	repository := execution.Repository()
 	terms := c.manifest.Terms()
 	input := runtimeport.LinuxAuthorityInput{
@@ -119,6 +123,7 @@ func (c VerifiedCatalog) LinuxAuthority(
 		PrivilegeToolPackageReceiptDigest: runtimeinstall.Hash(
 			execution.PrivilegeToolPackageReceiptDigest(),
 		),
+		HelperTools:           helperTools,
 		RPMKeysPath:           execution.RPMKeysPath(),
 		RPMKeysSHA256:         runtimeinstall.Hash(execution.RPMKeysSHA256()),
 		RPMKeysPackageVersion: execution.RPMKeysPackageVersion(),
@@ -136,6 +141,35 @@ func (c VerifiedCatalog) LinuxAuthority(
 		return runtimeport.LinuxAuthority{}, runtimeport.ErrAuthorityInvalid
 	}
 	return authority, nil
+}
+
+func linuxAuthorityHelperTools(tools []runtimecatalog.LinuxHelperTool) ([]runtimeport.HelperToolInput, error) {
+	result := make([]runtimeport.HelperToolInput, 0, len(tools))
+	for _, tool := range tools {
+		var role runtimeport.HelperToolRole
+		switch tool.Role() {
+		case runtimecatalog.LinuxHelperToolAPTGet:
+			role = runtimeport.HelperToolAPTGet
+		case runtimecatalog.LinuxHelperToolDNF5:
+			role = runtimeport.HelperToolDNF5
+		case runtimecatalog.LinuxHelperToolDPKGQuery:
+			role = runtimeport.HelperToolDPKGQuery
+		case runtimecatalog.LinuxHelperToolLoginCTL:
+			role = runtimeport.HelperToolLoginCTL
+		case runtimecatalog.LinuxHelperToolRPMQuery:
+			role = runtimeport.HelperToolRPMQuery
+		case runtimecatalog.LinuxHelperToolSystemCTL:
+			role = runtimeport.HelperToolSystemCTL
+		default:
+			return nil, runtimeport.ErrAuthorityInvalid
+		}
+		result = append(result, runtimeport.HelperToolInput{
+			Role: role, Path: tool.Path(), SHA256: runtimeinstall.Hash(tool.SHA256()), Package: tool.Package(),
+			PackageVersion:       tool.PackageVersion(),
+			PackageReceiptDigest: runtimeinstall.Hash(tool.PackageReceiptDigest()),
+		})
+	}
+	return result, nil
 }
 
 func linuxAuthorityPackages(packages []runtimecatalog.LinuxPackage) ([]runtimeport.PackageInput, error) {

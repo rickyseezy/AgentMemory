@@ -79,6 +79,24 @@ func nativeLinuxExecutableBindingFor(
 			publisher: "package:" + authority.PrivilegeToolPackage(),
 			receipt:   authority.PrivilegeToolPackageReceiptDigest(),
 		}
+	case argvprocess.ExecutableRoleAPTTransaction,
+		argvprocess.ExecutableRoleDNFTransaction,
+		argvprocess.ExecutableRoleDPKGQuery,
+		argvprocess.ExecutableRoleRPMQuery,
+		argvprocess.ExecutableRoleLoginCTL,
+		argvprocess.ExecutableRoleSystemCTL:
+		toolRole, roleError := nativeLinuxHelperToolRole(role)
+		if roleError != nil {
+			return nativeLinuxExecutableBinding{}, roleError
+		}
+		tool, present := nativeLinuxAuthorityHelperTool(authority, toolRole)
+		if !present {
+			return nativeLinuxExecutableBinding{}, errors.New("signed Linux helper tool is unavailable")
+		}
+		binding = nativeLinuxExecutableBinding{
+			canonicalID: string(tool.Role()), path: tool.Path(), digest: tool.SHA256(),
+			publisher: "package:" + tool.Package(), receipt: tool.PackageReceiptDigest(),
+		}
 	case argvprocess.ExecutableRoleAgentMemoryLauncher:
 		return nativeLinuxExecutableBinding{}, errors.New("linux executable role is unsupported")
 	default:
@@ -96,6 +114,43 @@ func nativeLinuxExecutableBindingFor(
 		return nativeLinuxExecutableBinding{}, errors.New("linux executable binding is incomplete")
 	}
 	return binding, nil
+}
+
+func nativeLinuxHelperToolRole(role argvprocess.ExecutableRole) (runtimeport.HelperToolRole, error) {
+	switch role {
+	case argvprocess.ExecutableRoleAPTTransaction:
+		return runtimeport.HelperToolAPTGet, nil
+	case argvprocess.ExecutableRoleDNFTransaction:
+		return runtimeport.HelperToolDNF5, nil
+	case argvprocess.ExecutableRoleDPKGQuery:
+		return runtimeport.HelperToolDPKGQuery, nil
+	case argvprocess.ExecutableRoleRPMQuery:
+		return runtimeport.HelperToolRPMQuery, nil
+	case argvprocess.ExecutableRoleLoginCTL:
+		return runtimeport.HelperToolLoginCTL, nil
+	case argvprocess.ExecutableRoleSystemCTL:
+		return runtimeport.HelperToolSystemCTL, nil
+	case argvprocess.ExecutableRoleDockerCLI,
+		argvprocess.ExecutableRoleComposePlugin,
+		argvprocess.ExecutableRoleRootlessSetup,
+		argvprocess.ExecutableRoleRPMKeys,
+		argvprocess.ExecutableRolePrivilegeBroker,
+		argvprocess.ExecutableRoleAgentMemoryLauncher:
+		return "", errors.New("linux helper executable role is unknown")
+	}
+	return "", errors.New("linux helper executable role is unknown")
+}
+
+func nativeLinuxAuthorityHelperTool(
+	authority runtimeport.LinuxAuthority,
+	role runtimeport.HelperToolRole,
+) (runtimeport.HelperTool, bool) {
+	for _, tool := range authority.HelperTools() {
+		if tool.Role() == role {
+			return tool, true
+		}
+	}
+	return runtimeport.HelperTool{}, false
 }
 
 func nativeLinuxAuthorityPackage(

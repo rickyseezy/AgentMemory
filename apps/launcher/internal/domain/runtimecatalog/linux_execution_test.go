@@ -30,6 +30,11 @@ func TestLinuxExecutionPolicyBindsCompleteRetainedPackageSet(t *testing.T) {
 		policy.PrivilegeToolPath() != "/usr/bin/pkexec" || policy.PrivilegeToolSHA256().IsZero() ||
 		policy.PrivilegeToolPackage() != "pkexec" || policy.PrivilegeToolPackageVersion() != "124-2ubuntu1.24.04.3" ||
 		policy.PrivilegeToolPackageReceiptDigest().IsZero() ||
+		len(policy.HelperTools()) != 4 || policy.HelperTools()[0].Role() != LinuxHelperToolAPTGet ||
+		policy.HelperTools()[0].Path() != "/usr/bin/apt-get" || policy.HelperTools()[0].Package() != "apt" ||
+		policy.HelperTools()[1].Role() != LinuxHelperToolDPKGQuery ||
+		policy.HelperTools()[2].Role() != LinuxHelperToolLoginCTL ||
+		policy.HelperTools()[3].Role() != LinuxHelperToolSystemCTL ||
 		policy.ProbeContractVersion() != "1" || !policy.ValidFor(validatedArtifact) {
 		t.Fatal("Linux execution projection is incomplete")
 	}
@@ -109,6 +114,15 @@ func TestLinuxExecutionPolicyRejectsMutableOrIncompleteAuthority(t *testing.T) {
 		{name: "privilege package", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackage = "polkit" }},
 		{name: "privilege package version", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackageVersion = "latest" }},
 		{name: "privilege package receipt", edit: func(v *LinuxExecutionPolicyInput) { v.PrivilegeToolPackageReceiptDigest = Digest{} }},
+		{name: "helper omitted", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools = v.HelperTools[:3] }},
+		{name: "helper order", edit: func(v *LinuxExecutionPolicyInput) {
+			v.HelperTools[0], v.HelperTools[1] = v.HelperTools[1], v.HelperTools[0]
+		}},
+		{name: "helper path", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools[0].Path = "/tmp/apt-get" }},
+		{name: "helper digest", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools[0].SHA256 = Digest{} }},
+		{name: "helper package", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools[0].Package = "aptitude" }},
+		{name: "helper version", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools[0].PackageVersion = "latest" }},
+		{name: "helper receipt", edit: func(v *LinuxExecutionPolicyInput) { v.HelperTools[0].PackageReceiptDigest = Digest{} }},
 		{name: "apt rpmkeys authority", edit: func(v *LinuxExecutionPolicyInput) {
 			v.RPMKeysPath = "/usr/bin/rpmkeys"
 			v.RPMKeysSHA256 = DigestBytes([]byte("rpmkeys"))
@@ -285,6 +299,7 @@ func linuxExecutionPolicyInput(t testReporter, artifact ArtifactPolicyInput) Lin
 		PrivilegeToolPath:   "/usr/bin/pkexec", PrivilegeToolSHA256: DigestBytes([]byte("pkexec")),
 		PrivilegeToolPackage: "pkexec", PrivilegeToolPackageVersion: "124-2ubuntu1.24.04.3",
 		PrivilegeToolPackageReceiptDigest: DigestBytes([]byte("pkexec package receipt")),
+		HelperTools:                       linuxAPTHelperTools(),
 		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh",
 		RootlessToolDigest:                DigestBytes([]byte("rootless setup tool")),
 		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
@@ -406,12 +421,31 @@ func linuxDNFExecutionPolicyInput() (LinuxExecutionPolicyInput, ArtifactPolicyIn
 		PrivilegeToolPath:           "/usr/bin/pkexec", PrivilegeToolSHA256: DigestBytes([]byte("pkexec")),
 		PrivilegeToolPackage: "polkit", PrivilegeToolPackageVersion: "126-3.fc42.2",
 		PrivilegeToolPackageReceiptDigest: DigestBytes([]byte("polkit package receipt")),
+		HelperTools:                       linuxDNFHelperTools(),
 		RootlessToolPath:                  "/usr/bin/dockerd-rootless-setuptool.sh", RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
 		ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
 		ProbeImageDigest: DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: LinuxCapabilityPolicyDigest(linuxCapabilities()),
 	}
 	return input, artifact
+}
+
+func linuxAPTHelperTools() []LinuxHelperToolInput {
+	return []LinuxHelperToolInput{
+		{Role: LinuxHelperToolAPTGet, Path: "/usr/bin/apt-get", SHA256: DigestBytes([]byte("apt-get")), Package: "apt", PackageVersion: "2.8.3", PackageReceiptDigest: DigestBytes([]byte("apt receipt"))},
+		{Role: LinuxHelperToolDPKGQuery, Path: "/usr/bin/dpkg-query", SHA256: DigestBytes([]byte("dpkg-query")), Package: "dpkg", PackageVersion: "1.22.6ubuntu6.5", PackageReceiptDigest: DigestBytes([]byte("dpkg receipt"))},
+		{Role: LinuxHelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: DigestBytes([]byte("loginctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: DigestBytes([]byte("systemd receipt"))},
+		{Role: LinuxHelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: DigestBytes([]byte("systemctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: DigestBytes([]byte("systemd receipt"))},
+	}
+}
+
+func linuxDNFHelperTools() []LinuxHelperToolInput {
+	return []LinuxHelperToolInput{
+		{Role: LinuxHelperToolDNF5, Path: "/usr/bin/dnf5", SHA256: DigestBytes([]byte("dnf5")), Package: "dnf5", PackageVersion: "5.2.15.0-1.fc42", PackageReceiptDigest: DigestBytes([]byte("dnf5 receipt"))},
+		{Role: LinuxHelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: DigestBytes([]byte("loginctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: DigestBytes([]byte("systemd receipt"))},
+		{Role: LinuxHelperToolRPMQuery, Path: "/usr/bin/rpm", SHA256: DigestBytes([]byte("rpm")), Package: "rpm", PackageVersion: "4.20.1-1.fc42", PackageReceiptDigest: DigestBytes([]byte("rpm receipt"))},
+		{Role: LinuxHelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: DigestBytes([]byte("systemctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: DigestBytes([]byte("systemd receipt"))},
+	}
 }
 
 func linuxCapabilities() []CapabilityProbe {

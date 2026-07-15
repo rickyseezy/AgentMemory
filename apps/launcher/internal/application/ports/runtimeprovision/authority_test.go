@@ -45,6 +45,12 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 		{name: "privilege package", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackage = "polkit" }},
 		{name: "privilege package version", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackageVersion = "latest" }},
 		{name: "privilege receipt", mutate: func(input *LinuxAuthorityInput) { input.PrivilegeToolPackageReceiptDigest = runtimeinstall.Hash{} }},
+		{name: "helper omitted", mutate: func(input *LinuxAuthorityInput) { input.HelperTools = input.HelperTools[:3] }},
+		{name: "helper order", mutate: func(input *LinuxAuthorityInput) {
+			input.HelperTools[0], input.HelperTools[1] = input.HelperTools[1], input.HelperTools[0]
+		}},
+		{name: "helper path", mutate: func(input *LinuxAuthorityInput) { input.HelperTools[0].Path = "/tmp/apt-get" }},
+		{name: "helper receipt", mutate: func(input *LinuxAuthorityInput) { input.HelperTools[0].PackageReceiptDigest = runtimeinstall.Hash{} }},
 		{name: "apt rpmkeys", mutate: func(input *LinuxAuthorityInput) {
 			input.RPMKeysPath = "/usr/bin/rpmkeys"
 			input.RPMKeysSHA256 = runtimeinstall.Sum([]byte("rpmkeys"))
@@ -80,9 +86,13 @@ func TestLinuxAuthorityCopiesPackagesAndBindsEveryPrivilegePostcondition(t *test
 		t.Fatal(err)
 	}
 	input.Packages[0].Name = "mutated"
+	input.HelperTools[0].Path = "/tmp/mutated"
 	packages := authority.Packages()
 	packages[0] = Package{}
-	if authority.Packages()[0].Name() != "containerd.io" || !authority.Valid() {
+	helperTools := authority.HelperTools()
+	helperTools[0] = HelperTool{}
+	if authority.Packages()[0].Name() != "containerd.io" ||
+		authority.HelperTools()[0].Path() != "/usr/bin/apt-get" || !authority.Valid() {
 		t.Fatal("authority package state was mutable through an input or projection")
 	}
 
@@ -144,6 +154,7 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 		authority.PrivilegeToolPackage() != input.PrivilegeToolPackage ||
 		authority.PrivilegeToolPackageVersion() != input.PrivilegeToolPackageVersion ||
 		authority.PrivilegeToolPackageReceiptDigest() != input.PrivilegeToolPackageReceiptDigest ||
+		len(authority.HelperTools()) != 4 || authority.HelperTools()[0].Role() != HelperToolAPTGet ||
 		authority.ProbeImage() != input.ProbeImage || authority.ProbeImageDigest() != input.ProbeImageDigest ||
 		authority.ProbeContractVersion() != input.ProbeContractVersion ||
 		authority.CapabilityPolicyDigest() != input.CapabilityPolicyDigest {
@@ -172,6 +183,7 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 	dnf.PrivilegeToolPackage = "polkit"
 	dnf.PrivilegeToolPackageVersion = "126-3.fc42.2"
 	dnf.PrivilegeToolPackageReceiptDigest = runtimeinstall.Sum([]byte("polkit package receipt"))
+	dnf.HelperTools = testDNFHelperTools()
 	if dnfAuthority, dnfError := NewLinuxAuthority(dnf); dnfError != nil || dnfAuthority.PackageManager() != PackageManagerDNF {
 		t.Fatalf("valid DNF authority rejected: %v", dnfError)
 	}
@@ -284,6 +296,7 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 		PrivilegeToolPackage:              "pkexec",
 		PrivilegeToolPackageVersion:       "124-2ubuntu1.24.04.3",
 		PrivilegeToolPackageReceiptDigest: runtimeinstall.Sum([]byte("pkexec package receipt")),
+		HelperTools:                       testAPTHelperTools(),
 		RootlessToolDigest:                runtimeinstall.Sum([]byte("rootless-tool")),
 		ProbeImage:                        "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
 		ProbeImageDigest:                  probeDigest,
@@ -295,5 +308,24 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 func cloneAuthorityInput(input LinuxAuthorityInput) LinuxAuthorityInput {
 	clone := input
 	clone.Packages = slices.Clone(input.Packages)
+	clone.HelperTools = slices.Clone(input.HelperTools)
 	return clone
+}
+
+func testAPTHelperTools() []HelperToolInput {
+	return []HelperToolInput{
+		{Role: HelperToolAPTGet, Path: "/usr/bin/apt-get", SHA256: runtimeinstall.Sum([]byte("apt-get")), Package: "apt", PackageVersion: "2.8.3", PackageReceiptDigest: runtimeinstall.Sum([]byte("apt receipt"))},
+		{Role: HelperToolDPKGQuery, Path: "/usr/bin/dpkg-query", SHA256: runtimeinstall.Sum([]byte("dpkg-query")), Package: "dpkg", PackageVersion: "1.22.6ubuntu6.5", PackageReceiptDigest: runtimeinstall.Sum([]byte("dpkg receipt"))},
+		{Role: HelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: runtimeinstall.Sum([]byte("loginctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+		{Role: HelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: runtimeinstall.Sum([]byte("systemctl")), Package: "systemd", PackageVersion: "255.4-1ubuntu8.10", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+	}
+}
+
+func testDNFHelperTools() []HelperToolInput {
+	return []HelperToolInput{
+		{Role: HelperToolDNF5, Path: "/usr/bin/dnf5", SHA256: runtimeinstall.Sum([]byte("dnf5")), Package: "dnf5", PackageVersion: "5.2.15.0-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("dnf5 receipt"))},
+		{Role: HelperToolLoginCTL, Path: "/usr/bin/loginctl", SHA256: runtimeinstall.Sum([]byte("loginctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+		{Role: HelperToolRPMQuery, Path: "/usr/bin/rpm", SHA256: runtimeinstall.Sum([]byte("rpm")), Package: "rpm", PackageVersion: "4.20.1-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("rpm receipt"))},
+		{Role: HelperToolSystemCTL, Path: "/usr/bin/systemctl", SHA256: runtimeinstall.Sum([]byte("systemctl")), Package: "systemd", PackageVersion: "257.7-1.fc42", PackageReceiptDigest: runtimeinstall.Sum([]byte("systemd receipt"))},
+	}
 }

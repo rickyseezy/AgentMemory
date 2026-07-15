@@ -15,7 +15,7 @@ func TestPF001ManagedRuntimeRemovalPlanRequiresFinalizedOwnershipAndEmptyExhaust
 	removal, err := NewPlan(operationID, plan.CanonicalBytes(), ownership, scan)
 	if err != nil || !removal.Valid() || removal.OperationID() != operationID ||
 		removal.SourceOperationID() != ownership.OperationID() || removal.Platform() != runtimeinstall.PlatformLinux ||
-		removal.ScanDigest() != scan.Digest() || removal.ImpactConfirmation() != ImpactConfirmation {
+		removal.ScanDigest() != scan.Digest() || removal.ImpactConfirmation() != ImpactPreserveLocalRuntimeData {
 		t.Fatalf("removal plan = %+v/%v", removal, err)
 	}
 	canonical := removal.CanonicalRuntimePlan()

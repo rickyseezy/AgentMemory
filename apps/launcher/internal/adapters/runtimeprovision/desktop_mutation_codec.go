@@ -95,9 +95,19 @@ func (c *CanonicalDesktopMutationTransportCodec) EncodeDesktopMutationRequest(
 		document.Artifact = &canonicalDesktopMutationArtifact{
 			Path: binding.path, SHA256: binding.sha256.String(), Size: binding.size,
 		}
-	} else if request.Operation() != runtimeport.DesktopMutationInstallPrerequisites ||
-		!request.ArtifactDigest().IsZero() {
-		return nil, ErrProvisionIntegrity
+	} else {
+		switch request.Operation() {
+		case runtimeport.DesktopMutationInstallPrerequisites:
+			if !request.ArtifactDigest().IsZero() {
+				return nil, ErrProvisionIntegrity
+			}
+		case runtimeport.DesktopMutationRemoveRuntime:
+			if request.ArtifactDigest() != request.Authority().ArtifactSHA256() {
+				return nil, ErrProvisionIntegrity
+			}
+		case runtimeport.DesktopMutationInstallRuntime:
+			return nil, ErrProvisionIntegrity
+		}
 	}
 	return encodeCanonicalDesktopMutationEnvelope(document)
 }
@@ -286,6 +296,8 @@ func desktopMutationArtifactMatches(
 			binding.size == authority.ArtifactBytes()
 	case runtimeport.DesktopMutationInstallPrerequisites:
 		return authority.Platform() == runtimeinstall.PlatformWindows && binding == nil && digest.IsZero()
+	case runtimeport.DesktopMutationRemoveRuntime:
+		return binding == nil && digest == authority.ArtifactSHA256()
 	default:
 		return false
 	}

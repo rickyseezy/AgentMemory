@@ -16,9 +16,12 @@ import (
 
 const (
 	planSchemaVersion = uint16(1)
-	// ImpactConfirmation is the exact non-preselected destructive impact the
-	// user must confirm after product uninstall has already completed.
+	// ImpactConfirmation is the Desktop-specific destructive impact retained as
+	// the original public name for schema-v1 compatibility.
 	ImpactConfirmation = "remove-managed-runtime-and-local-runtime-data"
+	// ImpactPreserveLocalRuntimeData is the Linux Engine package-removal impact;
+	// package removal intentionally retains Docker and containerd data roots.
+	ImpactPreserveLocalRuntimeData = "remove-managed-runtime-software-preserve-local-runtime-data"
 )
 
 // DependencyKind is the closed exhaustive dependency-scan vocabulary.
@@ -311,7 +314,12 @@ func (p Plan) Endpoint() string { return p.endpoint }
 func (p Plan) ArtifactDigest() runtimeinstall.Hash { return p.artifactDigest }
 
 // ImpactConfirmation returns the mandatory destructive-impact statement ID.
-func (p Plan) ImpactConfirmation() string { return ImpactConfirmation }
+func (p Plan) ImpactConfirmation() string {
+	if p.platform == runtimeinstall.PlatformLinux {
+		return ImpactPreserveLocalRuntimeData
+	}
+	return ImpactConfirmation
+}
 
 // Digest returns the complete separate removal-plan binding.
 func (p Plan) Digest() runtimeinstall.Hash { return p.digest }
@@ -378,7 +386,7 @@ func (p Plan) computeDigest() runtimeinstall.Hash {
 		Schema: planSchemaVersion, Operation: p.operationID.String(), SourceOperation: p.sourceOperationID,
 		RuntimePlan: p.runtimePlanDigest.String(), Ownership: p.ownershipDigest.String(), Scan: p.scanDigest.String(),
 		Platform: p.platform.String(), Product: p.product, Version: p.version, Endpoint: p.endpoint,
-		Artifact: p.artifactDigest.String(), Impact: ImpactConfirmation,
+		Artifact: p.artifactDigest.String(), Impact: p.ImpactConfirmation(),
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {

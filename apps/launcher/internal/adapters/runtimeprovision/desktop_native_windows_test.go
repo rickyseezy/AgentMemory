@@ -9,6 +9,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -183,6 +185,22 @@ func TestWindowsDesktopNativeBoundariesFailClosed(t *testing.T) {
 	}
 	if version, err := windowsDesktopFileVersion(missing); err == nil || version != "" {
 		t.Fatalf("missing executable version = %q, %v", version, err)
+	}
+}
+
+func TestPF001WindowsDesktopRemovalUsesInstalledVendorUninstaller(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformWindows)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+	executable, arguments, err := windowsDesktopRemovalCommand(request)
+	if err != nil || !strings.EqualFold(
+		executable, filepath.Join(authority.ApplicationPath(), "Docker Desktop Installer.exe"),
+	) || !slices.Equal(arguments, []string{"uninstall"}) {
+		t.Fatalf("executable=%q arguments=%q error=%v", executable, arguments, err)
+	}
+	install := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	if _, _, err := windowsDesktopRemovalCommand(install); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("install request accepted as removal: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -271,4 +272,192 @@ func TestPF001DarwinDesktopHelperNativeBackendsRejectUnverifiedInputsBeforeProce
 	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
 		t.Fatalf("foreign artifact copy error=%v", err)
 	}
+}
+
+func TestPF001DarwinDesktopRemovalUsesOnlyVendorUninstallerAndBoundTrashTarget(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+	uninstaller, target, err := darwinDesktopRemovalPaths(request)
+	if err != nil || uninstaller != "/Applications/Docker.app/Contents/MacOS/uninstall" ||
+		target != filepath.Join(authority.HomeDirectory(), ".Trash", "Docker.app.agentmemory-"+request.Digest().String()) {
+		t.Fatalf("uninstaller=%q target=%q error=%v", uninstaller, target, err)
+	}
+	install := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	if _, _, err := darwinDesktopRemovalPaths(install); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("install request accepted as removal: %v", err)
+	}
+}
+
+func TestPF001DarwinDesktopRemovalPrimitivesRejectUntrustedStateBeforeMutation(t *testing.T) {
+	t.Parallel()
+	trash := filepath.Join(t.TempDir(), "Trash")
+	uid := uint32(os.Getuid()) // #nosec G115 -- Darwin uid_t fixture.
+	if uid != 0 {
+		if err := ensureDarwinDesktopTrashDirectory(trash, uid); err != nil {
+			t.Fatalf("private trash directory error=%v", err)
+		}
+		if err := ensureDarwinDesktopTrashDirectory(trash, uid); err != nil {
+			t.Fatalf("idempotent private trash directory error=%v", err)
+		}
+	}
+	if err := ensureDarwinDesktopTrashDirectory("relative", uid); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("relative trash error=%v", err)
+	}
+	symlink := filepath.Join(t.TempDir(), "Trash")
+	if err := os.Symlink(t.TempDir(), symlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDarwinDesktopTrashDirectory(symlink, uid); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("linked trash error=%v", err)
+	}
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	removal := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+	if err := moveDarwinDesktopApplicationToTrash(t.Context(), removal, "/tmp/foreign"); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("foreign trash target error=%v", err)
+	}
+	backend := nativeDesktopMutationBackend{
+		runner: &desktopMutationRunnerStub{},
+		applicationVersion: func(context.Context, string, runtimeinstall.Hash) (string, bool) {
+			return "", false
+		},
+		safeExecutable: func(string) bool { return false },
+		assessTarget:   func(context.Context, string, string) bool { return false },
+		moveApplication: func(context.Context, runtimeport.DesktopMutationRequest, string) error {
+			return runtimeport.ErrDesktopMutationIntegrity
+		},
+		attachImage: func(context.Context, string, string) (darwinDiskImageMount, error) {
+			return darwinDiskImageMount{}, runtimeport.ErrDesktopMutationIntegrity
+		},
+		detachImage: func(context.Context, string) error { return nil },
+	}
+	if _, err := backend.installDarwinDesktopRuntime(
+		t.Context(), authority, DesktopMutationArtifactBinding{}, false,
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("missing installer error=%v", err)
+	}
+	if _, err := backend.removeDarwinDesktopRuntime(
+		t.Context(), removal, DesktopMutationArtifactBinding{}, true,
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("transported removal artifact error=%v", err)
+	}
+}
+
+func TestPF001DarwinDesktopRemovalExecutesClosedCommandThenMovesVerifiedBundle(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+	runner := &darwinDesktopRemovalRunner{}
+	moved := ""
+	backend := nativeDesktopMutationBackend{
+		runner: runner,
+		applicationVersion: func(context.Context, string, runtimeinstall.Hash) (string, bool) {
+			return authority.RuntimeVersion(), true
+		},
+		safeExecutable: func(path string) bool {
+			return path == "/Applications/Docker.app/Contents/MacOS/uninstall"
+		},
+		assessTarget: func(_ context.Context, path, operation string) bool {
+			return path == "/Applications/Docker.app/Contents/MacOS/uninstall" && operation == "execute"
+		},
+		moveApplication: func(_ context.Context, got runtimeport.DesktopMutationRequest, target string) error {
+			if got.Digest() != request.Digest() {
+				return errors.New("request substitution")
+			}
+			moved = target
+			return nil
+		},
+		attachImage: func(context.Context, string, string) (darwinDiskImageMount, error) {
+			return darwinDiskImageMount{}, runtimeport.ErrDesktopMutationIntegrity
+		},
+		detachImage: func(context.Context, string) error { return nil },
+	}
+	exitCode, err := backend.removeDarwinDesktopRuntime(
+		t.Context(), request, DesktopMutationArtifactBinding{}, false,
+	)
+	_, wantedTarget, _ := darwinDesktopRemovalPaths(request)
+	if err != nil || exitCode != 0 || runner.calls != 1 ||
+		runner.command.Executable() != "/Applications/Docker.app/Contents/MacOS/uninstall" ||
+		len(runner.command.Arguments()) != 0 || moved != wantedTarget {
+		t.Fatalf("exit=%d calls=%d command=%+v moved=%q error=%v", exitCode, runner.calls, runner.command, moved, err)
+	}
+	runner.exitCode = 17
+	moved = ""
+	exitCode, err = backend.removeDarwinDesktopRuntime(
+		t.Context(), request, DesktopMutationArtifactBinding{}, false,
+	)
+	if err != nil || exitCode != 17 || moved != "" {
+		t.Fatalf("nonzero exit=%d moved=%q error=%v", exitCode, moved, err)
+	}
+	runner.exitCode = 0
+	backend.moveApplication = func(context.Context, runtimeport.DesktopMutationRequest, string) error {
+		return errors.New("trash unavailable")
+	}
+	if _, err := backend.removeDarwinDesktopRuntime(
+		t.Context(), request, DesktopMutationArtifactBinding{}, false,
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("move failure error=%v", err)
+	}
+}
+
+func TestPF001DarwinDesktopInstallExecutesOnlyVerifiedMountedInstaller(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	installer, err := NewDesktopMutationArtifactBinding(
+		"/Library/Application Support/AgentMemory/runtime-helper/transactions/"+request.Digest().String()+"/installer.dmg",
+		authority.ArtifactSHA256(), authority.ArtifactBytes(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &darwinDesktopRemovalRunner{}
+	detached := ""
+	backend := nativeDesktopMutationBackend{
+		runner: runner,
+		applicationVersion: func(_ context.Context, path string, _ runtimeinstall.Hash) (string, bool) {
+			return authority.RuntimeVersion(), path == "/Volumes/AgentMemory-Docker/Docker.app"
+		},
+		safeExecutable: func(path string) bool {
+			return path == "/Volumes/AgentMemory-Docker/Docker.app/Contents/MacOS/install"
+		},
+		assessTarget: func(_ context.Context, path, operation string) bool {
+			return path == installer.Path() && operation == "open"
+		},
+		moveApplication: func(context.Context, runtimeport.DesktopMutationRequest, string) error { return nil },
+		attachImage: func(_ context.Context, path, home string) (darwinDiskImageMount, error) {
+			if path != installer.Path() || home != authority.HomeDirectory() {
+				return darwinDiskImageMount{}, errors.New("mount substitution")
+			}
+			return darwinDiskImageMount{mountPoint: "/Volumes/AgentMemory-Docker"}, nil
+		},
+		detachImage: func(_ context.Context, mount string) error {
+			detached = mount
+			return nil
+		},
+	}
+	exitCode, err := backend.ExecuteNativeDesktopMutation(
+		t.Context(), request, installer, true, DesktopMutationAuthorityEvidence{},
+	)
+	if err != nil || exitCode != 0 || runner.calls != 1 || detached != "/Volumes/AgentMemory-Docker" ||
+		runner.command.Executable() != "/Volumes/AgentMemory-Docker/Docker.app/Contents/MacOS/install" ||
+		!slices.Equal(runner.command.Arguments(), authority.InstallerArguments()) {
+		t.Fatalf("exit=%d calls=%d command=%+v detached=%q error=%v", exitCode, runner.calls, runner.command, detached, err)
+	}
+}
+
+type darwinDesktopRemovalRunner struct {
+	command  DesktopMutationCommand
+	exitCode uint32
+	err      error
+	calls    int
+}
+
+func (r *darwinDesktopRemovalRunner) RunDesktopMutationCommand(
+	_ context.Context,
+	command DesktopMutationCommand,
+) (uint32, error) {
+	r.calls++
+	r.command = command
+	return r.exitCode, r.err
 }

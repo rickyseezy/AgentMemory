@@ -79,9 +79,12 @@ func (s *ProtectedDesktopMutationArtifactStore) PrepareDesktopMutationArtifact(
 	if err := ctx.Err(); err != nil {
 		return desktopMutationArtifactTransactionSet{}, err
 	}
-	if request.Operation() == runtimeport.DesktopMutationInstallPrerequisites {
-		if present || binding.path != "" || !binding.sha256.IsZero() || binding.size != 0 ||
-			!request.ArtifactDigest().IsZero() {
+	if request.Operation() == runtimeport.DesktopMutationInstallPrerequisites ||
+		request.Operation() == runtimeport.DesktopMutationRemoveRuntime {
+		digestValid := request.Operation() == runtimeport.DesktopMutationInstallPrerequisites &&
+			request.ArtifactDigest().IsZero() || request.Operation() == runtimeport.DesktopMutationRemoveRuntime &&
+			request.ArtifactDigest() == request.Authority().ArtifactSHA256()
+		if present || binding.path != "" || !binding.sha256.IsZero() || binding.size != 0 || !digestValid {
 			return desktopMutationArtifactTransactionSet{}, runtimeport.ErrDesktopMutationIntegrity
 		}
 		return desktopMutationArtifactTransactionSet{}, nil

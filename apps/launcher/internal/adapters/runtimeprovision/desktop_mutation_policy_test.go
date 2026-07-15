@@ -6,7 +6,7 @@ import (
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 )
 
-func TestWindowsDesktopMutationElevationPolicyKeepsPerUserInstallUnelevated(t *testing.T) {
+func TestWindowsDesktopMutationElevationPolicyMatchesElevatedHelperInvariant(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		operation runtimeport.DesktopMutationOperation
@@ -15,7 +15,8 @@ func TestWindowsDesktopMutationElevationPolicyKeepsPerUserInstallUnelevated(t *t
 		valid     bool
 	}{
 		{operation: runtimeport.DesktopMutationInstallPrerequisites, verb: "runas", elevated: true, valid: true},
-		{operation: runtimeport.DesktopMutationInstallRuntime, verb: "open", valid: true},
+		{operation: runtimeport.DesktopMutationInstallRuntime, verb: "runas", elevated: true, valid: true},
+		{operation: runtimeport.DesktopMutationRemoveRuntime, verb: "runas", elevated: true, valid: true},
 		{operation: runtimeport.DesktopMutationOperation("foreign")},
 	} {
 		verb, elevated, valid := windowsDesktopMutationExecutionPolicy(test.operation)

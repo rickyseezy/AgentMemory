@@ -42,6 +42,7 @@ type desktopMutationInstalledPostState interface {
 		runtimeport.DesktopAuthority,
 		runtimeport.DesktopInstalledApplicationEvidence,
 	) bool
+	DesktopInstalledApplicationPresent(runtimeport.DesktopInstalledApplicationEvidence) bool
 }
 
 type nativeDesktopMutationPostState struct {
@@ -75,6 +76,12 @@ func (nativeDesktopMutationPostState) DesktopInstalledApplicationVerified(
 	evidence runtimeport.DesktopInstalledApplicationEvidence,
 ) bool {
 	return evidence.VerifiedFor(authority)
+}
+
+func (nativeDesktopMutationPostState) DesktopInstalledApplicationPresent(
+	evidence runtimeport.DesktopInstalledApplicationEvidence,
+) bool {
+	return evidence.Present()
 }
 
 // NativeDesktopMutationOperationExecutor is the only helper adapter allowed
@@ -175,6 +182,12 @@ func (e *NativeDesktopMutationOperationExecutor) ExecuteDesktopMutation(
 		if probeError != nil || !e.installed.DesktopInstalledApplicationVerified(request.Authority(), installed) {
 			return DesktopMutationObservationInput{}, desktopMutationHelperContextOrIntegrity(ctx)
 		}
+	case runtimeport.DesktopMutationRemoveRuntime:
+		installed, probeError := e.installed.ProbeDesktopInstalledApplication(ctx, request.Authority())
+		if probeError != nil || !e.installed.DesktopInstalledApplicationVerified(request.Authority(), installed) ||
+			e.installed.DesktopInstalledApplicationPresent(installed) {
+			return DesktopMutationObservationInput{}, desktopMutationHelperContextOrIntegrity(ctx)
+		}
 	default:
 		return DesktopMutationObservationInput{}, runtimeport.ErrDesktopMutationIntegrity
 	}
@@ -194,6 +207,8 @@ func validDesktopMutationExecutorArtifact(
 		return present && err == nil && artifact.Path() == expected &&
 			artifact.SHA256() == request.Authority().ArtifactSHA256() &&
 			artifact.SHA256() == request.ArtifactDigest() && artifact.Size() == request.Authority().ArtifactBytes()
+	case runtimeport.DesktopMutationRemoveRuntime:
+		return !present && request.ArtifactDigest() == request.Authority().ArtifactSHA256()
 	default:
 		return false
 	}

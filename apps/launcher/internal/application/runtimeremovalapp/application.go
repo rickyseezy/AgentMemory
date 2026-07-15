@@ -79,7 +79,7 @@ func (a *Application) Remove(ctx context.Context, command Command) (Result, erro
 		if consentError != nil {
 			return resultFor(operation, OutcomeUnknown), consentError
 		}
-		if decision.PlanDigest != plan.Digest() || decision.Impact != runtimeremoval.ImpactConfirmation {
+		if decision.PlanDigest != plan.Digest() || decision.Impact != plan.ImpactConfirmation() {
 			return resultFor(operation, OutcomeUnknown), ErrIntegrity
 		}
 		if !decision.Approved {

@@ -64,6 +64,12 @@ func (b nativeDesktopMutationBackend) ExecuteNativeDesktopMutation(
 			return 0, runtimeport.ErrDesktopMutationIntegrity
 		}
 		return b.installWindowsDesktopRuntime(ctx, authority, installer)
+	case runtimeport.DesktopMutationRemoveRuntime:
+		if present || installer.Path() != "" || !installer.SHA256().IsZero() || installer.Size() != 0 ||
+			request.ArtifactDigest() != authority.ArtifactSHA256() {
+			return 0, runtimeport.ErrDesktopMutationIntegrity
+		}
+		return b.removeWindowsDesktopRuntime(ctx, request)
 	default:
 		return 0, runtimeport.ErrDesktopMutationIntegrity
 	}
@@ -324,6 +330,64 @@ func (b nativeDesktopMutationBackend) installWindowsDesktopRuntime(
 		return 0, desktopMutationHelperContextOrIntegrity(ctx)
 	}
 	return exitCode, nil
+}
+
+func (b nativeDesktopMutationBackend) removeWindowsDesktopRuntime(
+	ctx context.Context,
+	request runtimeport.DesktopMutationRequest,
+) (uint32, error) {
+	authority := request.Authority()
+	executable, arguments, err := windowsDesktopRemovalCommand(request)
+	if err != nil {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	file, _, err := windowssecurity.OpenVerifiedLockedRead(ctx, executable, false)
+	if err != nil {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	info, statError := file.Stat()
+	closeError := file.Close()
+	if statError != nil || closeError != nil || info.Size() <= 0 || !verifyWindowsAuthenticode(executable) {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	certificate, err := windowssecurity.AuthenticodeLeafCertificateSHA256(ctx, executable)
+	if err != nil || runtimeinstall.Hash(certificate) != authority.Publisher().CertificateSHA256() {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	version, err := windowsDesktopFileVersion(executable)
+	if err != nil || version != authority.RuntimeVersion() || !verifyWindowsAuthenticode(executable) {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	environment, directory, err := windowsDesktopMutationEnvironment(executable, authority.HomeDirectory())
+	if err != nil {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	command, err := newDesktopMutationCommand(executable, arguments, environment, directory)
+	if err != nil {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	exitCode, err := b.runner.RunDesktopMutationCommand(ctx, command)
+	if err != nil {
+		return 0, desktopMutationHelperContextOrIntegrity(ctx)
+	}
+	return exitCode, nil
+}
+
+func windowsDesktopRemovalCommand(
+	request runtimeport.DesktopMutationRequest,
+) (string, []string, error) {
+	authority := request.Authority()
+	if request.Digest().IsZero() || request.Operation() != runtimeport.DesktopMutationRemoveRuntime ||
+		authority.Platform() != runtimeinstall.PlatformWindows ||
+		!strings.EqualFold(filepath.Dir(authority.ApplicationExecutable()), authority.ApplicationPath()) {
+		return "", nil, runtimeport.ErrDesktopMutationIntegrity
+	}
+	executable := filepath.Join(authority.ApplicationPath(), "Docker Desktop Installer.exe")
+	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable ||
+		strings.ContainsAny(executable, "\x00\r\n") {
+		return "", nil, runtimeport.ErrDesktopMutationIntegrity
+	}
+	return executable, []string{"uninstall"}, nil
 }
 
 func windowsDesktopMutationEnvironment(executable, home string) ([]string, string, error) {

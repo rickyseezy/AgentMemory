@@ -367,7 +367,11 @@ func TestDesktopMutationRequestAndReceiptBindExactStateAndRebootSemantics(t *tes
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	consent := runtimeinstall.Sum([]byte("consent"))
 	artifact := runtimeinstall.Sum([]byte("artifact-evidence"))
-	for _, operation := range []DesktopMutationOperation{DesktopMutationInstallPrerequisites, DesktopMutationInstallRuntime} {
+	for _, operation := range []DesktopMutationOperation{
+		DesktopMutationInstallPrerequisites,
+		DesktopMutationInstallRuntime,
+		DesktopMutationRemoveRuntime,
+	} {
 		operation := operation
 		t.Run(string(operation), func(t *testing.T) {
 			t.Parallel()
@@ -399,7 +403,7 @@ func TestDesktopMutationRequestAndReceiptBindExactStateAndRebootSemantics(t *tes
 			if decodeErr != nil || decoded.Digest() != receipt.Digest() || !decoded.Matches(request, now.Add(2*time.Minute)) {
 				t.Fatalf("decoded receipt = %#v, %v", decoded, decodeErr)
 			}
-			if operation == DesktopMutationInstallRuntime {
+			if operation == DesktopMutationInstallRuntime || operation == DesktopMutationRemoveRuntime {
 				rebootDigest := runtimeinstall.Sum([]byte("reboot"))
 				reboot := desktopMutationReceipt(t, request, 3010, rebootDigest, now.Add(time.Minute))
 				if !reboot.Matches(request, now.Add(2*time.Minute)) || reboot.RebootReceipt() != rebootDigest {
@@ -438,6 +442,7 @@ func TestDesktopMutationRejectsBroadenedRequestsReceiptsAndJSON(t *testing.T) {
 		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationInstallPrerequisites, authority: darwin, consent: consent, nonce: Nonce{1}, issued: now, expires: now.Add(time.Minute)},
 		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationInstallRuntime, authority: windows, consent: runtimeinstall.Hash{}, artifact: artifact, nonce: Nonce{1}, issued: now, expires: now.Add(time.Minute)},
 		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationInstallRuntime, authority: windows, consent: consent, artifact: runtimeinstall.Hash{}, nonce: Nonce{1}, issued: now, expires: now.Add(time.Minute)},
+		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationRemoveRuntime, authority: windows, consent: consent, artifact: runtimeinstall.Hash{}, nonce: Nonce{1}, issued: now, expires: now.Add(time.Minute)},
 		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationInstallRuntime, authority: windows, consent: consent, artifact: artifact, nonce: Nonce{}, issued: now, expires: now.Add(time.Minute)},
 		{operationID: "desktop-1", attempt: 1, operation: DesktopMutationInstallRuntime, authority: windows, consent: consent, artifact: artifact, nonce: Nonce{1}, issued: now, expires: now.Add(11 * time.Minute)},
 	} {

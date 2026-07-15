@@ -87,6 +87,44 @@ func TestPF001DesktopHelperOperationExecutorSkipsAlreadyReadyPrerequisites(t *te
 	}
 }
 
+func TestPF001DesktopHelperOperationExecutorRequiresExactRemovalAbsence(t *testing.T) {
+	t.Parallel()
+	for _, platform := range []runtimeinstall.Platform{runtimeinstall.PlatformDarwin, runtimeinstall.PlatformWindows} {
+		platform := platform
+		t.Run(platform.String(), func(t *testing.T) {
+			t.Parallel()
+			_, authority := desktopAdapterAuthority(t, platform)
+			request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+			backend := &desktopMutationNativeBackendStub{}
+			ports := &desktopMutationPostStateStub{installed: true, present: false}
+			executor, _ := newNativeDesktopMutationOperationExecutor(backend, ports, ports)
+			evidence, _ := NewDesktopMutationAuthorityEvidence(
+				authority, runtimeinstall.Sum([]byte("helper")), runtimeinstall.Sum([]byte("release")),
+			)
+			observation, err := executor.ExecuteDesktopMutation(
+				t.Context(), request, desktopMutationArtifactSetStub{}, evidence,
+			)
+			if err != nil || observation.PostState != request.ExpectedState() || backend.calls != 1 ||
+				ports.installedCalls != 1 {
+				t.Fatalf("platform=%s observation=%+v backend=%d probes=%d error=%v", platform, observation, backend.calls, ports.installedCalls, err)
+			}
+			ports.present = true
+			if _, err := executor.ExecuteDesktopMutation(
+				t.Context(), request, desktopMutationArtifactSetStub{}, evidence,
+			); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+				t.Fatalf("platform=%s present application accepted: %v", platform, err)
+			}
+			ports.present = false
+			ports.installed = false
+			if _, err := executor.ExecuteDesktopMutation(
+				t.Context(), request, desktopMutationArtifactSetStub{}, evidence,
+			); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+				t.Fatalf("platform=%s unverified absence accepted: %v", platform, err)
+			}
+		})
+	}
+}
+
 func TestPF001DesktopHelperOperationExecutorRejectsIncompleteDependenciesAndSubstitution(t *testing.T) {
 	t.Parallel()
 	ports := &desktopMutationPostStateStub{}
@@ -146,6 +184,9 @@ func TestPF001ProductionDesktopMutationExecutorComposesExactPostStateAdapters(t 
 	if postState.DesktopInstalledApplicationVerified(authority, runtimeport.DesktopInstalledApplicationEvidence{}) {
 		t.Fatal("zero installed evidence reported verified")
 	}
+	if postState.DesktopInstalledApplicationPresent(runtimeport.DesktopInstalledApplicationEvidence{}) {
+		t.Fatal("zero installed evidence reported present")
+	}
 	if candidate, err := NewNativeDesktopMutationOperationExecutor(nil, installed, runner, source); candidate != nil || err == nil {
 		t.Fatalf("nil production host accepted: %+v %v", candidate, err)
 	}
@@ -201,8 +242,8 @@ func (desktopMutationReleaseSourceStub) OpenResource(
 }
 
 type desktopMutationPostStateStub struct {
-	installed, prerequisites  bool
-	installedCalls, hostCalls int
+	installed, present, prerequisites bool
+	installedCalls, hostCalls         int
 }
 
 type desktopHostProbePortStub struct{ calls int }
@@ -247,6 +288,12 @@ func (s *desktopMutationPostStateStub) DesktopInstalledApplicationVerified(
 	runtimeport.DesktopInstalledApplicationEvidence,
 ) bool {
 	return s.installed
+}
+
+func (s *desktopMutationPostStateStub) DesktopInstalledApplicationPresent(
+	runtimeport.DesktopInstalledApplicationEvidence,
+) bool {
+	return s.present
 }
 
 func (s *desktopMutationPostStateStub) ProbeDesktopHost(

@@ -111,7 +111,9 @@ func windowsDesktopMutationExecutionPolicy(
 	case runtimeport.DesktopMutationInstallPrerequisites:
 		return "runas", true, true
 	case runtimeport.DesktopMutationInstallRuntime:
-		return "open", false, true
+		return "runas", true, true
+	case runtimeport.DesktopMutationRemoveRuntime:
+		return "runas", true, true
 	default:
 		return "", false, false
 	}

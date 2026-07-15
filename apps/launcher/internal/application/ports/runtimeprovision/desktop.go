@@ -543,11 +543,18 @@ const (
 	DesktopMutationInstallPrerequisites DesktopMutationOperation = "install_wsl_prerequisites"
 	// DesktopMutationInstallRuntime installs the exact verified Docker Desktop artifact.
 	DesktopMutationInstallRuntime DesktopMutationOperation = "install_docker_desktop"
+	// DesktopMutationRemoveRuntime invokes only the vendor-supported uninstaller
+	// for the exact signed application authority.
+	DesktopMutationRemoveRuntime DesktopMutationOperation = "remove_docker_desktop"
 )
 
 func (o DesktopMutationOperation) validFor(platform runtimeinstall.Platform) bool {
-	return o == DesktopMutationInstallRuntime ||
+	return o == DesktopMutationInstallRuntime || o == DesktopMutationRemoveRuntime ||
 		platform == runtimeinstall.PlatformWindows && o == DesktopMutationInstallPrerequisites
+}
+
+func (o DesktopMutationOperation) requiresArtifactDigest() bool {
+	return o == DesktopMutationInstallRuntime || o == DesktopMutationRemoveRuntime
 }
 
 // DesktopMutationRequest is exact typed authority for a native helper.
@@ -578,7 +585,7 @@ func NewDesktopMutationRequest(
 	expiresAt time.Time,
 ) (DesktopMutationRequest, error) {
 	if !validOperationID(operationID) || attempt == 0 || !authority.Valid() || !operation.validFor(authority.Platform()) ||
-		consentDigest.IsZero() || operation == DesktopMutationInstallRuntime && artifactDigest.IsZero() || nonce.IsZero() ||
+		consentDigest.IsZero() || operation.requiresArtifactDigest() && artifactDigest.IsZero() || nonce.IsZero() ||
 		issuedAt.IsZero() || expiresAt.IsZero() || issuedAt.Location() != time.UTC || expiresAt.Location() != time.UTC ||
 		!expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > desktopRequestMaximumLifetime {
 		return DesktopMutationRequest{}, ErrDesktopMutationIntegrity

@@ -86,6 +86,39 @@ func TestPF001CanonicalDesktopMutationCodecCarriesNoArtifactForFixedWindowsPrere
 	}
 }
 
+func TestPF001CanonicalDesktopMutationCodecBindsRemovalWithoutTransportingAnExecutable(t *testing.T) {
+	t.Parallel()
+	for _, platform := range []runtimeinstall.Platform{runtimeinstall.PlatformDarwin, runtimeinstall.PlatformWindows} {
+		platform := platform
+		t.Run(platform.String(), func(t *testing.T) {
+			t.Parallel()
+			plan, authority := desktopAdapterAuthority(t, platform)
+			request := desktopMutationRequestForAuthority(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+			codec, err := NewCanonicalDesktopMutationTransportCodec(DesktopMutationEnvelopeInput{
+				SignedRelease: []byte(`{}`), SignedRuntimeCatalog: []byte(`{}`), CanonicalPlan: plan.CanonicalBytes(),
+				RuntimeCatalogResourceID: "catalog", HelperResourceID: "helper",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := codec.EncodeDesktopMutationRequest(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeCanonicalDesktopMutationRequest(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bound, err := decoded.BindAuthority(authority)
+			_, present := decoded.Artifact()
+			if err != nil || bound.Digest() != request.Digest() || present ||
+				bound.ArtifactDigest() != authority.ArtifactSHA256() {
+				t.Fatalf("platform=%s bound=%+v artifact=%t error=%v", platform, bound, present, err)
+			}
+		})
+	}
+}
+
 func TestPF001CanonicalDesktopMutationCodecRejectsAmbiguityAndAuthoritySubstitution(t *testing.T) {
 	t.Parallel()
 	plan, authority, request := desktopMutationCodecFixture(t, runtimeport.DesktopMutationInstallRuntime)
@@ -197,8 +230,30 @@ func desktopMutationCodecFixture(
 	t.Helper()
 	plan, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformWindows)
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	request := desktopMutationRequestForAuthorityAt(t, authority, operation, now)
+	return plan, authority, request
+}
+
+func desktopMutationRequestForAuthority(
+	t testing.TB,
+	authority runtimeport.DesktopAuthority,
+	operation runtimeport.DesktopMutationOperation,
+) runtimeport.DesktopMutationRequest {
+	t.Helper()
+	return desktopMutationRequestForAuthorityAt(
+		t, authority, operation, time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+	)
+}
+
+func desktopMutationRequestForAuthorityAt(
+	t testing.TB,
+	authority runtimeport.DesktopAuthority,
+	operation runtimeport.DesktopMutationOperation,
+	now time.Time,
+) runtimeport.DesktopMutationRequest {
+	t.Helper()
 	artifact := runtimeinstall.Hash{}
-	if operation == runtimeport.DesktopMutationInstallRuntime {
+	if operation == runtimeport.DesktopMutationInstallRuntime || operation == runtimeport.DesktopMutationRemoveRuntime {
 		artifact = authority.ArtifactSHA256()
 	}
 	request, err := runtimeport.NewDesktopMutationRequest(
@@ -209,7 +264,7 @@ func desktopMutationCodecFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plan, authority, request
+	return request
 }
 
 func mustDecodeDesktopMutationRequest(t testing.TB, raw []byte) DecodedDesktopMutationRequest {

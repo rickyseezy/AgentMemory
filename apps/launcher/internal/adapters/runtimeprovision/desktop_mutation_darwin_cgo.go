@@ -195,7 +195,8 @@ func executeNativeDesktopHelper(
 	operation runtimeport.DesktopMutationOperation,
 ) error {
 	if ctx == nil || ctx.Err() != nil || helper.Platform() != runtimeinstall.PlatformDarwin ||
-		operation != runtimeport.DesktopMutationInstallRuntime ||
+		(operation != runtimeport.DesktopMutationInstallRuntime &&
+			operation != runtimeport.DesktopMutationRemoveRuntime) ||
 		filepath.Dir(requestPath) != helper.ExchangeDirectory() || !verifyDarwinMutationHelper(ctx, helper) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}

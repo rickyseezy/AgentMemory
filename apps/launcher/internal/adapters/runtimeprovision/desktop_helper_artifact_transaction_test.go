@@ -79,6 +79,33 @@ func TestPF001DesktopHelperArtifactStoreRejectsSubstitutionAndPrerequisiteArtifa
 	}
 }
 
+func TestPF001DesktopHelperArtifactStoreCarriesNoUserArtifactIntoRemoval(t *testing.T) {
+	t.Parallel()
+	for _, platform := range []runtimeinstall.Platform{runtimeinstall.PlatformDarwin, runtimeinstall.PlatformWindows} {
+		platform := platform
+		t.Run(platform.String(), func(t *testing.T) {
+			t.Parallel()
+			_, authority := desktopAdapterAuthority(t, platform)
+			request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationRemoveRuntime)
+			copier := &desktopMutationArtifactCopierStub{}
+			store, _ := newProtectedDesktopMutationArtifactStore(copier)
+			set, err := store.PrepareDesktopMutationArtifact(
+				t.Context(), request, DesktopMutationArtifactBinding{}, false,
+			)
+			_, present := set.Installer()
+			if err != nil || present || copier.calls != 0 {
+				t.Fatalf("platform=%s present=%t calls=%d error=%v", platform, present, copier.calls, err)
+			}
+			binding, _ := NewDesktopMutationArtifactBinding(
+				authority.ArtifactPath(), authority.ArtifactSHA256(), authority.ArtifactBytes(),
+			)
+			if _, err := store.PrepareDesktopMutationArtifact(t.Context(), request, binding, true); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+				t.Fatalf("platform=%s transported removal executable accepted: %v", platform, err)
+			}
+		})
+	}
+}
+
 func TestPF001ProductionDesktopArtifactStoreCompositionIsAvailableOnDesktop(t *testing.T) {
 	t.Parallel()
 	store, err := NewProtectedDesktopMutationArtifactStore()
@@ -101,7 +128,7 @@ func desktopArtifactRequest(
 ) runtimeport.DesktopMutationRequest {
 	t.Helper()
 	artifact := runtimeinstall.Hash{}
-	if operation == runtimeport.DesktopMutationInstallRuntime {
+	if operation == runtimeport.DesktopMutationInstallRuntime || operation == runtimeport.DesktopMutationRemoveRuntime {
 		artifact = authority.ArtifactSHA256()
 	}
 	now := time.Date(2026, 7, 15, 17, 0, 0, 0, time.UTC)

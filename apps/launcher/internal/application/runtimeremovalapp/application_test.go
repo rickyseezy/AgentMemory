@@ -153,7 +153,7 @@ func TestPF001ManagedRuntimeRemovalRejectsConsentSubstitutionAndLateDependencies
 	command := removalCommand(runtimePlan)
 	harness := newRemovalHarness(t, ownership)
 	harness.consent.decision = &ConsentDecision{
-		Approved: true, Explicit: true, Impact: runtimeremoval.ImpactConfirmation,
+		Approved: true, Explicit: true, Impact: "substituted-impact",
 		Receipt: runtimeinstall.Sum([]byte("receipt")),
 	}
 	if _, err := harness.application(t).Remove(context.Background(), command); !errors.Is(err, ErrIntegrity) {
@@ -330,7 +330,7 @@ func (s *removalConsentStub) AwaitManagedRuntimeRemovalConsent(
 		return *s.decision, nil
 	}
 	decision := ConsentDecision{
-		Approved: s.approved, PlanDigest: plan.Digest(), Impact: runtimeremoval.ImpactConfirmation,
+		Approved: s.approved, PlanDigest: plan.Digest(), Impact: plan.ImpactConfirmation(),
 	}
 	if s.approved {
 		decision.Explicit = true

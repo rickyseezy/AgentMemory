@@ -62,8 +62,10 @@ func createNativeDesktopMutationExchange(
 	ctx context.Context,
 	helper runtimeport.DesktopHelperAuthority,
 	request runtimeport.DesktopMutationRequest,
+	raw []byte,
 ) (nativeDesktopMutationExchange, error) {
-	if helper.Platform() != runtimeinstall.PlatformDarwin || ctx.Err() != nil {
+	if helper.Platform() != runtimeinstall.PlatformDarwin || ctx.Err() != nil || len(raw) == 0 ||
+		len(raw) > maximumPrivilegeWireBytes {
 		return nativeDesktopMutationExchange{}, runtimeport.ErrDesktopMutationIntegrity
 	}
 	directory, err := openDarwinMutationDirectory(helper.ExchangeDirectory())
@@ -91,12 +93,11 @@ func createNativeDesktopMutationExchange(
 		_ = unix.Close(descriptor)
 		return nativeDesktopMutationExchange{}, runtimeport.ErrDesktopMutationIntegrity
 	}
-	contents := request.CanonicalBytes()
-	written, writeError := file.Write(contents)
+	written, writeError := file.Write(raw)
 	syncError := file.Sync()
 	closeError := file.Close()
 	directorySync := unix.Fsync(int(directory.Fd()))
-	if writeError != nil || written != len(contents) || syncError != nil || closeError != nil || directorySync != nil {
+	if writeError != nil || written != len(raw) || syncError != nil || closeError != nil || directorySync != nil {
 		_ = os.Remove(requestPath)
 		return nativeDesktopMutationExchange{}, runtimeport.ErrDesktopMutationIntegrity
 	}

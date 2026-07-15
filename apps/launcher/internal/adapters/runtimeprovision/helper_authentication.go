@@ -201,6 +201,150 @@ type Ed25519DesktopMutationAuthenticator struct {
 	key ed25519.PublicKey
 }
 
+// DesktopMutationReceiptSigningKeySource loads the private half of the
+// per-machine desktop-helper identity from elevated, platform-protected
+// storage. Implementations must return a caller-owned copy so it can be
+// cleared immediately after use.
+type DesktopMutationReceiptSigningKeySource interface {
+	LoadDesktopMutationSigningKey(context.Context) (ed25519.PrivateKey, error)
+}
+
+// ProtectedDesktopMutationReceiptSigner signs an exact mutation statement
+// without retaining private key bytes in the helper process.
+type ProtectedDesktopMutationReceiptSigner struct {
+	source DesktopMutationReceiptSigningKeySource
+}
+
+// NewProtectedDesktopMutationReceiptSigner constructs the elevated signer.
+func NewProtectedDesktopMutationReceiptSigner(
+	source DesktopMutationReceiptSigningKeySource,
+) (*ProtectedDesktopMutationReceiptSigner, error) {
+	if nilDesktopMutationSigningKeySource(source) {
+		return nil, ErrProvisionIntegrity
+	}
+	return &ProtectedDesktopMutationReceiptSigner{source: source}, nil
+}
+
+// SignDesktopMutationReceipt authenticates only unsigned, domain-valid
+// receipt input. Source failures are deliberately collapsed to integrity
+// failures so protected path details never cross the elevation boundary.
+func (s *ProtectedDesktopMutationReceiptSigner) SignDesktopMutationReceipt(
+	ctx context.Context,
+	input runtimeport.DesktopMutationReceiptInput,
+) (runtimeport.DesktopMutationReceipt, error) {
+	if s == nil || ctx == nil || nilDesktopMutationSigningKeySource(s.source) ||
+		len(input.Signature) != 0 || !input.SignatureDigest.IsZero() {
+		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return runtimeport.DesktopMutationReceipt{}, err
+	}
+	key, err := s.source.LoadDesktopMutationSigningKey(ctx)
+	if err != nil || len(key) != ed25519.PrivateKeySize {
+		clear(key)
+		if contextError := ctx.Err(); contextError != nil {
+			return runtimeport.DesktopMutationReceipt{}, contextError
+		}
+		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
+	}
+	defer clear(key)
+	input.Signature = bytes.Repeat([]byte{1}, ed25519.SignatureSize)
+	input.SignatureDigest = runtimeinstall.Sum(input.Signature)
+	unsigned, err := runtimeport.NewDesktopMutationReceipt(input)
+	if err != nil {
+		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
+	}
+	input.Signature = ed25519.Sign(key, unsigned.AuthenticationPayload())
+	input.SignatureDigest = runtimeinstall.Sum(input.Signature)
+	signed, err := runtimeport.NewDesktopMutationReceipt(input)
+	if err != nil {
+		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
+	}
+	return signed, nil
+}
+
+func nilDesktopMutationSigningKeySource(source DesktopMutationReceiptSigningKeySource) bool {
+	if source == nil {
+		return true
+	}
+	value := reflect.ValueOf(source)
+	switch value.Kind() { //nolint:exhaustive // Non-nilable implementations are valid sources.
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+// DesktopMutationReceiptPublicKeySource loads the public half of the local
+// helper identity only after independently verifying the installed helper
+// executable against expectedHelper.
+type DesktopMutationReceiptPublicKeySource interface {
+	LoadDesktopMutationPublicKey(context.Context, runtimeinstall.Hash) (ed25519.PublicKey, error)
+}
+
+// ProtectedEd25519DesktopMutationAuthenticator authenticates receipts with a
+// per-machine key while binding that key to the exact release-authorized
+// helper executable.
+type ProtectedEd25519DesktopMutationAuthenticator struct {
+	source DesktopMutationReceiptPublicKeySource
+	helper runtimeinstall.Hash
+}
+
+// NewProtectedEd25519DesktopMutationAuthenticator constructs the local-key
+// verifier without loading or retaining public key bytes.
+func NewProtectedEd25519DesktopMutationAuthenticator(
+	source DesktopMutationReceiptPublicKeySource,
+	helper runtimeinstall.Hash,
+) (*ProtectedEd25519DesktopMutationAuthenticator, error) {
+	if nilDesktopMutationPublicKeySource(source) || helper.IsZero() {
+		return nil, ErrProvisionIntegrity
+	}
+	return &ProtectedEd25519DesktopMutationAuthenticator{source: source, helper: helper}, nil
+}
+
+// VerifyDesktopMutation reloads protected public state for every receipt,
+// rejects request substitution, and verifies the domain-separated payload.
+func (a *ProtectedEd25519DesktopMutationAuthenticator) VerifyDesktopMutation(
+	ctx context.Context,
+	request runtimeport.DesktopMutationRequest,
+	receipt runtimeport.DesktopMutationReceipt,
+) error {
+	if a == nil || ctx == nil || nilDesktopMutationPublicKeySource(a.source) || a.helper.IsZero() ||
+		request.Digest().IsZero() || receipt.Digest().IsZero() || !receipt.BoundTo(request) {
+		return runtimeport.ErrDesktopMutationIntegrity
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key, err := a.source.LoadDesktopMutationPublicKey(ctx, a.helper)
+	if err != nil || len(key) != ed25519.PublicKeySize || ctx.Err() != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return contextError
+		}
+		return runtimeport.ErrDesktopMutationIntegrity
+	}
+	payload := receipt.AuthenticationPayload()
+	signature := receipt.Signature()
+	if len(payload) == 0 || len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, payload, signature) {
+		return runtimeport.ErrDesktopMutationIntegrity
+	}
+	return nil
+}
+
+func nilDesktopMutationPublicKeySource(source DesktopMutationReceiptPublicKeySource) bool {
+	if source == nil {
+		return true
+	}
+	value := reflect.ValueOf(source)
+	switch value.Kind() { //nolint:exhaustive // Non-nilable implementations are valid sources.
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
 // NewEd25519DesktopMutationAuthenticator copies immutable public trust.
 func NewEd25519DesktopMutationAuthenticator(
 	key ed25519.PublicKey,
@@ -236,5 +380,7 @@ func (a *Ed25519DesktopMutationAuthenticator) VerifyDesktopMutation(
 var (
 	_ runtimeport.ReceiptAuthenticator         = (*ProtectedEd25519PrivilegeReceiptAuthenticator)(nil)
 	_ runtimeport.ReceiptAuthenticator         = (*Ed25519PrivilegeReceiptAuthenticator)(nil)
+	_ runtimeport.DesktopMutationAuthenticator = (*ProtectedEd25519DesktopMutationAuthenticator)(nil)
 	_ runtimeport.DesktopMutationAuthenticator = (*Ed25519DesktopMutationAuthenticator)(nil)
+	_ DesktopMutationReceiptSigner             = (*ProtectedDesktopMutationReceiptSigner)(nil)
 )

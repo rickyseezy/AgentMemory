@@ -79,20 +79,18 @@ SBOM associations, native publisher statements, and offline trust bundle.
 Private signing material must never be stored in the repository or embedded in
 the launcher.
 
-The release owner must also provide the public Ed25519 Desktop
-receipt-verification key embedded in the signed launcher trust document and a
-corresponding private-key operation available only to the exact signed macOS or
-Windows runtime helper. The helper key is distinct from manifest, host-policy,
-catalog, and qualification keys. Its private material must be provisioned into
-a platform-protected helper signing boundary and must never appear in source,
-build arguments, a release bundle, an installer log, or launcher memory.
-
-Linux does not take that private key as a release input. The installed,
-release-verified root helper creates a distinct per-machine Ed25519 receipt key
-under `/var/lib/agentmemory/runtime-helper`; the private half is root-only and
-the unprivileged launcher reloads the root-owned public half only after helper
-execution. Linux privilege receipts and Desktop mutation receipts remain
-domain-separated and cannot be replayed across those boundaries.
+Receipt keys are not release-owner inputs. Each installed, release-verified
+privileged helper creates its own distinct per-machine Ed25519 receipt key on
+first privileged execution. Linux stores the private half under
+`/var/lib/agentmemory/runtime-helper`; macOS stores it under the root-owned
+`/Library/Application Support/AgentMemory/runtime-helper` boundary; Windows
+stores it under the protected machine-wide AgentMemory helper boundary. The
+launcher accepts the corresponding public half only from the exact verified
+helper installation path and platform-protected descriptor/DACL boundary. No
+receipt private key or static shared receipt key may appear in source, build
+arguments, a release bundle, an installer log, or launcher memory before the
+helper operation. Linux privilege receipts and Desktop mutation receipts
+remain domain-separated and cannot be replayed across those boundaries.
 
 The release owner must also provide the SHA-256 digest of the native signing
 certificate for every helper resource ID and the Windows launcher resource ID. The reproducible release build writes

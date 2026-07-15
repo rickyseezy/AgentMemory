@@ -7,7 +7,18 @@ import (
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/dockercli"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
+
+func (f *nativePlatformRuntimeFactory) buildPlatformProductExecutors(
+	ctx context.Context,
+	verified nativeVerifiedRuntimeExecution,
+) (dockercli.Executors, error) {
+	if verified.runtime.Platform() != runtimeinstall.PlatformLinux {
+		return dockercli.Executors{}, errNativeInstallerIntegrity
+	}
+	return f.buildLinuxProductExecutors(ctx, verified)
+}
 
 func (f *nativePlatformRuntimeFactory) buildLinuxProductExecutors(
 	ctx context.Context,

@@ -361,6 +361,15 @@ func TestPF001NativeProductExecutorsRejectIncompleteSignedRuntimeAuthority(t *te
 	if _, err := factory.buildProductExecutors(t.Context(), nativeVerifiedRuntimeExecution{}); !errors.Is(err, errNativeInstallerIntegrity) {
 		t.Fatalf("incomplete authority error=%v", err)
 	}
+	request, authority, certified := nativeRuntimeExecutionFixture(t)
+	if _, err := factory.buildPlatformProductExecutors(t.Context(), nativeVerifiedRuntimeExecution{
+		request: request, authority: authority, runtime: certified,
+	}); !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("unverified desktop authority error=%v", err)
+	}
+	if _, err := factory.buildPlatformProductExecutors(t.Context(), nativeVerifiedRuntimeExecution{}); !errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("foreign platform authority error=%v", err)
+	}
 	wantLinuxError := errNativeInstallerUnavailable
 	if runtime.GOOS == "linux" {
 		wantLinuxError = errNativeInstallerIntegrity

@@ -202,6 +202,77 @@ func TestEd25519DesktopMutationAuthenticatorVerifiesDomainSeparatedStatement(t *
 	}
 }
 
+func TestProtectedDesktopMutationSignerAndAuthenticatorUseProtectedPerMachineKey(t *testing.T) {
+	t.Parallel()
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, input := desktopAuthenticationFixture(t)
+	signingKeys := &desktopMutationSigningKeySourceStub{key: private}
+	signer, err := NewProtectedDesktopMutationReceiptSigner(signingKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := signer.SignDesktopMutationReceipt(t.Context(), input)
+	if err != nil || signingKeys.calls != 1 || len(receipt.Signature()) != ed25519.SignatureSize {
+		t.Fatalf("receipt=%+v calls=%d error=%v", receipt, signingKeys.calls, err)
+	}
+	publicKeys := &desktopMutationPublicKeySourceStub{key: public}
+	authenticator, err := NewProtectedEd25519DesktopMutationAuthenticator(
+		publicKeys, runtimeinstall.Sum([]byte("signed-desktop-helper")),
+	)
+	if err != nil || authenticator.VerifyDesktopMutation(t.Context(), request, receipt) != nil || publicKeys.calls != 1 {
+		t.Fatalf("authenticator=%+v calls=%d error=%v", authenticator, publicKeys.calls, err)
+	}
+	if publicKeys.helper != runtimeinstall.Sum([]byte("signed-desktop-helper")) {
+		t.Fatalf("helper binding=%s", publicKeys.helper)
+	}
+	publicKeys.key, _, _ = ed25519.GenerateKey(nil)
+	if err := authenticator.VerifyDesktopMutation(t.Context(), request, receipt); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("foreign protected key error=%v", err)
+	}
+	signingKeys.err = errors.New("private key unavailable")
+	if _, err := signer.SignDesktopMutationReceipt(t.Context(), input); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("private source error escaped: %v", err)
+	}
+	if candidate, err := NewProtectedDesktopMutationReceiptSigner(nil); candidate != nil || err == nil {
+		t.Fatalf("nil signer source accepted: %+v %v", candidate, err)
+	}
+	if candidate, err := NewProtectedEd25519DesktopMutationAuthenticator(nil, runtimeinstall.Hash{}); candidate != nil || err == nil {
+		t.Fatalf("nil authenticator source accepted: %+v %v", candidate, err)
+	}
+}
+
+type desktopMutationSigningKeySourceStub struct {
+	key   ed25519.PrivateKey
+	err   error
+	calls int
+}
+
+func (s *desktopMutationSigningKeySourceStub) LoadDesktopMutationSigningKey(
+	context.Context,
+) (ed25519.PrivateKey, error) {
+	s.calls++
+	return append(ed25519.PrivateKey(nil), s.key...), s.err
+}
+
+type desktopMutationPublicKeySourceStub struct {
+	key    ed25519.PublicKey
+	helper runtimeinstall.Hash
+	err    error
+	calls  int
+}
+
+func (s *desktopMutationPublicKeySourceStub) LoadDesktopMutationPublicKey(
+	_ context.Context,
+	helper runtimeinstall.Hash,
+) (ed25519.PublicKey, error) {
+	s.calls++
+	s.helper = helper
+	return append(ed25519.PublicKey(nil), s.key...), s.err
+}
+
 func privilegeAuthenticationFixture(
 	t *testing.T,
 	helper runtimeinstall.Hash,

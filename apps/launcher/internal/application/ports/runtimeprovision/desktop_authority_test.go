@@ -124,6 +124,8 @@ func TestWindowsDesktopAuthorityRejectsMissingPerUserARMAndDockerUsersPolicies(t
 		{name: "Windows containers", mutate: func(v *DesktopAuthorityInput) { v.InstallerArguments = v.InstallerArguments[:4] }},
 		{name: "docker-users", mutate: func(v *DesktopAuthorityInput) { v.WindowsFeatures = append(v.WindowsFeatures, "docker-users") }},
 		{name: "wrong WSL floor", mutate: func(v *DesktopAuthorityInput) { v.MinimumWSLVersion = "2.0.0" }},
+		{name: "missing WSL distribution", mutate: func(v *DesktopAuthorityInput) { v.WSLDistributionName = "" }},
+		{name: "wrong WSL distribution", mutate: func(v *DesktopAuthorityInput) { v.WSLDistributionName = "ubuntu-24.04" }},
 		{name: "feature order", mutate: func(v *DesktopAuthorityInput) {
 			v.WindowsFeatures[0], v.WindowsFeatures[1] = v.WindowsFeatures[1], v.WindowsFeatures[0]
 		}},
@@ -232,6 +234,7 @@ func desktopAuthorityInput(plan runtimeinstall.Plan, platform runtimeinstall.Pla
 		input.RebootExitCodes = []uint32{1641, 3010}
 		input.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 		input.MinimumWSLVersion = "2.1.5"
+		input.WSLDistributionName = "Ubuntu-24.04"
 	}
 	return input
 }

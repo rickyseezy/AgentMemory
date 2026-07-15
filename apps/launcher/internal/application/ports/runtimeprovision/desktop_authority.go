@@ -178,6 +178,7 @@ type DesktopAuthorityInput struct {
 	RebootExitCodes        []uint32
 	WindowsFeatures        []string
 	MinimumWSLVersion      string
+	WSLDistributionName    string
 	VendorUIMandatory      bool
 }
 
@@ -226,6 +227,7 @@ type DesktopAuthority struct {
 	rebootExitCodes        []uint32
 	windowsFeatures        []string
 	minimumWSLVersion      string
+	wslDistributionName    string
 	vendorUIMandatory      bool
 	digest                 runtimeinstall.Hash
 }
@@ -259,7 +261,9 @@ func NewDesktopAuthority(input DesktopAuthorityInput) (DesktopAuthority, error) 
 		return DesktopAuthority{}, ErrDesktopAuthorityIntegrity
 	}
 	features := append([]string(nil), input.WindowsFeatures...)
-	if !validWindowsPrerequisites(input.Platform, input.Architecture, features, input.MinimumWSLVersion) {
+	if !validWindowsPrerequisites(
+		input.Platform, input.Architecture, features, input.MinimumWSLVersion, input.WSLDistributionName,
+	) {
 		return DesktopAuthority{}, ErrDesktopAuthorityIntegrity
 	}
 	authority := DesktopAuthority{
@@ -283,7 +287,8 @@ func NewDesktopAuthority(input DesktopAuthorityInput) (DesktopAuthority, error) 
 		probeContractVersion: input.ProbeContractVersion, unrelatedWorkloads: input.UnrelatedWorkloads,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest, rebootExitCodes: rebootCodes,
 		windowsFeatures: features, minimumWSLVersion: input.MinimumWSLVersion,
-		vendorUIMandatory: input.VendorUIMandatory,
+		wslDistributionName: input.WSLDistributionName,
+		vendorUIMandatory:   input.VendorUIMandatory,
 	}
 	authority.digest = authority.computeDigest()
 	if authority.digest.IsZero() {
@@ -397,29 +402,30 @@ func validWindowsPrerequisites(
 	architecture runtimeinstall.Architecture,
 	features []string,
 	minimumWSL string,
+	distribution string,
 ) bool {
 	if platform == runtimeinstall.PlatformDarwin {
-		return len(features) == 0 && minimumWSL == ""
+		return len(features) == 0 && minimumWSL == "" && distribution == ""
 	}
 	return architecture == runtimeinstall.ArchitectureAMD64 &&
 		equalStrings(features, []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}) &&
-		minimumWSL == "2.1.5"
+		minimumWSL == "2.1.5" && distribution == "Ubuntu-24.04"
 }
 
 func (a DesktopAuthority) computeDigest() runtimeinstall.Hash {
 	encoded, _ := json.Marshal(struct {
-		Plan, Catalog, Machine, Artifact, DockerDigest, ComposeDigest, Probe, Capability, Certificate, Terms string
-		Platform, Architecture, Principal, User, Home, OSProduct, MinimumOS, MaximumOS                       string
-		Runtime, Engine, Compose, Endpoint                                                                   string
-		ArtifactPath, ArtifactSource, Publisher, SigningKey, Package                                         string
-		Arguments, Features, Reboot                                                                          []string
-		Application, Executable, Docker, ComposePlugin, ProbeImage, ProbeContract, MinimumWSL                string
-		ArtifactBytes                                                                                        uint64
-		UnrelatedWorkloads                                                                                   uint32
-		MinimumBuild, MaximumBuild                                                                           uint32
-		MinimumCPUs                                                                                          uint16
-		MinimumTotalMemory, MinimumAvailableMemory, MinimumFreeDisk                                          uint64
-		VendorUI                                                                                             bool
+		Plan, Catalog, Machine, Artifact, DockerDigest, ComposeDigest, Probe, Capability, Certificate, Terms   string
+		Platform, Architecture, Principal, User, Home, OSProduct, MinimumOS, MaximumOS                         string
+		Runtime, Engine, Compose, Endpoint                                                                     string
+		ArtifactPath, ArtifactSource, Publisher, SigningKey, Package                                           string
+		Arguments, Features, Reboot                                                                            []string
+		Application, Executable, Docker, ComposePlugin, ProbeImage, ProbeContract, MinimumWSL, WSLDistribution string
+		ArtifactBytes                                                                                          uint64
+		UnrelatedWorkloads                                                                                     uint32
+		MinimumBuild, MaximumBuild                                                                             uint32
+		MinimumCPUs                                                                                            uint16
+		MinimumTotalMemory, MinimumAvailableMemory, MinimumFreeDisk                                            uint64
+		VendorUI                                                                                               bool
 	}{
 		Plan: a.planDigest.String(), Catalog: a.catalogDigest.String(), Machine: a.machineDigest.String(),
 		Artifact: a.artifactSHA256.String(), Capability: a.capabilityPolicyDigest.String(),
@@ -440,6 +446,7 @@ func (a DesktopAuthority) computeDigest() runtimeinstall.Hash {
 		Executable: a.applicationExecutable, Docker: a.dockerCLIPath, ComposePlugin: a.composePluginPath,
 		ProbeImage: a.probeImage, ProbeContract: a.probeContractVersion,
 		MinimumWSL: a.minimumWSLVersion, ArtifactBytes: a.artifactBytes, VendorUI: a.vendorUIMandatory,
+		WSLDistribution:    a.wslDistributionName,
 		UnrelatedWorkloads: a.unrelatedWorkloads,
 	})
 	return runtimeinstall.Sum(encoded)
@@ -470,6 +477,7 @@ func (a DesktopAuthority) Valid() bool {
 		CapabilityPolicyDigest: a.capabilityPolicyDigest,
 		RebootExitCodes:        append([]uint32(nil), a.rebootExitCodes...), WindowsFeatures: append([]string(nil), a.windowsFeatures...),
 		MinimumWSLVersion: a.minimumWSLVersion, VendorUIMandatory: a.vendorUIMandatory,
+		WSLDistributionName: a.wslDistributionName,
 	})
 	return err == nil && restored.digest == a.digest && !a.digest.IsZero()
 }
@@ -641,6 +649,9 @@ func (a DesktopAuthority) WindowsFeatures() []string {
 
 // MinimumWSLVersion returns the exact WSL version floor.
 func (a DesktopAuthority) MinimumWSLVersion() string { return a.minimumWSLVersion }
+
+// WSLDistributionName returns the exact offline WSL distribution identity.
+func (a DesktopAuthority) WSLDistributionName() string { return a.wslDistributionName }
 
 // VendorUIMandatory reports whether vendor UI startup is required.
 func (a DesktopAuthority) VendorUIMandatory() bool { return a.vendorUIMandatory }

@@ -53,8 +53,10 @@ func createNativeDesktopMutationExchange(
 	ctx context.Context,
 	helper runtimeport.DesktopHelperAuthority,
 	request runtimeport.DesktopMutationRequest,
+	raw []byte,
 ) (nativeDesktopMutationExchange, error) {
-	if ctx == nil || ctx.Err() != nil || helper.Platform() != runtimeinstall.PlatformWindows {
+	if ctx == nil || ctx.Err() != nil || helper.Platform() != runtimeinstall.PlatformWindows ||
+		len(raw) == 0 || len(raw) > maximumPrivilegeWireBytes {
 		return nativeDesktopMutationExchange{}, runtimeport.ErrDesktopMutationIntegrity
 	}
 	directory, _, err := windowssecurity.OpenVerified(ctx, helper.ExchangeDirectory(), true, false, true)
@@ -71,11 +73,10 @@ func createNativeDesktopMutationExchange(
 	if err != nil {
 		return nativeDesktopMutationExchange{}, err
 	}
-	contents := request.CanonicalBytes()
-	written, writeError := file.Write(contents)
+	written, writeError := file.Write(raw)
 	syncError := file.Sync()
 	closeError := file.Close()
-	if writeError != nil || written != len(contents) || syncError != nil || closeError != nil {
+	if writeError != nil || written != len(raw) || syncError != nil || closeError != nil {
 		_ = os.Remove(requestPath)
 		return nativeDesktopMutationExchange{}, runtimeport.ErrDesktopMutationIntegrity
 	}

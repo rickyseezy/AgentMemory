@@ -16,6 +16,7 @@ type DesktopExecutionPolicyInput struct {
 	CapabilityPolicyDigest Digest
 	RollbackHeadroomBytes  uint64
 	MinimumWSLVersion      string
+	WSLDistributionName    string
 	WindowsFeatures        []string
 }
 
@@ -32,6 +33,7 @@ type DesktopExecutionPolicy struct {
 	capabilityPolicyDigest Digest
 	rollbackHeadroomBytes  uint64
 	minimumWSLVersion      string
+	wslDistributionName    string
 	windowsFeatures        []string
 }
 
@@ -52,9 +54,10 @@ func newDesktopExecutionPolicy(
 		input.ProbeImage != "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:"+input.ProbeImageDigest.Hex() ||
 		!RuntimeCapabilityPolicyDigest(capabilities).Equal(input.CapabilityPolicyDigest) ||
 		len(artifact.sources) != 1 ||
-		platform.operatingSystem == OSKindMacOS && input.MinimumWSLVersion != "" ||
+		platform.operatingSystem == OSKindMacOS && (input.MinimumWSLVersion != "" || input.WSLDistributionName != "") ||
 		platform.operatingSystem == OSKindMacOS && len(input.WindowsFeatures) != 0 ||
 		platform.operatingSystem == OSKindWindows && (input.MinimumWSLVersion != "2.1.5" ||
+			input.WSLDistributionName != "Ubuntu-24.04" ||
 			!slicesEqualStrings(input.WindowsFeatures, []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"})) {
 		return DesktopExecutionPolicy{}, ErrManifestIntegrity
 	}
@@ -65,8 +68,9 @@ func newDesktopExecutionPolicy(
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest, rollbackHeadroomBytes: input.RollbackHeadroomBytes,
-		minimumWSLVersion: input.MinimumWSLVersion,
-		windowsFeatures:   append([]string(nil), input.WindowsFeatures...),
+		minimumWSLVersion:   input.MinimumWSLVersion,
+		wslDistributionName: input.WSLDistributionName,
+		windowsFeatures:     append([]string(nil), input.WindowsFeatures...),
 	}, nil
 }
 
@@ -103,7 +107,7 @@ func desktopExecutionInputZero(input DesktopExecutionPolicyInput) bool {
 		input.DockerCLISHA256.IsZero() && input.ComposePluginSHA256.IsZero() &&
 		input.ProbeImageDigest.IsZero() && input.ProbeContractVersion == "" &&
 		input.CapabilityPolicyDigest.IsZero() && input.RollbackHeadroomBytes == 0 &&
-		input.MinimumWSLVersion == "" && len(input.WindowsFeatures) == 0
+		input.MinimumWSLVersion == "" && input.WSLDistributionName == "" && len(input.WindowsFeatures) == 0
 }
 
 // AcquisitionSafetyBytes returns the signed post-install free-space floor.
@@ -139,6 +143,9 @@ func (p DesktopExecutionPolicy) RollbackHeadroomBytes() uint64 { return p.rollba
 // MinimumWSLVersion returns the Windows WSL floor or empty on macOS.
 func (p DesktopExecutionPolicy) MinimumWSLVersion() string { return p.minimumWSLVersion }
 
+// WSLDistributionName returns the exact signed offline distribution identity.
+func (p DesktopExecutionPolicy) WSLDistributionName() string { return p.wslDistributionName }
+
 // WindowsFeatures returns the exact Windows optional-feature set.
 func (p DesktopExecutionPolicy) WindowsFeatures() []string {
 	return append([]string(nil), p.windowsFeatures...)
@@ -156,7 +163,8 @@ func (p DesktopExecutionPolicy) valid(
 		ProbeImage: p.probeImage, ProbeImageDigest: p.probeImageDigest,
 		ProbeContractVersion: p.probeContractVersion, CapabilityPolicyDigest: p.capabilityPolicyDigest,
 		RollbackHeadroomBytes: p.rollbackHeadroomBytes, MinimumWSLVersion: p.minimumWSLVersion,
-		WindowsFeatures: append([]string(nil), p.windowsFeatures...),
+		WSLDistributionName: p.wslDistributionName,
+		WindowsFeatures:     append([]string(nil), p.windowsFeatures...),
 	}, platform, artifact, capabilities)
 	return err == nil && validated.acquisitionSafetyBytes == p.acquisitionSafetyBytes &&
 		validated.minimumAvailableMemory == p.minimumAvailableMemory &&
@@ -167,6 +175,7 @@ func (p DesktopExecutionPolicy) valid(
 		validated.capabilityPolicyDigest == p.capabilityPolicyDigest &&
 		validated.rollbackHeadroomBytes == p.rollbackHeadroomBytes &&
 		validated.minimumWSLVersion == p.minimumWSLVersion &&
+		validated.wslDistributionName == p.wslDistributionName &&
 		slicesEqualStrings(validated.windowsFeatures, p.windowsFeatures)
 }
 

@@ -48,7 +48,6 @@ func TestPF001NativeReleaseStackRejectsEveryMissingOrInvalidTrustAuthority(t *te
 		{name: "clock", mutate: func(d *nativeReleaseStackDependencies) { d.Clock = nilClock }},
 		{name: "anchor", mutate: func(d *nativeReleaseStackDependencies) { d.AntiRollback = nilAnchor }},
 		{name: "manifest keys", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.ManifestKeys = nil }},
-		{name: "runtime helper receipt key", mutate: func(d *nativeReleaseStackDependencies) { d.Trust.RuntimeHelperReceiptKey = nil }},
 		{name: "runtime helper publisher certificates", mutate: func(d *nativeReleaseStackDependencies) {
 			d.Trust.RuntimeHelperPublisherCertificates = nil
 		}},
@@ -111,10 +110,9 @@ func nativeReleaseStackFixture(t testing.TB) nativeReleaseStackDependencies {
 	return nativeReleaseStackDependencies{
 		Source: &nativeReleaseSourceStub{}, Clock: &nativeReleaseClock{now: time.Now().UTC()}, AntiRollback: ports,
 		Trust: nativeReleaseTrustMaterial{
-			ManifestKeys:            map[string]ed25519.PublicKey{"release-root": manifestPublic},
-			HostPolicyKeys:          map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
-			RuntimeCatalogKeys:      map[string]ed25519.PublicKey{"runtime-catalog-root": manifestPublic},
-			RuntimeHelperReceiptKey: append(ed25519.PublicKey(nil), manifestPublic...),
+			ManifestKeys:       map[string]ed25519.PublicKey{"release-root": manifestPublic},
+			HostPolicyKeys:     map[string]ed25519.PublicKey{"host-policy-root": manifestPublic},
+			RuntimeCatalogKeys: map[string]ed25519.PublicKey{"runtime-catalog-root": manifestPublic},
 			RuntimeHelperPublisherCertificates: map[string]releaseinventory.Digest{
 				"runtime-helper-darwin-arm64":  releaseinventory.DigestBytes([]byte("helper publisher certificate darwin")),
 				"runtime-helper-windows-amd64": releaseinventory.DigestBytes([]byte("helper publisher certificate windows")),

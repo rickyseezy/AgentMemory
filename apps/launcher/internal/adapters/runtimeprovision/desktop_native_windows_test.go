@@ -71,6 +71,34 @@ func TestWindowsDesktopNativeOutputParsersAreClosed(t *testing.T) {
 			}
 		})
 	}
+
+	for _, test := range []struct {
+		name    string
+		output  []byte
+		want    string
+		version uint8
+		wantErr bool
+	}{
+		{name: "exact UTF-8", output: []byte("NAME STATE VERSION\r\nDebian Stopped 2\r\nUbuntu-24.04 Stopped 2\r\n"), want: "Ubuntu-24.04", version: 2},
+		{name: "exact UTF-16", output: windowsUTF16LE("NAME STATE VERSION\r\nUbuntu-24.04 Stopped 2\r\n"), want: "Ubuntu-24.04", version: 2},
+		{name: "absent", output: []byte("NAME STATE VERSION\r\nDebian Stopped 2\r\n")},
+		{name: "case substitution", output: []byte("NAME STATE VERSION\r\nubuntu-24.04 Stopped 2\r\n")},
+		{name: "WSL 1", output: []byte("NAME STATE VERSION\r\nUbuntu-24.04 Stopped 1\r\n"), wantErr: true},
+		{name: "unsafe name", output: []byte("NAME STATE VERSION\r\n../Ubuntu-24.04 Stopped 2\r\n"), wantErr: true},
+		{name: "duplicate", output: []byte("NAME STATE VERSION\r\nUbuntu-24.04 Stopped 2\r\nUbuntu-24.04 Stopped 2\r\n"), wantErr: true},
+	} {
+		test := test
+		t.Run("distribution "+test.name, func(t *testing.T) {
+			t.Parallel()
+			observed, version, err := parseWSLDistribution(test.output, "Ubuntu-24.04")
+			if test.wantErr && !errors.Is(err, ErrProvisionIntegrity) {
+				t.Fatalf("invalid WSL distribution error=%v", err)
+			}
+			if !test.wantErr && (err != nil || observed != test.want || version != test.version) {
+				t.Fatalf("WSL distribution=%q version=%d error=%v", observed, version, err)
+			}
+		})
+	}
 }
 
 func TestWindowsDesktopBoundedIOAndArtifactDigest(t *testing.T) {

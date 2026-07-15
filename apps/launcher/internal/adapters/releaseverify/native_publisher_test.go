@@ -37,6 +37,15 @@ func TestPF001NativePublisherPolicyAuthorizesOnlyExactEmbeddedBindings(t *testin
 	if err := verifier.VerifyNativePublisher(canceled, resource); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
+	wsl := nativePublisherResourceKind(
+		t, releaseinventory.ResourceKindRuntimeInstaller, "microsoft.publisher", "apple-developer-id-notarized-v1",
+	)
+	inputVerifier, err := NewNativePublisherPolicyVerifier(NativePublisherPolicyInput{
+		"apple-developer-id-notarized-v1": {"microsoft.publisher"},
+	})
+	if err != nil || inputVerifier.VerifyNativePublisher(t.Context(), wsl) != nil {
+		t.Fatalf("runtime installer publisher error=%v", err)
+	}
 }
 
 func TestPF001NativePublisherPolicyRejectsIncompleteOrAmbiguousPolicy(t *testing.T) {
@@ -59,6 +68,15 @@ func TestPF001NativePublisherPolicyRejectsIncompleteOrAmbiguousPolicy(t *testing
 }
 
 func nativePublisherResource(t testing.TB, identity, policy string) releaseinventory.Resource {
+	return nativePublisherResourceKind(t, releaseinventory.ResourceKindLauncher, identity, policy)
+}
+
+func nativePublisherResourceKind(
+	t testing.TB,
+	kind releaseinventory.ResourceKind,
+	identity string,
+	policy string,
+) releaseinventory.Resource {
 	t.Helper()
 	platform, err := releaseinventory.NewPlatform("darwin", "arm64")
 	if err != nil {
@@ -66,8 +84,15 @@ func nativePublisherResource(t testing.TB, identity, policy string) releaseinven
 	}
 	raw := []byte("launcher")
 	input := releaseinventory.ResourceInput{
-		ID: "launcher", Kind: releaseinventory.ResourceKindLauncher,
-		Purpose: releaseinventory.ResourcePurposeNativeLauncher, MediaType: releaseinventory.MediaTypeNativeExecutable,
+		ID: "native-subject", Kind: kind,
+		Purpose: map[releaseinventory.ResourceKind]releaseinventory.ResourcePurpose{
+			releaseinventory.ResourceKindLauncher:         releaseinventory.ResourcePurposeNativeLauncher,
+			releaseinventory.ResourceKindRuntimeInstaller: releaseinventory.ResourcePurposeRuntimeInstaller,
+		}[kind],
+		MediaType: map[releaseinventory.ResourceKind]string{
+			releaseinventory.ResourceKindLauncher:         releaseinventory.MediaTypeNativeExecutable,
+			releaseinventory.ResourceKindRuntimeInstaller: releaseinventory.MediaTypeRuntimeInstaller,
+		}[kind],
 		Platform: platform, Digest: releaseinventory.DigestBytes(raw), Size: uint64(len(raw)),
 		SourceRef: "bundle://launcher", SourceAllowlist: []string{"bundle://launcher"},
 		CycloneDXSBOMResourceID: "launcher-cyclonedx", SPDXSBOMResourceID: "launcher-spdx",

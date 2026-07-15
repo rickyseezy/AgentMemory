@@ -27,6 +27,10 @@ type DesktopHostBindingInput struct {
 // DesktopHostBinding is immutable non-catalog execution context.
 type DesktopHostBinding struct{ input DesktopHostBindingInput }
 
+// HomeDirectory returns the independently observed invoking-user home used by
+// native storage probes. It does not expose or broaden catalog authority.
+func (b DesktopHostBinding) HomeDirectory() string { return b.input.HomeDirectory }
+
 // NewDesktopHostBinding rejects cross-platform and ambient endpoint choices.
 func NewDesktopHostBinding(input DesktopHostBindingInput) (DesktopHostBinding, error) {
 	valid := !input.MachineDigest.IsZero() && input.PrincipalID == strings.TrimSpace(input.PrincipalID) &&
@@ -131,6 +135,7 @@ func (c VerifiedCatalog) DesktopAuthority(
 		UnrelatedWorkloads: plan.UnrelatedWorkloads(), CapabilityPolicyDigest: runtimeinstall.Hash(execution.CapabilityPolicyDigest()),
 		RebootExitCodes: c.manifest.Install().RebootExitCodes(), WindowsFeatures: execution.WindowsFeatures(),
 		MinimumWSLVersion: execution.MinimumWSLVersion(), VendorUIMandatory: c.manifest.Install().VendorUIMandatory(),
+		WSLDistributionName: execution.WSLDistributionName(),
 	}
 	authority, err := runtimeport.NewDesktopAuthority(input)
 	if err != nil || !authority.ValidFor(plan) {

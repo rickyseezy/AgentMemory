@@ -41,6 +41,7 @@ func TestDesktopAuthorityProjectsImmutableExactExecutionContract(t *testing.T) {
 		authority.ExecutablePublisherPolicyID() == "" ||
 		authority.ProbeImage() == "" || authority.ProbeImageDigest().IsZero() || authority.ProbeContractVersion() != "1" ||
 		authority.CapabilityPolicyDigest().IsZero() || authority.MinimumWSLVersion() != "2.1.5" ||
+		authority.WSLDistributionName() != "Ubuntu-24.04" ||
 		authority.VendorUIMandatory() {
 		t.Fatal("desktop authority omitted an execution-relevant field")
 	}
@@ -100,6 +101,15 @@ func TestDesktopHostEvidenceRejectsMalformedAndInsufficientObservations(t *testi
 			v.EnabledWindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform", "TelnetClient"}
 		}},
 		{name: "unsafe WSL", mutate: func(v *DesktopHostEvidenceInput) { v.WSLVersion = "latest" }},
+		{name: "unsafe WSL distribution", mutate: func(v *DesktopHostEvidenceInput) {
+			v.InstalledWSLDistribution = "../Ubuntu-24.04"
+		}},
+		{name: "WSL 1 distribution", mutate: func(v *DesktopHostEvidenceInput) {
+			v.InstalledWSLDistributionVersion = 1
+		}},
+		{name: "distribution without version", mutate: func(v *DesktopHostEvidenceInput) {
+			v.InstalledWSLDistributionVersion = 0
+		}},
 	}
 	for _, test := range invalid {
 		test := test
@@ -133,6 +143,13 @@ func TestDesktopHostEvidenceRejectsMalformedAndInsufficientObservations(t *testi
 		if evidence.Supports(authority) == nil || evidence.PrerequisitesReady(authority) {
 			t.Fatal("insufficient host evidence supported signed authority")
 		}
+	}
+	withoutDistribution := valid
+	withoutDistribution.InstalledWSLDistribution = ""
+	withoutDistribution.InstalledWSLDistributionVersion = 0
+	evidence, err := NewDesktopHostEvidence(withoutDistribution)
+	if err != nil || evidence.Supports(authority) != nil || evidence.PrerequisitesReady(authority) {
+		t.Fatalf("pre-install distribution evidence=%+v error=%v", evidence, err)
 	}
 
 	mac := desktopContractAuthority(t, runtimeinstall.PlatformDarwin)
@@ -549,6 +566,8 @@ func desktopHostInput(authority DesktopAuthority) DesktopHostEvidenceInput {
 	if authority.Platform() == runtimeinstall.PlatformWindows {
 		input.EnabledWindowsFeatures = authority.WindowsFeatures()
 		input.WSLVersion = authority.MinimumWSLVersion()
+		input.InstalledWSLDistribution = authority.WSLDistributionName()
+		input.InstalledWSLDistributionVersion = 2
 	}
 	return input
 }

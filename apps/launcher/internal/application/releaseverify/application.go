@@ -247,7 +247,8 @@ func (a *Application) verifyResources(
 		}
 		if subject.Kind() == releaseinventory.ResourceKindLauncher ||
 			subject.Kind() == releaseinventory.ResourceKindVerifier ||
-			subject.Kind() == releaseinventory.ResourceKindHelper {
+			subject.Kind() == releaseinventory.ResourceKindHelper ||
+			subject.Kind() == releaseinventory.ResourceKindRuntimeInstaller {
 			if err := a.nativePublisher.VerifyNativePublisher(ctx, subject); err != nil {
 				return mapNativePublisherError(err)
 			}

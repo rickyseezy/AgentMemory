@@ -69,19 +69,30 @@ func (f *nativePlatformRuntimeFactory) buildDesktopRuntimeApplication(
 		return nil, errNativeInstallerIntegrity
 	}
 	helperSet, err := f.desktopHelpers(f.release, verified)
-	if err != nil || nilAny(helperSet.authority) || nilAny(helperSet.publisher) {
+	if err != nil || nilAny(helperSet.authority) || nilAny(helperSet.publisher) || nilAny(helperSet.encoder) {
 		return nil, errNativeInstallerIntegrity
 	}
 	mutation, err := runtimeprovision.NewNativeDesktopMutationBroker(
 		runtimeprovision.NativeDesktopMutationDependencies{
-			Authority: helperSet.authority, Publisher: helperSet.publisher,
+			Authority: helperSet.authority, Publisher: helperSet.publisher, Encoder: helperSet.encoder,
 		},
 	)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	mutationAuthenticator, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(
-		f.release.runtimeHelperAuthenticationKey(),
+	resolvedHelper, err := helperSet.authority.ResolveDesktopHelperAuthority(ctx, desktop)
+	if err != nil || !resolvedHelper.ValidFor(desktop) ||
+		helperSet.publisher.VerifyDesktopHelperPublisher(ctx, resolvedHelper) != nil {
+		return nil, errNativeInstallerIntegrity
+	}
+	publicKeys, err := runtimeprovision.NewProtectedDesktopMutationReceiptPublicKeySource(
+		resolvedHelper.CanonicalPath(),
+	)
+	if err != nil {
+		return nil, errNativeInstallerIntegrity
+	}
+	mutationAuthenticator, err := runtimeprovision.NewProtectedEd25519DesktopMutationAuthenticator(
+		publicKeys, resolvedHelper.SHA256(),
 	)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
@@ -169,7 +180,11 @@ func buildNativeDesktopHelpers(
 	if err != nil {
 		return nativeDesktopHelperSet{}, errNativeInstallerIntegrity
 	}
-	return nativeDesktopHelperSet{authority: authority, publisher: publisher}, nil
+	encoder, err := buildNativeDesktopMutationEncoder(verified)
+	if err != nil {
+		return nativeDesktopHelperSet{}, errNativeInstallerIntegrity
+	}
+	return nativeDesktopHelperSet{authority: authority, publisher: publisher, encoder: encoder}, nil
 }
 
 type managedNativeRuntimeApplication struct {

@@ -1031,6 +1031,54 @@ func OpenVerifiedLockedRead(
 	return file, identity, nil
 }
 
+// OpenVerifiedForOwnerSIDLockedRead opens a regular owner-private handoff
+// file while denying concurrent write/delete and verifies it against an exact
+// invoking-user SID even when the caller is an elevated helper running under
+// a different token.
+func OpenVerifiedForOwnerSIDLockedRead(
+	ctx context.Context,
+	path string,
+	ownerSID string,
+) (*os.File, FileIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, FileIdentity{}, err
+	}
+	if err := ValidateLocalPath(path); err != nil {
+		return nil, FileIdentity{}, err
+	}
+	expected, err := windows.StringToSid(ownerSID)
+	if err != nil || expected == nil || !expected.IsValid() {
+		return nil, FileIdentity{}, errors.New("expected Windows owner SID is invalid")
+	}
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, FileIdentity{}, err
+	}
+	handle, err := windows.CreateFile(
+		pathPointer,
+		windows.GENERIC_READ|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, FileIdentity{}, err
+	}
+	file := os.NewFile(uintptr(handle), filepath.Base(path))
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, FileIdentity{}, errors.New("locked Windows owner file descriptor is invalid")
+	}
+	identity, err := verifyHandleForSID(ctx, handle, false, true, expected)
+	if err != nil {
+		_ = file.Close()
+		return nil, FileIdentity{}, err
+	}
+	return file, identity, nil
+}
+
 // VerifyOpened proves an already-open os.File handle.
 func VerifyOpened(ctx context.Context, file *os.File, wantDirectory, strictDACL bool) (FileIdentity, error) {
 	if file == nil {
@@ -1040,8 +1088,25 @@ func VerifyOpened(ctx context.Context, file *os.File, wantDirectory, strictDACL 
 }
 
 func verifyHandle(ctx context.Context, handle windows.Handle, wantDirectory, strictDACL bool) (FileIdentity, error) {
+	expectedSID, _, err := CurrentUserSID(ctx)
+	if err != nil {
+		return FileIdentity{}, err
+	}
+	return verifyHandleForSID(ctx, handle, wantDirectory, strictDACL, expectedSID)
+}
+
+func verifyHandleForSID(
+	ctx context.Context,
+	handle windows.Handle,
+	wantDirectory bool,
+	strictDACL bool,
+	expectedSID *windows.SID,
+) (FileIdentity, error) {
 	if err := ctx.Err(); err != nil {
 		return FileIdentity{}, err
+	}
+	if expectedSID == nil || !expectedSID.IsValid() {
+		return FileIdentity{}, errors.New("windows filesystem owner SID is invalid")
 	}
 	var information windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(handle, &information); err != nil {
@@ -1067,10 +1132,6 @@ func verifyHandle(ctx context.Context, handle windows.Handle, wantDirectory, str
 	)
 	if err != nil || securityDescriptor == nil {
 		return FileIdentity{}, fmt.Errorf("read Windows security descriptor: %w", err)
-	}
-	expectedSID, _, err := CurrentUserSID(ctx)
-	if err != nil {
-		return FileIdentity{}, err
 	}
 	if err := verifyOwnerDescriptor(securityDescriptor, expectedSID); err != nil {
 		return FileIdentity{}, err

@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,14 +22,8 @@ func TestPF001NativeReleaseAuthorityOwnsExactBundleAndCompleteTrustStack(t *test
 	if err != nil || authority.templates() == nil || authority.verifier() == nil ||
 		authority.hostVerification() == nil || authority.releaseVerification() == nil ||
 		authority.runtimeCatalogLoader() == nil || authority.runtimeCatalogSignatureVerifier() == nil ||
-		authority.runtimeCatalogPublisherVerifier() == nil ||
-		len(authority.runtimeHelperAuthenticationKey()) != ed25519.PublicKeySize {
+		authority.runtimeCatalogPublisherVerifier() == nil {
 		t.Fatalf("authority=%#v error=%v", authority, err)
-	}
-	helperKey := authority.runtimeHelperAuthenticationKey()
-	helperKey[0] ^= 0xff
-	if authority.runtimeHelperAuthenticationKey()[0] == helperKey[0] {
-		t.Fatal("runtime helper authentication key aliases caller memory")
 	}
 	if authority.runtimeHelperPublisherCertificateDigest("runtime-helper-darwin-arm64").IsZero() ||
 		authority.runtimeHelperPublisherCertificateDigest("runtime-helper-windows-amd64").IsZero() ||
@@ -106,7 +99,6 @@ func TestPF001NativeReleaseAuthorityFailsClosedBeforePublishingCapability(t *tes
 	if absent.templates() != nil || absent.verifier() != nil || absent.hostVerification() != nil ||
 		absent.releaseVerification() != nil || absent.runtimeCatalogLoader() != nil ||
 		absent.runtimeCatalogSignatureVerifier() != nil || absent.runtimeCatalogPublisherVerifier() != nil ||
-		len(absent.runtimeHelperAuthenticationKey()) != 0 ||
 		!absent.runtimeHelperPublisherCertificateDigest("resource").IsZero() {
 		t.Fatal("absent release authority exposed a capability")
 	}

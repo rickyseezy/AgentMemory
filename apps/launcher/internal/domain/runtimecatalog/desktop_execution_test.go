@@ -57,6 +57,9 @@ func TestDesktopExecutionPolicyRejectsEveryUnsignedOrCrossPlatformBoundary(t *te
 			})
 		},
 		"mac wsl": func(value *ManifestInput) { value.DesktopExecution.MinimumWSLVersion = "2.1.5" },
+		"mac wsl distribution": func(value *ManifestInput) {
+			value.DesktopExecution.WSLDistributionName = "Ubuntu-24.04"
+		},
 	} {
 		candidate := validManifestInput(t)
 		mutate(&candidate)
@@ -89,6 +92,50 @@ func TestDesktopExecutionPolicyRejectsEveryUnsignedOrCrossPlatformBoundary(t *te
 	linux.Terms.Presentation = TermsPresentationAgentMemory
 	if manifest, err := NewManifest(linux); err == nil || manifest.Valid() {
 		t.Fatal("Linux cell accepted desktop execution authority")
+	}
+}
+
+func TestDesktopExecutionPolicyBindsExactOfflineWSLDistribution(t *testing.T) {
+	t.Parallel()
+	windows := validManifestInput(t)
+	windows.CatalogID = "docker-desktop-windows-x86-64"
+	windows.Platform.OperatingSystem = OSKindWindows
+	windows.Platform.Architecture = ArchitectureX8664
+	windows.Platform.Distribution = "windows"
+	windows.Artifact.Publisher.Verification = NativeVerificationAuthenticode
+	windows.Artifact.Publisher.Identity = "microsoft-authenticode-docker-inc"
+	windows.Artifact.Publisher.SigningKeyIdentity = "docker-authenticode-2026"
+	windows.Install.Executable = InstallerExecutableWindowsHelper
+	windows.Install.RebootExitCodes = []uint32{1641, 3010}
+	windows.Artifact.Sources[0] = OfficialSourceInput{
+		Scheme: "https", Host: "desktop.docker.com", PathPrefix: "/win/main/amd64/",
+	}
+	windows.DesktopExecution.ArtifactFileName = "Docker Desktop Installer.exe"
+	windows.DesktopExecution.MinimumWSLVersion = "2.1.5"
+	windows.DesktopExecution.WSLDistributionName = "Ubuntu-24.04"
+	windows.DesktopExecution.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
+
+	manifest := mustManifest(t, windows)
+	policy, present := manifest.DesktopExecution()
+	if !present || policy.WSLDistributionName() != "Ubuntu-24.04" {
+		t.Fatalf("desktop execution policy=%+v present=%t", policy, present)
+	}
+	encoded, err := EncodeManifestV1(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeManifestV1(encoded)
+	decodedPolicy, present := decoded.DesktopExecution()
+	if err != nil || !present || decodedPolicy.WSLDistributionName() != "Ubuntu-24.04" ||
+		!decoded.Digest().Equal(manifest.Digest()) {
+		t.Fatalf("decoded policy=%+v present=%t error=%v", decodedPolicy, present, err)
+	}
+	for _, value := range []string{"", "ubuntu-24.04", "Ubuntu Latest", "../Ubuntu-24.04"} {
+		candidate := windows
+		candidate.DesktopExecution.WSLDistributionName = value
+		if manifest, err := NewManifest(candidate); err == nil || manifest.Valid() {
+			t.Fatalf("unsafe WSL distribution %q accepted", value)
+		}
 	}
 }
 

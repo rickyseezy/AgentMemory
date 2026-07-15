@@ -711,7 +711,7 @@ func releaseSubjectInput(
 		SourceAllowlist: []string{sourceRef},
 	}
 	if kind == releaseinventory.ResourceKindLauncher || kind == releaseinventory.ResourceKindVerifier ||
-		kind == releaseinventory.ResourceKindHelper {
+		kind == releaseinventory.ResourceKindHelper || kind == releaseinventory.ResourceKindRuntimeInstaller {
 		input.NativePublisherIdentity = "agentmemory.publisher"
 		input.NativePublisherPolicyID = "agentmemory-native-2026"
 	}
@@ -826,6 +826,8 @@ func releasePurpose(kind releaseinventory.ResourceKind) releaseinventory.Resourc
 		releaseinventory.ResourceKindInstallPlanTemplate: releaseinventory.ResourcePurposeInstallPlanTemplate,
 		releaseinventory.ResourceKindOfflineComponent:    releaseinventory.ResourcePurposeOfflineComponent,
 		releaseinventory.ResourceKindRuntimeCatalog:      releaseinventory.ResourcePurposeRuntimeCatalog,
+		releaseinventory.ResourceKindRuntimeInstaller:    releaseinventory.ResourcePurposeRuntimeInstaller,
+		releaseinventory.ResourceKindRuntimeDistribution: releaseinventory.ResourcePurposeRuntimeDistribution,
 		releaseinventory.ResourceKindCycloneDXSBOM:       releaseinventory.ResourcePurposeCycloneDXSBOM,
 		releaseinventory.ResourceKindSPDXSBOM:            releaseinventory.ResourcePurposeSPDXSBOM,
 		releaseinventory.ResourceKindProvenance:          releaseinventory.ResourcePurposeSLSAProvenance,
@@ -851,6 +853,8 @@ func releaseMediaType(kind releaseinventory.ResourceKind) string {
 		releaseinventory.ResourceKindInstallPlanTemplate: releaseinventory.MediaTypeInstallPlanTemplate,
 		releaseinventory.ResourceKindOfflineComponent:    releaseinventory.MediaTypeOfflineComponent,
 		releaseinventory.ResourceKindRuntimeCatalog:      releaseinventory.MediaTypeRuntimeCatalog,
+		releaseinventory.ResourceKindRuntimeInstaller:    releaseinventory.MediaTypeRuntimeInstaller,
+		releaseinventory.ResourceKindRuntimeDistribution: releaseinventory.MediaTypeRuntimeDistribution,
 		releaseinventory.ResourceKindCycloneDXSBOM:       releaseinventory.MediaTypeCycloneDX,
 		releaseinventory.ResourceKindSPDXSBOM:            releaseinventory.MediaTypeSPDX,
 		releaseinventory.ResourceKindProvenance:          releaseinventory.MediaTypeSLSAProvenance,

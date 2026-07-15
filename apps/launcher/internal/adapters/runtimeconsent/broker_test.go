@@ -250,7 +250,7 @@ func brokerDesktopAuthority(t testing.TB) runtimeport.DesktopAuthority {
 		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
 		ProbeContractVersion: "1", CapabilityPolicyDigest: runtimeinstall.Sum([]byte("policy")),
 		RebootExitCodes: []uint32{1641, 3010}, WindowsFeatures: []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"},
-		MinimumWSLVersion: "2.1.5", VendorUIMandatory: false,
+		MinimumWSLVersion: "2.1.5", WSLDistributionName: "Ubuntu-24.04", VendorUIMandatory: false,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -45,22 +45,24 @@ type DesktopAuthorityResolver interface {
 
 // DesktopHostEvidenceInput contains independently observed host facts.
 type DesktopHostEvidenceInput struct {
-	Platform               runtimeinstall.Platform
-	Architecture           runtimeinstall.Architecture
-	OSProduct              string
-	OSVersion              string
-	Build                  uint32
-	PrincipalID            string
-	MachineDigest          runtimeinstall.Hash
-	CPUs                   uint16
-	TotalMemory            uint64
-	AvailableMemory        uint64
-	FreeDisk               uint64
-	Virtualization         bool
-	LocalFilesystem        bool
-	AtRestEncryption       bool
-	EnabledWindowsFeatures []string
-	WSLVersion             string
+	Platform                        runtimeinstall.Platform
+	Architecture                    runtimeinstall.Architecture
+	OSProduct                       string
+	OSVersion                       string
+	Build                           uint32
+	PrincipalID                     string
+	MachineDigest                   runtimeinstall.Hash
+	CPUs                            uint16
+	TotalMemory                     uint64
+	AvailableMemory                 uint64
+	FreeDisk                        uint64
+	Virtualization                  bool
+	LocalFilesystem                 bool
+	AtRestEncryption                bool
+	EnabledWindowsFeatures          []string
+	WSLVersion                      string
+	InstalledWSLDistribution        string
+	InstalledWSLDistributionVersion uint8
 }
 
 // DesktopHostEvidence is a privacy-safe exact host observation.
@@ -76,9 +78,16 @@ func NewDesktopHostEvidence(input DesktopHostEvidenceInput) (DesktopHostEvidence
 		!safePrincipal(input.PrincipalID, input.Platform) || input.MachineDigest.IsZero() || input.CPUs == 0 ||
 		input.TotalMemory == 0 || input.AvailableMemory > input.TotalMemory || input.FreeDisk == 0 ||
 		input.Platform == runtimeinstall.PlatformDarwin &&
-			(len(input.EnabledWindowsFeatures) != 0 || input.WSLVersion != "") ||
+			(len(input.EnabledWindowsFeatures) != 0 || input.WSLVersion != "" || input.InstalledWSLDistribution != "" ||
+				input.InstalledWSLDistributionVersion != 0) ||
 		input.Platform == runtimeinstall.PlatformWindows && !validObservedWindowsFeatures(input.EnabledWindowsFeatures) ||
-		input.WSLVersion != "" && !safeVersion(input.WSLVersion) {
+		input.WSLVersion != "" && !safeVersion(input.WSLVersion) ||
+		input.InstalledWSLDistribution != "" && !safeAuthorityIdentifier(input.InstalledWSLDistribution, 128) {
+		return DesktopHostEvidence{}, ErrDesktopEvidenceIntegrity
+	}
+	if input.Platform == runtimeinstall.PlatformWindows &&
+		(input.InstalledWSLDistribution == "") != (input.InstalledWSLDistributionVersion == 0) ||
+		input.InstalledWSLDistributionVersion != 0 && input.InstalledWSLDistributionVersion != 2 {
 		return DesktopHostEvidence{}, ErrDesktopEvidenceIntegrity
 	}
 	copyInput := input
@@ -118,7 +127,8 @@ func (e DesktopHostEvidence) Supports(authority DesktopAuthority) error {
 		e.input.CPUs < authority.MinimumCPUs() || e.input.TotalMemory < authority.MinimumTotalMemory() ||
 		e.input.AvailableMemory < authority.MinimumAvailableMemory() || e.input.FreeDisk < authority.MinimumFreeDisk() ||
 		!e.input.Virtualization || !e.input.LocalFilesystem || !e.input.AtRestEncryption ||
-		e.input.WSLVersion != "" && compareNumericVersion(e.input.WSLVersion, authority.MinimumWSLVersion()) < 0 {
+		e.input.WSLVersion != "" && compareNumericVersion(e.input.WSLVersion, authority.MinimumWSLVersion()) < 0 ||
+		e.input.InstalledWSLDistribution != "" && e.input.InstalledWSLDistribution != authority.WSLDistributionName() {
 		return ErrDesktopEvidenceIntegrity
 	}
 	return nil
@@ -133,7 +143,9 @@ func (e DesktopHostEvidence) PrerequisitesReady(authority DesktopAuthority) bool
 		return true
 	}
 	return slices.Equal(e.input.EnabledWindowsFeatures, authority.WindowsFeatures()) &&
-		e.input.WSLVersion != "" && compareNumericVersion(e.input.WSLVersion, authority.MinimumWSLVersion()) >= 0
+		e.input.WSLVersion != "" && compareNumericVersion(e.input.WSLVersion, authority.MinimumWSLVersion()) >= 0 &&
+		e.input.InstalledWSLDistribution == authority.WSLDistributionName() &&
+		e.input.InstalledWSLDistributionVersion == 2
 }
 
 // Digest returns the complete immutable host observation digest.

@@ -28,7 +28,6 @@ type nativeReleaseTrustMaterial struct {
 	ManifestKeys                       map[string]ed25519.PublicKey
 	HostPolicyKeys                     map[string]ed25519.PublicKey
 	RuntimeCatalogKeys                 map[string]ed25519.PublicKey
-	RuntimeHelperReceiptKey            ed25519.PublicKey
 	RuntimeHelperPublisherCertificates map[string]releaseinventory.Digest
 	RuntimePublishers                  []runtimeprovision.RuntimePublisherPolicyInput
 	Offline                            releaseverifyadapter.OfflineTrustPolicyInput
@@ -58,9 +57,7 @@ func newNativeReleaseStack(dependencies nativeReleaseStackDependencies) (nativeR
 	if nilAny(dependencies.Source) || nilAny(dependencies.Clock) || nilAny(dependencies.AntiRollback) {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
-	if _, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(
-		dependencies.Trust.RuntimeHelperReceiptKey,
-	); err != nil || !validNativeHelperCertificateBindings(dependencies.Trust.RuntimeHelperPublisherCertificates) {
+	if !validNativeHelperCertificateBindings(dependencies.Trust.RuntimeHelperPublisherCertificates) {
 		return nativeReleaseStack{}, firststartapp.ErrIntegrity
 	}
 	signature, err := releaseverifyadapter.NewEd25519KeyIDVerifier(dependencies.Trust.ManifestKeys)

@@ -99,9 +99,13 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	if err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
-	runtimeHelperReceiptKey, err := decodeNativeReleasePublicKey(document.RuntimeHelperReceiptKey)
-	if err != nil {
-		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+	// Pre-release schema-v1 documents may contain the former static receipt
+	// key. It is validated when present but never trusted: production desktop
+	// helpers create a protected per-machine signing identity on first use.
+	if document.RuntimeHelperReceiptKey != "" {
+		if _, err := decodeNativeReleasePublicKey(document.RuntimeHelperReceiptKey); err != nil {
+			return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
+		}
 	}
 	runtimeHelperPublisherCertificates, err := decodeNativeReleaseDigestBindings(
 		document.RuntimeHelperPublisherCertificates,
@@ -138,7 +142,6 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 	trust := nativeReleaseTrustMaterial{
 		ManifestKeys: manifestKeys, HostPolicyKeys: hostPolicyKeys,
 		RuntimeCatalogKeys:                 runtimeCatalogKeys,
-		RuntimeHelperReceiptKey:            runtimeHelperReceiptKey,
 		RuntimeHelperPublisherCertificates: runtimeHelperPublisherCertificates,
 		RuntimePublishers:                  append([]runtimeprovision.RuntimePublisherPolicyInput(nil), document.RuntimePublishers...),
 		Offline: releaseverifyadapter.OfflineTrustPolicyInput{
@@ -163,9 +166,6 @@ func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := runtimeprovision.NewCatalogSignatureVerifier(trust.RuntimeCatalogKeys); err != nil {
-		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
-	}
-	if _, err := runtimeprovision.NewEd25519DesktopMutationAuthenticator(trust.RuntimeHelperReceiptKey); err != nil {
 		return nativeReleaseTrustMaterial{}, errNativeInstallerIntegrity
 	}
 	if _, err := runtimeprovision.NewRuntimePublisherPolicyVerifier(trust.RuntimePublishers); err != nil {

@@ -12,6 +12,7 @@ func createNativeDesktopMutationExchange(
 	ctx context.Context,
 	_ runtimeport.DesktopHelperAuthority,
 	_ runtimeport.DesktopMutationRequest,
+	_ []byte,
 ) (nativeDesktopMutationExchange, error) {
 	if ctx == nil || ctx.Err() != nil {
 		return nativeDesktopMutationExchange{}, context.Canceled

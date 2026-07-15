@@ -216,6 +216,7 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 	}
 	windows.DesktopExecution.ArtifactFileName = "Docker Desktop Installer.exe"
 	windows.DesktopExecution.MinimumWSLVersion = "2.1.5"
+	windows.DesktopExecution.WSLDistributionName = "Ubuntu-24.04"
 	windows.DesktopExecution.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 	windowsManifest := mustManifest(t, windows)
 	if windowsManifest.Artifact().Publisher().Verification() != NativeVerificationAuthenticode {
@@ -228,6 +229,12 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 	linux.Platform.Architecture = ArchitectureX8664
 	linux.Platform.Edition = "workstation"
 	linux.Platform.Distribution = "ubuntu"
+	linux.Platform.MinimumOSVersion = "24.4.0"
+	linux.Platform.MaximumOSVersion = "24.4.0"
+	linux.Platform.MinimumBuild = 1
+	linux.Platform.MaximumBuild = 999999
+	linux.Platform.MinimumMemoryBytes = 16 << 30
+	linux.Platform.MinimumFreeDiskBytes = 30 << 30
 	linux.Runtime.Product = RuntimeProductDockerEngine
 	linux.Runtime.Components = append(linux.Runtime.Components, RuntimeComponentInput{
 		Name: ComponentRootlessExtras, Version: "28.3.2",
@@ -248,7 +255,12 @@ func TestCatalogSupportsClosedWindowsAndLinuxPolicyVariants(t *testing.T) {
 		}},
 	}
 	linux.CapabilityProbes = linuxCapabilities()
-	linux.Terms.Presentation = TermsPresentationAgentMemory
+	linux.Terms = TermsPolicyInput{
+		ID: "docker-engine-open-source-licenses", Version: "apache-2.0",
+		URL:          OfficialSourceInput{Scheme: "https", Host: "docs.docker.com", PathPrefix: "/engine/"},
+		Digest:       DigestBytes([]byte("docker engine open-source licenses")),
+		Presentation: TermsPresentationAgentMemory,
+	}
 	linuxManifest := mustManifest(t, linux)
 	linuxExecution, present := linuxManifest.LinuxExecution()
 	if linuxManifest.Runtime().Product() != RuntimeProductDockerEngine ||

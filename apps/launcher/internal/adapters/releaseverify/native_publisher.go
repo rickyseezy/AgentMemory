@@ -63,7 +63,8 @@ func (v *NativePublisherPolicyVerifier) VerifyNativePublisher(
 	switch resource.Kind() {
 	case releaseinventory.ResourceKindLauncher,
 		releaseinventory.ResourceKindHelper,
-		releaseinventory.ResourceKindVerifier:
+		releaseinventory.ResourceKindVerifier,
+		releaseinventory.ResourceKindRuntimeInstaller:
 	default:
 		return appreleaseverify.ErrNativePublisherInvalid
 	}

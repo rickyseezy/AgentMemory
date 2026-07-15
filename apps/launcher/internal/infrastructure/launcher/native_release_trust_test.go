@@ -19,7 +19,7 @@ func TestPF001NativeReleaseTrustDecodesOnlyCompleteEmbeddedPublicAuthority(t *te
 	document := nativeReleaseTrustFixture()
 	trust, err := decodeNativeReleaseTrust(encodeNativeReleaseTrust(t, document))
 	if err != nil || len(trust.ManifestKeys) != 1 || len(trust.HostPolicyKeys) != 1 ||
-		len(trust.RuntimeCatalogKeys) != 1 || len(trust.RuntimeHelperReceiptKey) != ed25519.PublicKeySize ||
+		len(trust.RuntimeCatalogKeys) != 1 ||
 		len(trust.RuntimeHelperPublisherCertificates) != 2 ||
 		len(trust.RuntimePublishers) != 1 ||
 		len(trust.Offline.RevocationAuthorities) != 1 || len(trust.Offline.TimeAuthorities) != 1 ||
@@ -51,12 +51,11 @@ func TestPF001ReleaseAssemblerUsesTheProductionTrustDecoder(t *testing.T) {
 func TestPF001NativeReleaseTrustRejectsEveryIncompleteSemanticAuthority(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*nativeReleaseTrustDocument){
-		"schema":                     func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
-		"manifest keys":              func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
-		"host policy keys":           func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
-		"runtime catalog keys":       func(document *nativeReleaseTrustDocument) { document.RuntimeCatalogKeys = nil },
-		"runtime helper receipt key": func(document *nativeReleaseTrustDocument) { document.RuntimeHelperReceiptKey = "" },
-		"runtime helper receipt key bytes": func(document *nativeReleaseTrustDocument) {
+		"schema":               func(document *nativeReleaseTrustDocument) { document.SchemaVersion++ },
+		"manifest keys":        func(document *nativeReleaseTrustDocument) { document.ManifestKeys = nil },
+		"host policy keys":     func(document *nativeReleaseTrustDocument) { document.HostPolicyKeys = nil },
+		"runtime catalog keys": func(document *nativeReleaseTrustDocument) { document.RuntimeCatalogKeys = nil },
+		"legacy runtime helper receipt key bytes": func(document *nativeReleaseTrustDocument) {
 			document.RuntimeHelperReceiptKey = base64.StdEncoding.EncodeToString([]byte("short"))
 		},
 		"runtime helper publisher certificates": func(document *nativeReleaseTrustDocument) {

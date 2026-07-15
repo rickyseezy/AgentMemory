@@ -96,31 +96,50 @@ func (v *nativeVerifiedPrivilegeReleaseAuthority) VerifyPrivilegeReleaseAuthorit
 	if err != nil {
 		return nativePrivilegeReleaseAuthority{}, nativePrivilegeContextOrIntegrity(ctx)
 	}
-	catalog, catalogFound := releaseResourceByID(signed.Manifest(), catalogID)
-	helper, helperFound := releaseResourceByID(signed.Manifest(), helperID)
-	verifiedCatalog, catalogVerified := inventory.Resource(catalogID)
-	verifiedHelper, helperVerified := inventory.Resource(helperID)
-	if !catalogFound || !helperFound || !catalogVerified || !helperVerified ||
-		!verifiedCatalog.Authorizes(catalog) || !verifiedHelper.Authorizes(helper) ||
-		inventory.ManifestDigest() != signed.Manifest().Digest() {
-		return nativePrivilegeReleaseAuthority{}, runtimeport.ErrPrivilegeIntegrity
-	}
-	authority, err := newNativePrivilegeReleaseAuthority(inventory.ManifestDigest(), catalog, helper)
+	authority, err := selectNativePrivilegeReleaseAuthority(
+		signed.Manifest().Digest(), signed.Manifest().Resources(), catalogID, helperID,
+		nativeVerifiedDesktopResourceAuthorizer{inventory: inventory},
+	)
 	if err != nil {
 		return nativePrivilegeReleaseAuthority{}, runtimeport.ErrPrivilegeIntegrity
 	}
 	return authority, nil
 }
 
+func selectNativePrivilegeReleaseAuthority(
+	manifestDigest releaseinventory.Digest,
+	resources []releaseinventory.Resource,
+	catalogID string,
+	helperID string,
+	authorizer nativeDesktopResourceAuthorizer,
+) (nativePrivilegeReleaseAuthority, error) {
+	if manifestDigest.IsZero() || catalogID == "" || helperID == "" || catalogID == helperID || nilAny(authorizer) {
+		return nativePrivilegeReleaseAuthority{}, runtimeport.ErrPrivilegeIntegrity
+	}
+	catalog, catalogFound := releaseResourceByIDFromResources(resources, catalogID)
+	helper, helperFound := releaseResourceByIDFromResources(resources, helperID)
+	if !catalogFound || !helperFound || !authorizer.Authorizes(catalog) || !authorizer.Authorizes(helper) {
+		return nativePrivilegeReleaseAuthority{}, runtimeport.ErrPrivilegeIntegrity
+	}
+	return newNativePrivilegeReleaseAuthority(manifestDigest, catalog, helper)
+}
+
 func releaseResourceByID(
 	manifest releaseinventory.Manifest,
+	resourceID string,
+) (releaseinventory.Resource, bool) {
+	return releaseResourceByIDFromResources(manifest.Resources(), resourceID)
+}
+
+func releaseResourceByIDFromResources(
+	resources []releaseinventory.Resource,
 	resourceID string,
 ) (releaseinventory.Resource, bool) {
 	if resourceID == "" {
 		return releaseinventory.Resource{}, false
 	}
 	var selected releaseinventory.Resource
-	for _, resource := range manifest.Resources() {
+	for _, resource := range resources {
 		if resource.ID() != resourceID {
 			continue
 		}

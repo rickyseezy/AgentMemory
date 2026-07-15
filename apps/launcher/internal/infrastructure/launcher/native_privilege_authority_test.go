@@ -28,6 +28,20 @@ func TestPF006NativePrivilegeAuthorityIndependentlyJoinsReleaseCatalogPlanAndSel
 	if err != nil {
 		t.Fatal(err)
 	}
+	selected, err := selectNativePrivilegeReleaseAuthority(
+		releaseAuthority.manifestDigest, []releaseinventory.Resource{catalog, helper},
+		catalog.ID(), helper.ID(),
+		nativeDesktopResourceAuthorizerStub{catalog.ID(): true, helper.ID(): true},
+	)
+	if err != nil || !selected.valid() {
+		t.Fatalf("selected release valid=%t error=%v", selected.valid(), err)
+	}
+	if selected, selectionError := selectNativePrivilegeReleaseAuthority(
+		releaseAuthority.manifestDigest, []releaseinventory.Resource{catalog, helper},
+		catalog.ID(), helper.ID(), nativeDesktopResourceAuthorizerStub{helper.ID(): true},
+	); selectionError == nil || selected.valid() {
+		t.Fatalf("unauthorized catalog valid=%t error=%v", selected.valid(), selectionError)
+	}
 	releases := &nativePrivilegeReleaseAuthorityStub{authority: releaseAuthority}
 	catalogs := &nativePrivilegeCatalogAuthorityStub{authority: authority}
 	self := &nativePrivilegeHelperSelfStub{digest: runtimeinstall.Hash(helper.Digest())}
@@ -157,6 +171,12 @@ func TestPF006VerifiedPrivilegeAuthorityAdaptersRejectUnverifiedTransportBeforeP
 	}
 	if resource, found := releaseResourceByID(releaseinventory.Manifest{}, ""); found || resource.ID() != "" {
 		t.Fatalf("empty resource ID=%+v found=%t", resource, found)
+	}
+	duplicate := nativeRuntimeCatalogResource(t, []byte(`{"duplicate":true}`))
+	if resource, found := releaseResourceByIDFromResources(
+		[]releaseinventory.Resource{duplicate, duplicate}, duplicate.ID(),
+	); found || resource.ID() != "" {
+		t.Fatalf("duplicate resource=%+v found=%t", resource, found)
 	}
 
 	if adapter, err := newNativeVerifiedPrivilegeCatalogAuthority(nil, &nativePrivilegeLinuxHostStub{}); adapter != nil || err == nil {

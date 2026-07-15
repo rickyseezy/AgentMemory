@@ -11,6 +11,7 @@ import (
 type nativeDesktopMutationDependencies struct {
 	Authority runtimeport.DesktopHelperAuthorityResolver
 	Publisher runtimeport.DesktopHelperPublisherVerifier
+	Encoder   DesktopMutationRequestEncoder
 }
 
 // NativeDesktopMutationDependencies are mandatory signed-helper boundaries.
@@ -19,6 +20,14 @@ type NativeDesktopMutationDependencies = nativeDesktopMutationDependencies
 type nativeDesktopMutationBroker struct {
 	authority runtimeport.DesktopHelperAuthorityResolver
 	publisher runtimeport.DesktopHelperPublisherVerifier
+	encoder   DesktopMutationRequestEncoder
+}
+
+// DesktopMutationRequestEncoder binds a transient mutation request to the
+// independently verifiable signed release, catalog, and canonical plan carried
+// to the elevated helper.
+type DesktopMutationRequestEncoder interface {
+	EncodeDesktopMutationRequest(context.Context, runtimeport.DesktopMutationRequest) ([]byte, error)
 }
 
 // NewNativeDesktopMutationBroker constructs the production Authorization
@@ -26,10 +35,13 @@ type nativeDesktopMutationBroker struct {
 func NewNativeDesktopMutationBroker(
 	dependencies NativeDesktopMutationDependencies,
 ) (runtimeport.DesktopMutationBroker, error) {
-	if desktopMutationNil(dependencies.Authority) || desktopMutationNil(dependencies.Publisher) {
+	if desktopMutationNil(dependencies.Authority) || desktopMutationNil(dependencies.Publisher) ||
+		desktopMutationNil(dependencies.Encoder) {
 		return nil, ErrProvisionIntegrity
 	}
-	return &nativeDesktopMutationBroker{authority: dependencies.Authority, publisher: dependencies.Publisher}, nil
+	return &nativeDesktopMutationBroker{
+		authority: dependencies.Authority, publisher: dependencies.Publisher, encoder: dependencies.Encoder,
+	}, nil
 }
 
 func desktopMutationNil(value any) bool {
@@ -52,7 +64,15 @@ func (b *nativeDesktopMutationBroker) ExecuteDesktopMutation(
 	ctx context.Context,
 	request runtimeport.DesktopMutationRequest,
 ) (runtimeport.DesktopMutationReceipt, error) {
-	if b == nil || ctx == nil || ctx.Err() != nil || len(request.CanonicalBytes()) == 0 || request.Digest().IsZero() {
+	if b == nil || ctx == nil || ctx.Err() != nil || desktopMutationNil(b.encoder) ||
+		len(request.CanonicalBytes()) == 0 || request.Digest().IsZero() {
+		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
+	}
+	raw, err := b.encoder.EncodeDesktopMutationRequest(ctx, request)
+	if err != nil || len(raw) == 0 {
+		if contextError := ctx.Err(); contextError != nil {
+			return runtimeport.DesktopMutationReceipt{}, contextError
+		}
 		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
 	}
 	helper, err := b.authority.ResolveDesktopHelperAuthority(ctx, request.Authority())
@@ -62,7 +82,7 @@ func (b *nativeDesktopMutationBroker) ExecuteDesktopMutation(
 	if !helper.ValidFor(request.Authority()) || b.publisher.VerifyDesktopHelperPublisher(ctx, helper) != nil {
 		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
 	}
-	exchange, err := createNativeDesktopMutationExchange(ctx, helper, request)
+	exchange, err := createNativeDesktopMutationExchange(ctx, helper, request, raw)
 	if err != nil {
 		return runtimeport.DesktopMutationReceipt{}, errors.Join(runtimeport.ErrDesktopMutationUnavailable, err)
 	}
@@ -73,11 +93,11 @@ func (b *nativeDesktopMutationBroker) ExecuteDesktopMutation(
 	if err := executeNativeDesktopHelper(ctx, helper, exchange.requestPath, request.Operation()); err != nil {
 		return runtimeport.DesktopMutationReceipt{}, err
 	}
-	raw, err := exchange.readReceipt(ctx)
+	receiptRaw, err := exchange.readReceipt(ctx)
 	if err != nil {
 		return runtimeport.DesktopMutationReceipt{}, errors.Join(runtimeport.ErrDesktopMutationIntegrity, err)
 	}
-	receipt, err := runtimeport.DecodeDesktopMutationReceiptV1(raw)
+	receipt, err := runtimeport.DecodeDesktopMutationReceiptV1(receiptRaw)
 	if err != nil {
 		return runtimeport.DesktopMutationReceipt{}, runtimeport.ErrDesktopMutationIntegrity
 	}

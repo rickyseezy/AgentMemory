@@ -114,7 +114,8 @@ func (p *nativeDesktopHostProbe) ProbeDesktopHost(
 	}
 	features, featureError := queryWindowsDesktopFeatures(ctx, authority)
 	wslVersion, wslError := queryWindowsWSLVersion(ctx, authority)
-	if featureError != nil || wslError != nil {
+	wslDistribution, distributionVersion, distributionError := queryWindowsWSLDistribution(ctx, authority)
+	if featureError != nil || wslError != nil || distributionError != nil {
 		return runtimeport.DesktopHostEvidence{}, ErrProbeFailed
 	}
 	return runtimeport.NewDesktopHostEvidence(runtimeport.DesktopHostEvidenceInput{
@@ -124,6 +125,7 @@ func (p *nativeDesktopHostProbe) ProbeDesktopHost(
 		TotalMemory: memory.TotalPhysical, AvailableMemory: memory.AvailablePhysical, FreeDisk: freeDisk,
 		Virtualization: true, LocalFilesystem: true, AtRestEncryption: true,
 		EnabledWindowsFeatures: features, WSLVersion: wslVersion,
+		InstalledWSLDistribution: wslDistribution, InstalledWSLDistributionVersion: distributionVersion,
 	})
 }
 
@@ -250,6 +252,83 @@ func parseWSLVersion(output []byte) (string, error) {
 		return strings.Join(parts[:3], "."), nil
 	}
 	return "", nil
+}
+
+func queryWindowsWSLDistribution(
+	ctx context.Context,
+	authority runtimeport.DesktopAuthority,
+) (string, uint8, error) {
+	systemDirectory, err := windows.GetSystemDirectory()
+	if err != nil {
+		return "", 0, ErrProbeFailed
+	}
+	wsl := filepath.Join(systemDirectory, "wsl.exe")
+	if _, statError := os.Lstat(wsl); errors.Is(statError, os.ErrNotExist) {
+		return "", 0, nil
+	}
+	if !verifyWindowsNativeTool(wsl) {
+		return "", 0, ErrProvisionIntegrity
+	}
+	output, err := runWindowsNativeTool(ctx, wsl, []string{"--list", "--verbose"}, authority.HomeDirectory())
+	if err != nil {
+		return "", 0, err
+	}
+	return parseWSLDistribution(output, authority.WSLDistributionName())
+}
+
+func parseWSLDistribution(output []byte, wanted string) (string, uint8, error) {
+	if wanted == "" || !validWindowsWSLDistributionToken(wanted) {
+		return "", 0, ErrProvisionIntegrity
+	}
+	found := false
+	headerSeen := false
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(normalizeWindowsToolText(output), "\n") {
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "*"))
+		if len(fields) == 0 {
+			continue
+		}
+		last := fields[len(fields)-1]
+		if last != "1" && last != "2" {
+			if headerSeen || len(seen) != 0 {
+				return "", 0, ErrProvisionIntegrity
+			}
+			headerSeen = true
+			continue
+		}
+		name := fields[0]
+		if len(fields) < 3 || !validWindowsWSLDistributionToken(name) {
+			return "", 0, ErrProvisionIntegrity
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return "", 0, ErrProvisionIntegrity
+		}
+		seen[name] = struct{}{}
+		if name == wanted {
+			if last != "2" {
+				return "", 0, ErrProvisionIntegrity
+			}
+			found = true
+		}
+	}
+	if found {
+		return wanted, 2, nil
+	}
+	return "", 0, nil
+}
+
+func validWindowsWSLDistributionToken(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func normalizeWindowsToolText(input []byte) string {

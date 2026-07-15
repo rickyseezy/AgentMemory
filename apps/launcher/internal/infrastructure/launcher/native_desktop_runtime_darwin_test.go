@@ -4,7 +4,6 @@ package launcher
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"testing"
 
@@ -60,12 +59,22 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 	)
 	resolver := &nativeDesktopAuthorityStub{authority: desktop}
 	artifacts := &nativeDesktopArtifactStub{}
-	helper := &nativeDesktopHelperStub{}
+	helperAuthority, err := runtimeport.NewDesktopHelperAuthority(runtimeport.DesktopHelperAuthorityInput{
+		Platform: desktop.Platform(), Architecture: desktop.Architecture(), PlanDigest: desktop.PlanDigest(),
+		PrincipalID: desktop.PrincipalID(), MachineDigest: desktop.MachineDigest(),
+		CanonicalPath: "/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper",
+		SHA256:        runtimeinstall.Sum([]byte("helper")), PublisherIdentity: "agentmemory.publisher",
+		PublisherCertificate:  runtimeinstall.Sum([]byte("certificate")),
+		ReleaseManifestDigest: runtimeinstall.Sum([]byte("release")),
+		ExchangeDirectory:     "/Users/agentmemory/Library/Application Support/AgentMemory/bootstrap/test/native",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := &nativeDesktopHelperStub{helper: helperAuthority}
 	factory := &nativePlatformRuntimeFactory{
 		composition: &composition,
-		release: &nativeReleaseAuthority{
-			runtimeHelperReceiptKey: ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)),
-		},
+		release:     &nativeReleaseAuthority{},
 		desktopAuthority: func(
 			context.Context, nativeVerifiedRuntimeExecution, *nativeReleaseAuthority,
 		) (nativeDesktopAuthoritySet, error) {
@@ -79,7 +88,7 @@ func TestPF006DarwinDesktopRuntimeBuildsCompleteOperationScopedApplication(t *te
 		desktopHelpers: func(
 			*nativeReleaseAuthority, nativeVerifiedRuntimeExecution,
 		) (nativeDesktopHelperSet, error) {
-			return nativeDesktopHelperSet{authority: helper, publisher: helper}, nil
+			return nativeDesktopHelperSet{authority: helper, publisher: helper, encoder: helper}, nil
 		},
 	}
 	application, err := factory.buildDesktopRuntimeApplication(t.Context(), nativeVerifiedRuntimeExecution{
@@ -171,13 +180,15 @@ func (*nativeDesktopArtifactStub) VerifyDesktopArtifact(
 	return runtimeport.DesktopArtifactEvidence{}, nil
 }
 
-type nativeDesktopHelperStub struct{}
+type nativeDesktopHelperStub struct {
+	helper runtimeport.DesktopHelperAuthority
+}
 
-func (*nativeDesktopHelperStub) ResolveDesktopHelperAuthority(
+func (s *nativeDesktopHelperStub) ResolveDesktopHelperAuthority(
 	context.Context,
 	runtimeport.DesktopAuthority,
 ) (runtimeport.DesktopHelperAuthority, error) {
-	return runtimeport.DesktopHelperAuthority{}, nil
+	return s.helper, nil
 }
 
 func (*nativeDesktopHelperStub) VerifyDesktopHelperPublisher(
@@ -185,4 +196,11 @@ func (*nativeDesktopHelperStub) VerifyDesktopHelperPublisher(
 	runtimeport.DesktopHelperAuthority,
 ) error {
 	return nil
+}
+
+func (*nativeDesktopHelperStub) EncodeDesktopMutationRequest(
+	context.Context,
+	runtimeport.DesktopMutationRequest,
+) ([]byte, error) {
+	return []byte(`{"signed":"desktop-mutation"}`), nil
 }

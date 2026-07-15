@@ -765,7 +765,8 @@ func fixtureSubjectInput(id string, kind ResourceKind, platform Platform, digest
 		Platform: platform, Digest: digest, Size: size, SourceRef: sourceRef,
 		SourceAllowlist: []string{sourceRef},
 	}
-	if kind == ResourceKindLauncher || kind == ResourceKindVerifier || kind == ResourceKindHelper {
+	if kind == ResourceKindLauncher || kind == ResourceKindVerifier || kind == ResourceKindHelper ||
+		kind == ResourceKindRuntimeInstaller {
 		input.NativePublisherIdentity = "agentmemory.publisher"
 		input.NativePublisherPolicyID = "agentmemory-native-2026"
 	}

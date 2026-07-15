@@ -182,8 +182,9 @@ func desktopExecutionInputFromCanonical(
 		DockerCLISHA256: dockerCLIDigest, ComposePluginSHA256: composePluginDigest,
 		ProbeImageDigest: probeDigest, ProbeContractVersion: document.ProbeContractVersion,
 		CapabilityPolicyDigest: capabilityDigest, RollbackHeadroomBytes: document.RollbackHeadroomBytes,
-		MinimumWSLVersion: document.MinimumWSLVersion,
-		WindowsFeatures:   append([]string(nil), document.WindowsFeatures...),
+		MinimumWSLVersion:   document.MinimumWSLVersion,
+		WSLDistributionName: document.WSLDistributionName,
+		WindowsFeatures:     append([]string(nil), document.WindowsFeatures...),
 	}, nil
 }
 

@@ -1031,6 +1031,8 @@ func linuxManifestBindingsValid(
 		artifact.publisher.packageIdentity != "docker-engine-package-set" ||
 		install.executable != InstallerExecutableRootlessSetup ||
 		install.serviceIdentity != policy.serviceID ||
+		terms.id != "docker-engine-open-source-licenses" || terms.url.Scheme() != "https" ||
+		terms.url.Host() != "docs.docker.com" || terms.url.PathPrefix() != "/engine/" ||
 		terms.presentation != TermsPresentationAgentMemory ||
 		!LinuxCapabilityPolicyDigest(capabilities).Equal(policy.capabilityPolicyDigest) {
 		return false

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 
+	runtimeprovisionadapter "github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
@@ -23,6 +24,7 @@ type nativeDesktopArtifactSet struct {
 type nativeDesktopHelperSet struct {
 	authority runtimeport.DesktopHelperAuthorityResolver
 	publisher runtimeport.DesktopHelperPublisherVerifier
+	encoder   runtimeprovisionadapter.DesktopMutationRequestEncoder
 }
 
 type nativeDesktopAuthorityBuilder func(
@@ -60,7 +62,7 @@ func newNativePlatformRuntimeFactory(
 	if composition == nil || composition.runtimeState == nil || composition.consentBroker == nil ||
 		composition.consentRepository == nil || nilAny(composition.replayJournals) ||
 		composition.artifactStore == nil || release == nil || release.verifier() == nil ||
-		len(release.runtimeHelperAuthenticationKey()) == 0 || nilAny(artifacts) {
+		nilAny(artifacts) {
 		return nil, errNativeInstallerIntegrity
 	}
 	return &nativePlatformRuntimeFactory{

@@ -25,6 +25,7 @@ type canonicalDesktopExecution struct {
 	DockerCLISHA256        string   `json:"docker_cli_sha256"`
 	MinimumAvailableMemory uint64   `json:"minimum_available_memory"`
 	MinimumWSLVersion      string   `json:"minimum_wsl_version"`
+	WSLDistributionName    string   `json:"wsl_distribution_name"`
 	ProbeContractVersion   string   `json:"probe_contract_version"`
 	ProbeImage             string   `json:"probe_image"`
 	ProbeImageDigest       string   `json:"probe_image_digest"`
@@ -301,6 +302,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			ArtifactFileName:       policy.artifactFileName, CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(),
 			ComposePluginSHA256: policy.composePluginSHA256.Hex(), DockerCLISHA256: policy.dockerCLISHA256.Hex(),
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumWSLVersion: policy.minimumWSLVersion,
+			WSLDistributionName:  policy.wslDistributionName,
 			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
 			ProbeImageDigest:      policy.probeImageDigest.Hex(),
 			RollbackHeadroomBytes: policy.rollbackHeadroomBytes,

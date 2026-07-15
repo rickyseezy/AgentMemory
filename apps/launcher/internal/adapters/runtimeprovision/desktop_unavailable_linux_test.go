@@ -77,10 +77,10 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 	}
 	ctx := context.Background()
 	var nilContext context.Context
-	if _, err := createNativeDesktopMutationExchange(ctx, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
+	if _, err := createNativeDesktopMutationExchange(ctx, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}, []byte(`{}`)); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
 		t.Fatalf("desktop mutation exchange error = %v", err)
 	}
-	if _, err := createNativeDesktopMutationExchange(nilContext, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}); !errors.Is(err, context.Canceled) {
+	if _, err := createNativeDesktopMutationExchange(nilContext, runtimeport.DesktopHelperAuthority{}, runtimeport.DesktopMutationRequest{}, []byte(`{}`)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nil-context mutation exchange error = %v", err)
 	}
 	if err := executeNativeDesktopHelper(ctx, runtimeport.DesktopHelperAuthority{}, "request", runtimeport.DesktopMutationInstallRuntime); !errors.Is(err, runtimeport.ErrDesktopMutationUnavailable) {
@@ -132,7 +132,7 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	broker, err := NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-		Authority: &desktopMutationAuthorityStub{helper: helper}, Publisher: desktopMutationPublisherStub{},
+		Authority: &desktopMutationAuthorityStub{helper: helper}, Publisher: desktopMutationPublisherStub{}, Encoder: &desktopMutationEncoderStub{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 	}
 	publisherFailure := errors.New("publisher unavailable")
 	broker, err = NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-		Authority: &desktopMutationAuthorityStub{helper: helper}, Publisher: desktopMutationPublisherStub{err: publisherFailure},
+		Authority: &desktopMutationAuthorityStub{helper: helper}, Publisher: desktopMutationPublisherStub{err: publisherFailure}, Encoder: &desktopMutationEncoderStub{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestPF001LinuxDesktopMutationBrokerAndExchangeFailClosed(t *testing.T) {
 	}
 	resolverFailure := errors.New("resolver unavailable")
 	broker, err = NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-		Authority: &desktopMutationAuthorityStub{err: resolverFailure}, Publisher: desktopMutationPublisherStub{},
+		Authority: &desktopMutationAuthorityStub{err: resolverFailure}, Publisher: desktopMutationPublisherStub{}, Encoder: &desktopMutationEncoderStub{},
 	})
 	if err != nil {
 		t.Fatal(err)

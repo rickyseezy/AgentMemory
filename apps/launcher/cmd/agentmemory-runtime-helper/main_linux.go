@@ -9,8 +9,6 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher"
 )
 
-func main() {
-	if launcher.RunNativeLinuxPrivilegeHelper(context.Background(), os.Args[1:], os.Stdin, os.Stdout) != nil {
-		os.Exit(1)
-	}
+func runPlatformNativeHelper(ctx context.Context, args []string) error {
+	return launcher.RunNativeLinuxPrivilegeHelper(ctx, args, os.Stdin, os.Stdout)
 }

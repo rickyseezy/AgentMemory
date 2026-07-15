@@ -373,13 +373,14 @@ func TestDarwinDesktopMutationExchangeIsOwnerOnlyCanonicalAndCleaned(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, err := createNativeDesktopMutationExchange(context.Background(), helper, request)
+	envelope := []byte(`{"signed":"desktop-envelope"}`)
+	exchange, err := createNativeDesktopMutationExchange(context.Background(), helper, request, envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	requestBytes, err := os.ReadFile(exchange.requestPath)
-	if err != nil || !bytes.Equal(requestBytes, request.CanonicalBytes()) {
-		t.Fatalf("request exchange bytes match=%t err=%v", bytes.Equal(requestBytes, request.CanonicalBytes()), err)
+	if err != nil || !bytes.Equal(requestBytes, envelope) {
+		t.Fatalf("request exchange bytes match=%t err=%v", bytes.Equal(requestBytes, envelope), err)
 	}
 	requestInfo, err := os.Lstat(exchange.requestPath)
 	if err != nil || requestInfo.Mode().Perm() != 0o600 || !requestInfo.Mode().IsRegular() {
@@ -436,7 +437,7 @@ func TestDarwinDesktopMutationBrokerRejectsUnsignedUnavailableAndInvalidHelpers(
 	}
 	var typedNil *desktopHelperResolverFake
 	if _, err := NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-		Authority: typedNil, Publisher: desktopHelperPublisherFake{},
+		Authority: typedNil, Publisher: desktopHelperPublisherFake{}, Encoder: &desktopMutationEncoderStub{},
 	}); err == nil {
 		t.Fatal("mutation broker accepted typed-nil authority")
 	}
@@ -465,7 +466,7 @@ func TestDarwinDesktopMutationBrokerRejectsUnsignedUnavailableAndInvalidHelpers(
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			broker, err := NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-				Authority: test.resolver, Publisher: test.publisher,
+				Authority: test.resolver, Publisher: test.publisher, Encoder: &desktopMutationEncoderStub{},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -477,7 +478,7 @@ func TestDarwinDesktopMutationBrokerRejectsUnsignedUnavailableAndInvalidHelpers(
 	}
 
 	broker, err := NewNativeDesktopMutationBroker(NativeDesktopMutationDependencies{
-		Authority: &desktopHelperResolverFake{}, Publisher: desktopHelperPublisherFake{},
+		Authority: &desktopHelperResolverFake{}, Publisher: desktopHelperPublisherFake{}, Encoder: &desktopMutationEncoderStub{},
 	})
 	if err != nil {
 		t.Fatal(err)

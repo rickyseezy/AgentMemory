@@ -29,6 +29,8 @@ const (
 	ResourceKindProductManifest     ResourceKind = "product_manifest"
 	ResourceKindOfflineComponent    ResourceKind = "offline_bundle_component"
 	ResourceKindRuntimeCatalog      ResourceKind = "runtime_catalog"
+	ResourceKindRuntimeInstaller    ResourceKind = "runtime_installer"
+	ResourceKindRuntimeDistribution ResourceKind = "runtime_distribution"
 	ResourceKindCycloneDXSBOM       ResourceKind = "cyclonedx_sbom"
 	ResourceKindSPDXSBOM            ResourceKind = "spdx_sbom"
 	ResourceKindProvenance          ResourceKind = "provenance"
@@ -58,6 +60,8 @@ const (
 	ResourcePurposeProductManifest     ResourcePurpose = "product_manifest"
 	ResourcePurposeOfflineComponent    ResourcePurpose = "offline_bundle_component"
 	ResourcePurposeRuntimeCatalog      ResourcePurpose = "runtime_catalog"
+	ResourcePurposeRuntimeInstaller    ResourcePurpose = "runtime_prerequisite_installer"
+	ResourcePurposeRuntimeDistribution ResourcePurpose = "runtime_distribution"
 	ResourcePurposeCycloneDXSBOM       ResourcePurpose = "cyclonedx_sbom"
 	ResourcePurposeSPDXSBOM            ResourcePurpose = "spdx_sbom"
 	ResourcePurposeSLSAProvenance      ResourcePurpose = "slsa_provenance"
@@ -103,6 +107,8 @@ const (
 	MediaTypeProductManifest         = "application/vnd.agentmemory.signed-product-manifest+json"
 	MediaTypeOfflineComponent        = "application/vnd.agentmemory.offline-component"
 	MediaTypeRuntimeCatalog          = "application/vnd.agentmemory.runtime-catalog+json"
+	MediaTypeRuntimeInstaller        = "application/x-msi"
+	MediaTypeRuntimeDistribution     = "application/vnd.ms-wsl"
 	MediaTypeCycloneDX               = "application/vnd.cyclonedx+json"
 	MediaTypeSPDX                    = "application/spdx+json"
 	MediaTypeSLSAProvenance          = "application/vnd.in-toto+json"
@@ -226,7 +232,8 @@ func NewResource(input ResourceInput) (Resource, error) {
 	if input.Kind != ResourceKindOCIImage && (!input.OCIIndexDigest.IsZero() || input.OCIIndexResourceID != "") {
 		return Resource{}, errors.New("non-OCI resource cannot declare an OCI index")
 	}
-	if input.Kind == ResourceKindLauncher || input.Kind == ResourceKindVerifier || input.Kind == ResourceKindHelper {
+	if input.Kind == ResourceKindLauncher || input.Kind == ResourceKindVerifier || input.Kind == ResourceKindHelper ||
+		input.Kind == ResourceKindRuntimeInstaller {
 		if input.Platform.IsAny() || !validNativePublisherIdentity(input.NativePublisherIdentity) ||
 			!validIdentifier(input.NativePublisherPolicyID) {
 			return Resource{}, errors.New("native release resource publisher policy is invalid")
@@ -334,6 +341,10 @@ func expectedPurpose(kind ResourceKind) ResourcePurpose {
 		return ResourcePurposeOfflineComponent
 	case ResourceKindRuntimeCatalog:
 		return ResourcePurposeRuntimeCatalog
+	case ResourceKindRuntimeInstaller:
+		return ResourcePurposeRuntimeInstaller
+	case ResourceKindRuntimeDistribution:
+		return ResourcePurposeRuntimeDistribution
 	case ResourceKindCycloneDXSBOM:
 		return ResourcePurposeCycloneDXSBOM
 	case ResourceKindSPDXSBOM:
@@ -378,6 +389,10 @@ func expectedMediaType(kind ResourceKind) string {
 		return MediaTypeOfflineComponent
 	case ResourceKindRuntimeCatalog:
 		return MediaTypeRuntimeCatalog
+	case ResourceKindRuntimeInstaller:
+		return MediaTypeRuntimeInstaller
+	case ResourceKindRuntimeDistribution:
+		return MediaTypeRuntimeDistribution
 	case ResourceKindCycloneDXSBOM:
 		return MediaTypeCycloneDX
 	case ResourceKindSPDXSBOM:
@@ -546,6 +561,8 @@ func (k ResourceKind) Valid() bool {
 		ResourceKindProductManifest,
 		ResourceKindOfflineComponent,
 		ResourceKindRuntimeCatalog,
+		ResourceKindRuntimeInstaller,
+		ResourceKindRuntimeDistribution,
 		ResourceKindCycloneDXSBOM,
 		ResourceKindSPDXSBOM,
 		ResourceKindProvenance,

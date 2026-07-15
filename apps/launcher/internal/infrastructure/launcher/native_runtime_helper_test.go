@@ -249,6 +249,7 @@ func launcherDesktopAuthorityForDigests(
 		input.RebootExitCodes = []uint32{1641, 3010}
 		input.WindowsFeatures = []string{"Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform"}
 		input.MinimumWSLVersion = "2.1.5"
+		input.WSLDistributionName = "Ubuntu-24.04"
 	}
 	authority, err := runtimeport.NewDesktopAuthority(input)
 	if err != nil {

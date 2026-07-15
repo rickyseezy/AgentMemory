@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -68,7 +69,7 @@ func Check(options Options) []error {
 			violations = append(violations, fmt.Errorf("%s: must be a regular file, got %s", path, info.Mode()))
 			continue
 		}
-		if info.Mode().Perm() != contract.mode {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != contract.mode {
 			violations = append(violations, fmt.Errorf("%s: mode is %04o, want %04o", path, info.Mode().Perm(), contract.mode))
 			continue
 		}

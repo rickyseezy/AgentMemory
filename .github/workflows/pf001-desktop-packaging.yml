@@ -68,17 +68,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -race -shuffle=on -count=1 -covermode=atomic \
-            -coverprofile=package-stage.cover \
+          index=0
+          for package in \
             ./apps/launcher/cmd/agentmemory-native-package-stage \
             ./tools/check_desktop_packages
-          go tool cover -func=package-stage.cover
-          go run ./tools/check_go_coverage \
-            -profile package-stage.cover \
-            -root . \
-            -base HEAD \
-            -package 80 \
-            -changed 80
+          do
+            profile="package-stage-${index}.cover"
+            go test -race -shuffle=on -count=1 -covermode=atomic \
+              -coverprofile="$profile" "$package"
+            total=$(go tool cover -func="$profile" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')
+            awk -v coverage="$total" 'BEGIN { if (coverage + 0 < 80) exit 1 }'
+            index=$((index + 1))
+          done
 
       - name: Parse closed Windows signing and package scripts
         if: matrix.os == 'windows'

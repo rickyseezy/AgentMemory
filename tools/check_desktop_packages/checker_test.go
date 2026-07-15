@@ -97,10 +97,16 @@ func TestDesktopPackageCheckerRejectsLinksModesAndInvocationErrors(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := os.Symlink("README.md", script); err != nil {
-		t.Fatal(err)
+		if mkdirErr := os.Mkdir(script, 0o700); mkdirErr != nil {
+			t.Fatal(mkdirErr)
+		}
 	}
 	postinstall := filepath.Join(root, filepath.FromSlash(darwinPostinstallPath))
-	if err := os.Chmod(postinstall, 0o600); err != nil {
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(postinstall, []byte("tampered\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := os.Chmod(postinstall, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if violations := Check(Options{RepositoryRoot: root}); len(violations) != 2 {

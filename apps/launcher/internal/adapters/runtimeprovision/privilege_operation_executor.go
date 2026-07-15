@@ -89,9 +89,11 @@ func (e *ClosedPrivilegeOperationExecutor) ExecutePrivilegeOperation(
 	ctx context.Context,
 	request runtimeport.PrivilegeRequest,
 	artifacts PrivilegeArtifactSet,
+	evidence PrivilegeAuthorityEvidence,
 ) (PrivilegeOperationObservationInput, error) {
 	if e == nil || ctx == nil || request.Digest().IsZero() || nilArtifactDependency(artifacts) ||
-		artifacts.Root() == "" {
+		artifacts.Root() == "" || !evidence.Authority().Valid() || evidence.HelperDigest().IsZero() ||
+		evidence.ReleaseManifestDigest().IsZero() || evidence.Authority().Digest() != request.Authority().Digest() {
 		return PrivilegeOperationObservationInput{}, runtimeport.ErrPrivilegeIntegrity
 	}
 	if err := ctx.Err(); err != nil {

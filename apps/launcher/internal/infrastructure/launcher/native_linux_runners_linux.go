@@ -17,6 +17,13 @@ type nativeLinuxRunnerSet struct {
 	privilege *process.Runner
 }
 
+type nativeLinuxPrivilegeRunnerSet struct {
+	transaction *process.Runner
+	query       *process.Runner
+	loginctl    *process.Runner
+	systemctl   *process.Runner
+}
+
 func newNativeLinuxRunnerSet(
 	authority runtimeport.LinuxAuthority,
 	release releaseinventory.Digest,
@@ -66,4 +73,54 @@ func newNativeLinuxRunnerSet(
 		}
 	}
 	return result, nil
+}
+
+func newNativeLinuxPrivilegeRunnerSet(
+	authority runtimeport.LinuxAuthority,
+	release releaseinventory.Digest,
+) (nativeLinuxPrivilegeRunnerSet, error) {
+	receipts, err := newNativeLinuxPackageReceiptVerifier(authority, release)
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, errNativeInstallerIntegrity
+	}
+	publisher, err := process.NewNativePublisherVerifier(process.NativePublisherDependencies{
+		LinuxPackageReceipt: receipts,
+	})
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, errNativeInstallerIntegrity
+	}
+	construct := func(role argvprocess.ExecutableRole) (*process.Runner, error) {
+		executable, authorityError := newNativeLinuxExecutableAuthority(authority, release, role)
+		if authorityError != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		runner, runnerError := process.NewRunner(executable, publisher)
+		if runnerError != nil {
+			return nil, errNativeInstallerIntegrity
+		}
+		return runner, nil
+	}
+	transactionRole, queryRole := argvprocess.ExecutableRoleAPTTransaction, argvprocess.ExecutableRoleDPKGQuery
+	if authority.PackageManager() == runtimeport.PackageManagerDNF {
+		transactionRole, queryRole = argvprocess.ExecutableRoleDNFTransaction, argvprocess.ExecutableRoleRPMQuery
+	}
+	transaction, err := construct(transactionRole)
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, err
+	}
+	query, err := construct(queryRole)
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, err
+	}
+	loginctl, err := construct(argvprocess.ExecutableRoleLoginCTL)
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, err
+	}
+	systemctl, err := construct(argvprocess.ExecutableRoleSystemCTL)
+	if err != nil {
+		return nativeLinuxPrivilegeRunnerSet{}, err
+	}
+	return nativeLinuxPrivilegeRunnerSet{
+		transaction: transaction, query: query, loginctl: loginctl, systemctl: systemctl,
+	}, nil
 }

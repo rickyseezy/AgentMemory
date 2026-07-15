@@ -21,6 +21,7 @@ func TestPF006ClosedPrivilegeOperationExecutorDispatchesOnlyExactCapabilityThenR
 	} {
 		t.Run(string(operation), func(t *testing.T) {
 			request := privilegeOperationRequest(t, baseRequest, operation)
+			evidence := privilegeOperationAuthorityEvidence(t, request.Authority())
 			events := make([]string, 0, 2)
 			repository := &privilegeRepositoryManagerStub{events: &events, changed: true}
 			packages := &privilegePackageManagerStub{events: &events, changed: true}
@@ -37,7 +38,7 @@ func TestPF006ClosedPrivilegeOperationExecutorDispatchesOnlyExactCapabilityThenR
 				t.Fatal(err)
 			}
 			transaction := privilegeArtifactTransactionStub{root: "/root/transaction"}
-			observation, err := executor.ExecutePrivilegeOperation(t.Context(), request, transaction)
+			observation, err := executor.ExecutePrivilegeOperation(t.Context(), request, transaction, evidence)
 			expectedMutation := map[runtimeport.PrivilegeOperation]string{
 				runtimeport.PrivilegeConfigureRepository:     "repository",
 				runtimeport.PrivilegeInstallPackages:         "packages",
@@ -109,6 +110,7 @@ func TestPF006ClosedPrivilegeOperationExecutorRejectsMutationOrObservationFailur
 			}
 			if observation, executeError := executor.ExecutePrivilegeOperation(
 				t.Context(), request, privilegeArtifactTransactionStub{root: "/root/transaction"},
+				privilegeOperationAuthorityEvidence(t, request.Authority()),
 			); !errors.Is(executeError, runtimeport.ErrPrivilegeIntegrity) || !observation.ObservedState.IsZero() {
 				t.Fatalf("observation=%+v error=%v", observation, executeError)
 			}
@@ -117,6 +119,20 @@ func TestPF006ClosedPrivilegeOperationExecutorRejectsMutationOrObservationFailur
 	if executor, err := NewClosedPrivilegeOperationExecutor(PrivilegeOperationDependencies{}); executor != nil || err == nil {
 		t.Fatal("missing closed operation dependencies accepted")
 	}
+}
+
+func privilegeOperationAuthorityEvidence(
+	t testing.TB,
+	authority runtimeport.LinuxAuthority,
+) PrivilegeAuthorityEvidence {
+	t.Helper()
+	evidence, err := NewPrivilegeAuthorityEvidence(
+		authority, runtimeinstall.Sum([]byte("helper")), runtimeinstall.Sum([]byte("release")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evidence
 }
 
 func privilegeOperationRequest(

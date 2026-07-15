@@ -47,17 +47,19 @@ func (CanonicalPrivilegeRequestDecoder) DecodePrivilegeRequest(
 type PrivilegeAuthorityEvidence struct {
 	authority runtimeport.LinuxAuthority
 	helper    runtimeinstall.Hash
+	release   runtimeinstall.Hash
 }
 
 // NewPrivilegeAuthorityEvidence closes one independently verified authority.
 func NewPrivilegeAuthorityEvidence(
 	authority runtimeport.LinuxAuthority,
 	helper runtimeinstall.Hash,
+	release runtimeinstall.Hash,
 ) (PrivilegeAuthorityEvidence, error) {
-	if !authority.Valid() || helper.IsZero() {
+	if !authority.Valid() || helper.IsZero() || release.IsZero() {
 		return PrivilegeAuthorityEvidence{}, runtimeport.ErrPrivilegeIntegrity
 	}
-	return PrivilegeAuthorityEvidence{authority: authority, helper: helper}, nil
+	return PrivilegeAuthorityEvidence{authority: authority, helper: helper, release: release}, nil
 }
 
 // Authority returns the exact helper-side signed projection.
@@ -65,6 +67,9 @@ func (e PrivilegeAuthorityEvidence) Authority() runtimeport.LinuxAuthority { ret
 
 // HelperDigest returns the exact self-verified helper executable digest.
 func (e PrivilegeAuthorityEvidence) HelperDigest() runtimeinstall.Hash { return e.helper }
+
+// ReleaseManifestDigest returns the independently verified authorizing release.
+func (e PrivilegeAuthorityEvidence) ReleaseManifestDigest() runtimeinstall.Hash { return e.release }
 
 // PrivilegeAuthorityVerifier independently reconstructs helper authority from
 // embedded public trust and current protected host evidence.
@@ -114,11 +119,28 @@ type PrivilegeOperationExecutor interface {
 		context.Context,
 		runtimeport.PrivilegeRequest,
 		PrivilegeArtifactSet,
+		PrivilegeAuthorityEvidence,
 	) (PrivilegeOperationObservationInput, error)
 }
 
 // PrivilegeHelperClock supplies trusted UTC expiry time.
 type PrivilegeHelperClock interface{ Now() time.Time }
+
+// PrivilegeHelperReplayRepository durably reserves one verified request before
+// any root mutation and publishes its exact signed receipt afterward. The
+// production helper serializes callers with a machine-global lock while this
+// repository protects crash/restart replay and rollback.
+type PrivilegeHelperReplayRepository interface {
+	BeginPrivilegeRequest(
+		context.Context,
+		runtimeport.PrivilegeRequest,
+	) (runtimeport.PrivilegeReceipt, bool, error)
+	CompletePrivilegeRequest(
+		context.Context,
+		runtimeport.PrivilegeRequest,
+		runtimeport.PrivilegeReceipt,
+	) error
+}
 
 // PrivilegeReceiptEncoder emits only canonical semantic receipt JSON.
 type PrivilegeReceiptEncoder interface {
@@ -141,6 +163,7 @@ type PrivilegeHelperDependencies struct {
 	Authority PrivilegeAuthorityVerifier
 	Artifacts PrivilegeArtifactPreparer
 	Executor  PrivilegeOperationExecutor
+	Replay    PrivilegeHelperReplayRepository
 	Signer    PrivilegeReceiptSigner
 	Clock     PrivilegeHelperClock
 	Encoder   PrivilegeReceiptEncoder
@@ -156,7 +179,8 @@ func NewPrivilegeHelperApplication(
 ) (*PrivilegeHelperApplication, error) {
 	if nilArtifactDependency(dependencies.Decoder) || nilArtifactDependency(dependencies.Authority) ||
 		nilArtifactDependency(dependencies.Artifacts) || nilArtifactDependency(dependencies.Executor) ||
-		nilArtifactDependency(dependencies.Signer) || nilArtifactDependency(dependencies.Clock) ||
+		nilArtifactDependency(dependencies.Replay) || nilArtifactDependency(dependencies.Signer) ||
+		nilArtifactDependency(dependencies.Clock) ||
 		nilArtifactDependency(dependencies.Encoder) {
 		return nil, errors.New("complete privilege helper dependencies are required")
 	}
@@ -180,7 +204,8 @@ func (a *PrivilegeHelperApplication) ExecutePrivilegeRequest(
 		return nil, runtimeport.ErrPrivilegeIntegrity
 	}
 	authorityEvidence, err := a.dependencies.Authority.VerifyPrivilegeAuthority(ctx, envelope)
-	if err != nil || !authorityEvidence.Authority().Valid() || authorityEvidence.HelperDigest().IsZero() {
+	if err != nil || !authorityEvidence.Authority().Valid() || authorityEvidence.HelperDigest().IsZero() ||
+		authorityEvidence.ReleaseManifestDigest().IsZero() {
 		return nil, privilegeHelperContextOrIntegrity(ctx)
 	}
 	request, err := envelope.BindAuthority(authorityEvidence.Authority())
@@ -191,11 +216,25 @@ func (a *PrivilegeHelperApplication) ExecutePrivilegeRequest(
 	if now.IsZero() || now.Location() != time.UTC || now.Before(request.IssuedAt()) || !now.Before(request.ExpiresAt()) {
 		return nil, runtimeport.ErrPrivilegeIntegrity
 	}
+	cached, completed, err := a.dependencies.Replay.BeginPrivilegeRequest(ctx, request)
+	if err != nil {
+		return nil, privilegeHelperContextOrIntegrity(ctx)
+	}
+	if completed {
+		if !cached.Matches(request, now) || cached.HelperDigest() != authorityEvidence.HelperDigest() {
+			return nil, runtimeport.ErrPrivilegeIntegrity
+		}
+		encoded, encodeError := a.dependencies.Encoder.EncodePrivilegeReceipt(cached)
+		if encodeError != nil || len(encoded) == 0 {
+			return nil, privilegeHelperContextOrIntegrity(ctx)
+		}
+		return encoded, nil
+	}
 	transaction, err := a.dependencies.Artifacts.PreparePrivilegeArtifacts(ctx, request, envelope.Artifacts())
 	if err != nil || nilArtifactDependency(transaction) || transaction.Root() == "" {
 		return nil, privilegeHelperContextOrIntegrity(ctx)
 	}
-	observation, err := a.dependencies.Executor.ExecutePrivilegeOperation(ctx, request, transaction)
+	observation, err := a.dependencies.Executor.ExecutePrivilegeOperation(ctx, request, transaction, authorityEvidence)
 	if err != nil {
 		return nil, privilegeHelperContextOrIntegrity(ctx)
 	}
@@ -203,6 +242,9 @@ func (a *PrivilegeHelperApplication) ExecutePrivilegeRequest(
 		request, authorityEvidence.HelperDigest(), observation,
 	))
 	if err != nil || !receipt.Matches(request, now) || receipt.HelperDigest() != authorityEvidence.HelperDigest() {
+		return nil, privilegeHelperContextOrIntegrity(ctx)
+	}
+	if err := a.dependencies.Replay.CompletePrivilegeRequest(ctx, request, receipt); err != nil {
 		return nil, privilegeHelperContextOrIntegrity(ctx)
 	}
 	encoded, err := a.dependencies.Encoder.EncodePrivilegeReceipt(receipt)

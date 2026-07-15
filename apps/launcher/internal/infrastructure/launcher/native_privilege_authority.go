@@ -268,7 +268,9 @@ func (v *nativePrivilegeAuthorityVerifier) VerifyPrivilegeAuthority(
 	if err != nil || helperDigest.IsZero() || releaseinventory.Digest(helperDigest) != release.helper.Digest() {
 		return runtimeprovision.PrivilegeAuthorityEvidence{}, nativePrivilegeContextOrIntegrity(ctx)
 	}
-	evidence, err := runtimeprovision.NewPrivilegeAuthorityEvidence(authority, helperDigest)
+	evidence, err := runtimeprovision.NewPrivilegeAuthorityEvidence(
+		authority, helperDigest, runtimeinstall.Hash(release.manifestDigest),
+	)
 	if err != nil {
 		return runtimeprovision.PrivilegeAuthorityEvidence{}, runtimeport.ErrPrivilegeIntegrity
 	}

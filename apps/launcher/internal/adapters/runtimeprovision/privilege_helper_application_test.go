@@ -39,7 +39,8 @@ func TestPF006PrivilegeHelperApplicationBindsExecutesAndSignsClosedRequest(t *te
 	clock := &privilegeHelperClockStub{now: request.IssuedAt().Add(time.Second)}
 	application, err := NewPrivilegeHelperApplication(PrivilegeHelperDependencies{
 		Decoder: decoder, Authority: verifier, Artifacts: store, Executor: executor,
-		Signer: signer, Clock: clock, Encoder: CanonicalPrivilegeReceiptEncoder{},
+		Replay: &privilegeHelperReplayStub{}, Signer: signer, Clock: clock,
+		Encoder: CanonicalPrivilegeReceiptEncoder{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +83,12 @@ func TestPF006PrivilegeHelperApplicationRejectsEveryUnverifiedBoundary(t *testin
 		"executor": func(input *PrivilegeHelperDependencies) {
 			input.Executor = &privilegeOperationExecutorStub{err: errors.New("operation failed")}
 		},
+		"replay begin": func(input *PrivilegeHelperDependencies) {
+			input.Replay = &privilegeHelperReplayStub{beginError: errors.New("replay begin failed")}
+		},
+		"replay complete": func(input *PrivilegeHelperDependencies) {
+			input.Replay = &privilegeHelperReplayStub{completeError: errors.New("replay complete failed")}
+		},
 		"signer": func(input *PrivilegeHelperDependencies) {
 			input.Signer = &privilegeReceiptSignerStub{err: errors.New("sign failed")}
 		},
@@ -102,6 +109,7 @@ func TestPF006PrivilegeHelperApplicationRejectsEveryUnverifiedBoundary(t *testin
 					PackageStateDigest: validObservation.PackageStateDigest,
 					RepositoryDigest:   validObservation.RepositoryDigest,
 				}},
+				Replay:  &privilegeHelperReplayStub{},
 				Signer:  &privilegeReceiptSignerStub{receipt: receipt},
 				Clock:   &privilegeHelperClockStub{now: request.IssuedAt().Add(time.Second)},
 				Encoder: &privilegeReceiptEncoderStub{raw: []byte(`{"receipt":true}`)},
@@ -120,6 +128,33 @@ func TestPF006PrivilegeHelperApplicationRejectsEveryUnverifiedBoundary(t *testin
 	}
 	if application, err := NewPrivilegeHelperApplication(PrivilegeHelperDependencies{}); application != nil || err == nil {
 		t.Fatal("missing helper dependencies accepted")
+	}
+}
+
+func TestPF006PrivilegeHelperApplicationReturnsCompletedReplayWithoutMutation(t *testing.T) {
+	t.Parallel()
+	_, authority, request, receipt := privilegeCodecFixture(t)
+	envelope := &privilegeRequestEnvelopeStub{request: request, bindings: privilegeCodecArtifactStager(authority).bindings}
+	replay := &privilegeHelperReplayStub{cached: receipt, completed: true}
+	artifacts := &privilegeArtifactPreparerStub{err: errors.New("must not prepare")}
+	executor := &privilegeOperationExecutorStub{err: errors.New("must not execute")}
+	signer := &privilegeReceiptSignerStub{err: errors.New("must not sign")}
+	application, err := NewPrivilegeHelperApplication(PrivilegeHelperDependencies{
+		Decoder:   &privilegeRequestDecoderStub{envelope: envelope},
+		Authority: &privilegeAuthorityVerifierStub{authority: authority, helper: receipt.HelperDigest()},
+		Artifacts: artifacts, Executor: executor, Replay: replay, Signer: signer,
+		Clock:   &privilegeHelperClockStub{now: request.IssuedAt().Add(time.Second)},
+		Encoder: CanonicalPrivilegeReceiptEncoder{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := application.ExecutePrivilegeRequest(t.Context(), []byte("request"))
+	decoded, decodeError := DecodeCanonicalPrivilegeReceipt(raw)
+	if err != nil || decodeError != nil || decoded.Digest() != receipt.Digest() || replay.beginCalls != 1 ||
+		replay.completeCalls != 0 || executor.calls != 0 {
+		t.Fatalf("receipt=%x replay=%d/%d executor=%d errors=%v/%v", decoded.Digest(),
+			replay.beginCalls, replay.completeCalls, executor.calls, err, decodeError)
 	}
 }
 
@@ -169,7 +204,7 @@ func (s *privilegeAuthorityVerifierStub) VerifyPrivilegeAuthority(
 	if s.err != nil {
 		return PrivilegeAuthorityEvidence{}, s.err
 	}
-	return NewPrivilegeAuthorityEvidence(s.authority, s.helper)
+	return NewPrivilegeAuthorityEvidence(s.authority, s.helper, runtimeinstall.Sum([]byte("release")))
 }
 
 type privilegeArtifactTransactionStub struct{ root string }
@@ -205,6 +240,7 @@ func (s *privilegeOperationExecutorStub) ExecutePrivilegeOperation(
 	_ context.Context,
 	_ runtimeport.PrivilegeRequest,
 	transaction PrivilegeArtifactSet,
+	_ PrivilegeAuthorityEvidence,
 ) (PrivilegeOperationObservationInput, error) {
 	s.calls++
 	s.transaction = transaction
@@ -214,6 +250,32 @@ func (s *privilegeOperationExecutorStub) ExecutePrivilegeOperation(
 type privilegeHelperClockStub struct{ now time.Time }
 
 func (s *privilegeHelperClockStub) Now() time.Time { return s.now }
+
+type privilegeHelperReplayStub struct {
+	cached        runtimeport.PrivilegeReceipt
+	completed     bool
+	beginError    error
+	completeError error
+	beginCalls    int
+	completeCalls int
+}
+
+func (s *privilegeHelperReplayStub) BeginPrivilegeRequest(
+	context.Context,
+	runtimeport.PrivilegeRequest,
+) (runtimeport.PrivilegeReceipt, bool, error) {
+	s.beginCalls++
+	return s.cached, s.completed, s.beginError
+}
+
+func (s *privilegeHelperReplayStub) CompletePrivilegeRequest(
+	context.Context,
+	runtimeport.PrivilegeRequest,
+	runtimeport.PrivilegeReceipt,
+) error {
+	s.completeCalls++
+	return s.completeError
+}
 
 type privilegeReceiptSignerStub struct {
 	receipt runtimeport.PrivilegeReceipt

@@ -30,6 +30,30 @@ type LinuxHostBindingInput struct {
 // LinuxHostBinding is an immutable invocation-to-machine binding.
 type LinuxHostBinding struct{ input LinuxHostBindingInput }
 
+// InvokingUID returns the independently observed original Linux user.
+func (b LinuxHostBinding) InvokingUID() uint32 { return b.input.InvokingUID }
+
+// InvokingGID returns the independently observed original primary group.
+func (b LinuxHostBinding) InvokingGID() uint32 { return b.input.InvokingGID }
+
+// AccountName returns the independently resolved account name.
+func (b LinuxHostBinding) AccountName() string { return b.input.AccountName }
+
+// PrincipalID returns the canonical non-root principal binding.
+func (b LinuxHostBinding) PrincipalID() string { return b.input.PrincipalID }
+
+// HomeDirectory returns the independently verified owner home.
+func (b LinuxHostBinding) HomeDirectory() string { return b.input.HomeDirectory }
+
+// RuntimeDirectory returns the fixed systemd user-runtime directory.
+func (b LinuxHostBinding) RuntimeDirectory() string { return b.input.RuntimeDirectory }
+
+// Endpoint returns the fixed rootless Docker endpoint.
+func (b LinuxHostBinding) Endpoint() string { return b.input.Endpoint }
+
+// VersionID returns the independently observed distribution version.
+func (b LinuxHostBinding) VersionID() string { return b.input.VersionID }
+
 // NewLinuxHostBinding validates all non-catalog host facts before projection.
 func NewLinuxHostBinding(input LinuxHostBindingInput) (LinuxHostBinding, error) {
 	if input.VersionID == "" || len(input.VersionID) > 64 || input.VersionID != strings.TrimSpace(input.VersionID) ||

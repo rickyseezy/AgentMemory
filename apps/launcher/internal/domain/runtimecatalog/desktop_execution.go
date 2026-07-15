@@ -8,6 +8,8 @@ type DesktopExecutionPolicyInput struct {
 	AcquisitionSafetyBytes uint64
 	MinimumAvailableMemory uint64
 	ArtifactFileName       string
+	DockerCLISHA256        Digest
+	ComposePluginSHA256    Digest
 	ProbeImage             string
 	ProbeImageDigest       Digest
 	ProbeContractVersion   string
@@ -22,6 +24,8 @@ type DesktopExecutionPolicy struct {
 	acquisitionSafetyBytes uint64
 	minimumAvailableMemory uint64
 	artifactFileName       string
+	dockerCLISHA256        Digest
+	composePluginSHA256    Digest
 	probeImage             string
 	probeImageDigest       Digest
 	probeContractVersion   string
@@ -42,6 +46,8 @@ func newDesktopExecutionPolicy(
 		!validDesktopArtifactCapacity(input, artifact) ||
 		input.MinimumAvailableMemory == 0 || input.MinimumAvailableMemory > platform.minimumMemoryBytes ||
 		!validDesktopArtifactFileName(input.ArtifactFileName, platform.operatingSystem) ||
+		input.DockerCLISHA256.IsZero() || input.ComposePluginSHA256.IsZero() ||
+		input.DockerCLISHA256.Equal(input.ComposePluginSHA256) ||
 		input.ProbeContractVersion != "1" || input.ProbeImageDigest.IsZero() ||
 		input.ProbeImage != "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:"+input.ProbeImageDigest.Hex() ||
 		!RuntimeCapabilityPolicyDigest(capabilities).Equal(input.CapabilityPolicyDigest) ||
@@ -55,6 +61,7 @@ func newDesktopExecutionPolicy(
 	return DesktopExecutionPolicy{
 		acquisitionSafetyBytes: input.AcquisitionSafetyBytes,
 		minimumAvailableMemory: input.MinimumAvailableMemory, artifactFileName: input.ArtifactFileName,
+		dockerCLISHA256: input.DockerCLISHA256, composePluginSHA256: input.ComposePluginSHA256,
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest, rollbackHeadroomBytes: input.RollbackHeadroomBytes,
@@ -93,6 +100,7 @@ func validDesktopArtifactFileName(value string, platform OSKind) bool {
 func desktopExecutionInputZero(input DesktopExecutionPolicyInput) bool {
 	return input.AcquisitionSafetyBytes == 0 && input.MinimumAvailableMemory == 0 &&
 		input.ArtifactFileName == "" && input.ProbeImage == "" &&
+		input.DockerCLISHA256.IsZero() && input.ComposePluginSHA256.IsZero() &&
 		input.ProbeImageDigest.IsZero() && input.ProbeContractVersion == "" &&
 		input.CapabilityPolicyDigest.IsZero() && input.RollbackHeadroomBytes == 0 &&
 		input.MinimumWSLVersion == "" && len(input.WindowsFeatures) == 0
@@ -106,6 +114,12 @@ func (p DesktopExecutionPolicy) MinimumAvailableMemory() uint64 { return p.minim
 
 // ArtifactFileName returns the exact file below the single official source prefix.
 func (p DesktopExecutionPolicy) ArtifactFileName() string { return p.artifactFileName }
+
+// DockerCLISHA256 returns the exact installed Docker CLI content digest.
+func (p DesktopExecutionPolicy) DockerCLISHA256() Digest { return p.dockerCLISHA256 }
+
+// ComposePluginSHA256 returns the exact installed Compose plugin content digest.
+func (p DesktopExecutionPolicy) ComposePluginSHA256() Digest { return p.composePluginSHA256 }
 
 // ProbeImage returns the immutable active-probe OCI reference.
 func (p DesktopExecutionPolicy) ProbeImage() string { return p.probeImage }
@@ -138,6 +152,7 @@ func (p DesktopExecutionPolicy) valid(
 	validated, err := newDesktopExecutionPolicy(DesktopExecutionPolicyInput{
 		AcquisitionSafetyBytes: p.acquisitionSafetyBytes,
 		MinimumAvailableMemory: p.minimumAvailableMemory, ArtifactFileName: p.artifactFileName,
+		DockerCLISHA256: p.dockerCLISHA256, ComposePluginSHA256: p.composePluginSHA256,
 		ProbeImage: p.probeImage, ProbeImageDigest: p.probeImageDigest,
 		ProbeContractVersion: p.probeContractVersion, CapabilityPolicyDigest: p.capabilityPolicyDigest,
 		RollbackHeadroomBytes: p.rollbackHeadroomBytes, MinimumWSLVersion: p.minimumWSLVersion,
@@ -146,6 +161,8 @@ func (p DesktopExecutionPolicy) valid(
 	return err == nil && validated.acquisitionSafetyBytes == p.acquisitionSafetyBytes &&
 		validated.minimumAvailableMemory == p.minimumAvailableMemory &&
 		validated.artifactFileName == p.artifactFileName && validated.probeImage == p.probeImage &&
+		validated.dockerCLISHA256 == p.dockerCLISHA256 &&
+		validated.composePluginSHA256 == p.composePluginSHA256 &&
 		validated.probeImageDigest == p.probeImageDigest && validated.probeContractVersion == p.probeContractVersion &&
 		validated.capabilityPolicyDigest == p.capabilityPolicyDigest &&
 		validated.rollbackHeadroomBytes == p.rollbackHeadroomBytes &&

@@ -635,6 +635,7 @@ func desktopDarwinAuthorityAtHome(
 		InstallerArguments: []string{"--accept-license", "--user=" + base.UserName()},
 		ApplicationPath:    base.ApplicationPath(), ApplicationExecutable: base.ApplicationExecutable(),
 		DockerCLIPath: base.DockerCLIPath(), ComposePluginPath: base.ComposePluginPath(),
+		DockerCLISHA256: base.DockerCLISHA256(), ComposePluginSHA256: base.ComposePluginSHA256(),
 		ProbeImage: base.ProbeImage(), ProbeImageDigest: base.ProbeImageDigest(), ProbeContractVersion: base.ProbeContractVersion(),
 		UnrelatedWorkloads: base.UnrelatedWorkloads(), CapabilityPolicyDigest: base.CapabilityPolicyDigest(),
 		VendorUIMandatory: base.VendorUIMandatory(),

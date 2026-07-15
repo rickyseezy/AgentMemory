@@ -48,7 +48,10 @@ func TestVerifiedCatalogProjectsCompleteDesktopAuthority(t *testing.T) {
 	if err != nil || !authority.ValidFor(plan) || authority.Platform() != runtimeinstall.PlatformDarwin ||
 		authority.Publisher().CertificateSHA256() != runtimeinstall.Hash(certificate) ||
 		authority.ArtifactSourceURL() != "https://desktop.docker.com/mac/main/arm64/Docker.dmg" ||
-		authority.ProbeContractVersion() != "1" {
+		authority.DockerCLISHA256().IsZero() || authority.ComposePluginSHA256().IsZero() ||
+		authority.ExecutablePublisherIdentity() != "teamid:9BNSXJN65R" ||
+		authority.ExecutablePublisherPolicyID() != "apple:developer-id-notarized:v1" ||
+		authority.ExecutableOwnerIdentity() != "uid:0" || authority.ProbeContractVersion() != "1" {
 		t.Fatalf("authority=%+v error=%v", authority, err)
 	}
 	acquisition, err := verified.DesktopArtifactPlan(authority)

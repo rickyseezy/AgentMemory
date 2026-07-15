@@ -149,8 +149,14 @@ func desktopRunnersMatchAuthority(
 		runtimeinstall.Hash(composeAuthority.RuntimePlanDigest()) == authority.PlanDigest() &&
 		dockerAuthority.CanonicalPath() == authority.DockerCLIPath() &&
 		composeAuthority.CanonicalPath() == authority.ComposePluginPath() &&
-		dockerAuthority.PublisherIdentity() == authority.Publisher().Identity() &&
-		composeAuthority.PublisherIdentity() == authority.Publisher().Identity()
+		dockerAuthority.SHA256() == authority.DockerCLISHA256() &&
+		composeAuthority.SHA256() == authority.ComposePluginSHA256() &&
+		dockerAuthority.OwnerIdentity() == authority.ExecutableOwnerIdentity() &&
+		composeAuthority.OwnerIdentity() == authority.ExecutableOwnerIdentity() &&
+		dockerAuthority.PublisherIdentity() == authority.ExecutablePublisherIdentity() &&
+		composeAuthority.PublisherIdentity() == authority.ExecutablePublisherIdentity() &&
+		dockerAuthority.PublisherPolicyID() == authority.ExecutablePublisherPolicyID() &&
+		composeAuthority.PublisherPolicyID() == authority.ExecutablePublisherPolicyID()
 }
 
 func (i *DesktopDockerInspector) desktopContainerWorkloads(

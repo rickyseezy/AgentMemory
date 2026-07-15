@@ -51,6 +51,18 @@ Repository acceptance is an exact-artifact WinVerifyTrust and publisher-policy
 verification. A self-signed development certificate cannot satisfy the
 production release record.
 
+## Docker Desktop executable qualification
+
+For every certified Docker Desktop version and platform cell, the release
+owner must provide the SHA-256 digest of the installed Docker CLI and Compose
+plugin extracted from the exact retained installer artifact. These two digests
+must be distinct and written into the signed runtime catalog as
+`docker_cli_sha256` and `compose_plugin_sha256`. Qualification must also retain
+native publisher, certificate, version, path, owner, and clean-host evidence
+for those exact files. A catalog that omits either digest, aliases the two
+roles, or disagrees with the installed bytes cannot construct an executable
+runner and fails before Docker inspection.
+
 ## Release-manifest and transparency signing authority
 
 The release owner must provide the approved release-signing identity and trust

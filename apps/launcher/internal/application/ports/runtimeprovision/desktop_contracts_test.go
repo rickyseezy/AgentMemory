@@ -36,6 +36,9 @@ func TestDesktopAuthorityProjectsImmutableExactExecutionContract(t *testing.T) {
 		authority.Endpoint() == "" || authority.ArtifactPath() == "" || authority.ArtifactSHA256().IsZero() ||
 		authority.ArtifactBytes() == 0 || authority.ArtifactSourceURL() == "" || authority.ApplicationPath() == "" ||
 		authority.ApplicationExecutable() == "" || authority.DockerCLIPath() == "" || authority.ComposePluginPath() == "" ||
+		authority.DockerCLISHA256().IsZero() || authority.ComposePluginSHA256().IsZero() ||
+		authority.ExecutableOwnerIdentity() == "" || authority.ExecutablePublisherIdentity() == "" ||
+		authority.ExecutablePublisherPolicyID() == "" ||
 		authority.ProbeImage() == "" || authority.ProbeImageDigest().IsZero() || authority.ProbeContractVersion() != "1" ||
 		authority.CapabilityPolicyDigest().IsZero() || authority.MinimumWSLVersion() != "2.1.5" ||
 		authority.VendorUIMandatory() {

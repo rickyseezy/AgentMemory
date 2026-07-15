@@ -473,8 +473,10 @@ func validManifestInput(t testReporter) ManifestInput {
 		DesktopExecution: DesktopExecutionPolicyInput{
 			AcquisitionSafetyBytes: 100_000_000,
 			MinimumAvailableMemory: 4_000_000_000, ArtifactFileName: "Docker.dmg",
-			ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.Hex(),
-			ProbeImageDigest: probeDigest, ProbeContractVersion: "1",
+			DockerCLISHA256:     DigestBytes([]byte("docker cli")),
+			ComposePluginSHA256: DigestBytes([]byte("compose plugin")),
+			ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.Hex(),
+			ProbeImageDigest:    probeDigest, ProbeContractVersion: "1",
 			CapabilityPolicyDigest: RuntimeCapabilityPolicyDigest(capabilities),
 			RollbackHeadroomBytes:  200_000_000,
 		},

@@ -21,6 +21,8 @@ type canonicalDesktopExecution struct {
 	AcquisitionSafetyBytes uint64   `json:"acquisition_safety_bytes"`
 	ArtifactFileName       string   `json:"artifact_file_name"`
 	CapabilityPolicyDigest string   `json:"capability_policy_digest"`
+	ComposePluginSHA256    string   `json:"compose_plugin_sha256"`
+	DockerCLISHA256        string   `json:"docker_cli_sha256"`
 	MinimumAvailableMemory uint64   `json:"minimum_available_memory"`
 	MinimumWSLVersion      string   `json:"minimum_wsl_version"`
 	ProbeContractVersion   string   `json:"probe_contract_version"`
@@ -249,6 +251,7 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 		desktopExecution = &canonicalDesktopExecution{
 			AcquisitionSafetyBytes: policy.acquisitionSafetyBytes,
 			ArtifactFileName:       policy.artifactFileName, CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(),
+			ComposePluginSHA256: policy.composePluginSHA256.Hex(), DockerCLISHA256: policy.dockerCLISHA256.Hex(),
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumWSLVersion: policy.minimumWSLVersion,
 			ProbeContractVersion: policy.probeContractVersion, ProbeImage: policy.probeImage,
 			ProbeImageDigest:      policy.probeImageDigest.Hex(),

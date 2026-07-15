@@ -257,9 +257,13 @@ func desktopExecutableAuthority(
 	release runtimeinstall.Hash,
 ) argvprocess.ExecutableAuthority {
 	t.Helper()
+	digest := authority.DockerCLISHA256()
+	if role == argvprocess.ExecutableRoleComposePlugin {
+		digest = authority.ComposePluginSHA256()
+	}
 	executable, err := argvprocess.NewExecutableAuthority(argvprocess.ExecutableAuthorityInput{
-		CanonicalID: id, CanonicalPath: path, SHA256: sha256.Sum256([]byte(path)), OwnerIdentity: "native-system-owner",
-		PublisherIdentity: authority.Publisher().Identity(), PublisherPolicyID: "desktop-native-publisher-v1",
+		CanonicalID: id, CanonicalPath: path, SHA256: [sha256.Size]byte(digest), OwnerIdentity: authority.ExecutableOwnerIdentity(),
+		PublisherIdentity: authority.ExecutablePublisherIdentity(), PublisherPolicyID: authority.ExecutablePublisherPolicyID(),
 		ReleaseManifestDigest: [32]byte(release), RuntimePlanDigest: [32]byte(authority.PlanDigest()),
 		Role: role, Platform: authority.Platform().String(), Architecture: authority.Architecture().String(),
 	})

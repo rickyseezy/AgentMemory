@@ -8,6 +8,7 @@ func TestDesktopExecutionPolicyRoundTripsCompleteSignedAuthority(t *testing.T) {
 	policy, present := manifest.DesktopExecution()
 	if !present || policy.MinimumAvailableMemory() != 4_000_000_000 ||
 		policy.ArtifactFileName() != "Docker.dmg" || policy.ProbeContractVersion() != "1" ||
+		policy.DockerCLISHA256().IsZero() || policy.ComposePluginSHA256().IsZero() ||
 		policy.ProbeImageDigest().IsZero() || policy.CapabilityPolicyDigest().IsZero() ||
 		policy.MinimumWSLVersion() != "" {
 		t.Fatalf("desktop policy=%+v present=%t", policy, present)
@@ -21,6 +22,8 @@ func TestDesktopExecutionPolicyRoundTripsCompleteSignedAuthority(t *testing.T) {
 	if err != nil || !decodedPresent || !decoded.Digest().Equal(manifest.Digest()) ||
 		decodedPolicy.ProbeImage() != policy.ProbeImage() ||
 		decodedPolicy.ArtifactFileName() != policy.ArtifactFileName() ||
+		!decodedPolicy.DockerCLISHA256().Equal(policy.DockerCLISHA256()) ||
+		!decodedPolicy.ComposePluginSHA256().Equal(policy.ComposePluginSHA256()) ||
 		len(decodedPolicy.WindowsFeatures()) != len(policy.WindowsFeatures()) {
 		t.Fatalf("decoded policy=%+v present=%t error=%v", decodedPolicy, decodedPresent, err)
 	}
@@ -35,6 +38,11 @@ func TestDesktopExecutionPolicyRejectsEveryUnsignedOrCrossPlatformBoundary(t *te
 		},
 		"artifact":           func(value *ManifestInput) { value.DesktopExecution.ArtifactFileName = "Docker.exe" },
 		"artifact traversal": func(value *ManifestInput) { value.DesktopExecution.ArtifactFileName = "../Docker.dmg" },
+		"docker cli digest":  func(value *ManifestInput) { value.DesktopExecution.DockerCLISHA256 = Digest{} },
+		"compose digest":     func(value *ManifestInput) { value.DesktopExecution.ComposePluginSHA256 = Digest{} },
+		"aliased tools": func(value *ManifestInput) {
+			value.DesktopExecution.ComposePluginSHA256 = value.DesktopExecution.DockerCLISHA256
+		},
 		"probe tag": func(value *ManifestInput) {
 			value.DesktopExecution.ProbeImage = "docker.io/rickyseezy/agentmemory-runtime-probe:latest"
 		},

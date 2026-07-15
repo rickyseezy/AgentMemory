@@ -194,6 +194,8 @@ func launcherDesktopAuthority(t testing.TB, platform runtimeinstall.Platform) ru
 		ApplicationExecutable: "/Applications/Docker.app/Contents/MacOS/Docker Desktop",
 		DockerCLIPath:         "/Applications/Docker.app/Contents/Resources/bin/docker",
 		ComposePluginPath:     "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
+		DockerCLISHA256:       runtimeinstall.Sum([]byte("desktop docker cli")),
+		ComposePluginSHA256:   runtimeinstall.Sum([]byte("desktop compose plugin")),
 		ProbeImage:            "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + runtimeinstall.Sum([]byte("probe")).String(),
 		ProbeImageDigest:      runtimeinstall.Sum([]byte("probe")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: runtimeinstall.Sum([]byte("capability")),

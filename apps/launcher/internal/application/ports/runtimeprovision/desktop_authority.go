@@ -168,6 +168,8 @@ type DesktopAuthorityInput struct {
 	ApplicationExecutable  string
 	DockerCLIPath          string
 	ComposePluginPath      string
+	DockerCLISHA256        runtimeinstall.Hash
+	ComposePluginSHA256    runtimeinstall.Hash
 	ProbeImage             string
 	ProbeImageDigest       runtimeinstall.Hash
 	ProbeContractVersion   string
@@ -214,6 +216,8 @@ type DesktopAuthority struct {
 	applicationExecutable  string
 	dockerCLIPath          string
 	composePluginPath      string
+	dockerCLISHA256        runtimeinstall.Hash
+	composePluginSHA256    runtimeinstall.Hash
 	probeImage             string
 	probeImageDigest       runtimeinstall.Hash
 	probeContractVersion   string
@@ -230,6 +234,8 @@ type DesktopAuthority struct {
 func NewDesktopAuthority(input DesktopAuthorityInput) (DesktopAuthority, error) {
 	if input.PlanDigest.IsZero() || input.CatalogDigest.IsZero() || input.MachineDigest.IsZero() ||
 		input.ArtifactSHA256.IsZero() || input.ProbeImageDigest.IsZero() || input.CapabilityPolicyDigest.IsZero() ||
+		input.DockerCLISHA256.IsZero() || input.ComposePluginSHA256.IsZero() ||
+		input.DockerCLISHA256 == input.ComposePluginSHA256 ||
 		!validDesktopPlatformArchitecture(input.Platform, input.Architecture) ||
 		!safePrincipal(input.PrincipalID, input.Platform) || !safeUserName(input.UserName, input.Platform) ||
 		!validDesktopHostPolicy(input) ||
@@ -272,6 +278,7 @@ func NewDesktopAuthority(input DesktopAuthorityInput) (DesktopAuthority, error) 
 		installerArguments: append([]string(nil), input.InstallerArguments...),
 		applicationPath:    input.ApplicationPath, applicationExecutable: input.ApplicationExecutable,
 		dockerCLIPath: input.DockerCLIPath, composePluginPath: input.ComposePluginPath,
+		dockerCLISHA256: input.DockerCLISHA256, composePluginSHA256: input.ComposePluginSHA256,
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion: input.ProbeContractVersion, unrelatedWorkloads: input.UnrelatedWorkloads,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest, rebootExitCodes: rebootCodes,
@@ -401,21 +408,22 @@ func validWindowsPrerequisites(
 
 func (a DesktopAuthority) computeDigest() runtimeinstall.Hash {
 	encoded, _ := json.Marshal(struct {
-		Plan, Catalog, Machine, Artifact, Probe, Capability, Certificate, Terms               string
-		Platform, Architecture, Principal, User, Home, OSProduct, MinimumOS, MaximumOS        string
-		Runtime, Engine, Compose, Endpoint                                                    string
-		ArtifactPath, ArtifactSource, Publisher, SigningKey, Package                          string
-		Arguments, Features, Reboot                                                           []string
-		Application, Executable, Docker, ComposePlugin, ProbeImage, ProbeContract, MinimumWSL string
-		ArtifactBytes                                                                         uint64
-		UnrelatedWorkloads                                                                    uint32
-		MinimumBuild, MaximumBuild                                                            uint32
-		MinimumCPUs                                                                           uint16
-		MinimumTotalMemory, MinimumAvailableMemory, MinimumFreeDisk                           uint64
-		VendorUI                                                                              bool
+		Plan, Catalog, Machine, Artifact, DockerDigest, ComposeDigest, Probe, Capability, Certificate, Terms string
+		Platform, Architecture, Principal, User, Home, OSProduct, MinimumOS, MaximumOS                       string
+		Runtime, Engine, Compose, Endpoint                                                                   string
+		ArtifactPath, ArtifactSource, Publisher, SigningKey, Package                                         string
+		Arguments, Features, Reboot                                                                          []string
+		Application, Executable, Docker, ComposePlugin, ProbeImage, ProbeContract, MinimumWSL                string
+		ArtifactBytes                                                                                        uint64
+		UnrelatedWorkloads                                                                                   uint32
+		MinimumBuild, MaximumBuild                                                                           uint32
+		MinimumCPUs                                                                                          uint16
+		MinimumTotalMemory, MinimumAvailableMemory, MinimumFreeDisk                                          uint64
+		VendorUI                                                                                             bool
 	}{
 		Plan: a.planDigest.String(), Catalog: a.catalogDigest.String(), Machine: a.machineDigest.String(),
 		Artifact: a.artifactSHA256.String(), Capability: a.capabilityPolicyDigest.String(),
+		DockerDigest: a.dockerCLISHA256.String(), ComposeDigest: a.composePluginSHA256.String(),
 		Probe:       a.probeImageDigest.String(),
 		Certificate: a.publisher.certificateSHA256.String(), Terms: a.terms.digest.String(),
 		Platform: a.platform.String(), Architecture: a.architecture.String(), Principal: a.principalID,
@@ -456,7 +464,8 @@ func (a DesktopAuthority) Valid() bool {
 		Terms:              DesktopTermsInput{ID: a.terms.id, Version: a.terms.version, URL: a.terms.url, Digest: a.terms.digest},
 		InstallerArguments: append([]string(nil), a.installerArguments...), ApplicationPath: a.applicationPath,
 		ApplicationExecutable: a.applicationExecutable, DockerCLIPath: a.dockerCLIPath,
-		ComposePluginPath: a.composePluginPath, ProbeImage: a.probeImage, ProbeImageDigest: a.probeImageDigest,
+		ComposePluginPath: a.composePluginPath, DockerCLISHA256: a.dockerCLISHA256,
+		ComposePluginSHA256: a.composePluginSHA256, ProbeImage: a.probeImage, ProbeImageDigest: a.probeImageDigest,
 		ProbeContractVersion: a.probeContractVersion, UnrelatedWorkloads: a.unrelatedWorkloads,
 		CapabilityPolicyDigest: a.capabilityPolicyDigest,
 		RebootExitCodes:        append([]uint32(nil), a.rebootExitCodes...), WindowsFeatures: append([]string(nil), a.windowsFeatures...),
@@ -572,6 +581,36 @@ func (a DesktopAuthority) DockerCLIPath() string { return a.dockerCLIPath }
 
 // ComposePluginPath returns the exact signed Compose plugin path.
 func (a DesktopAuthority) ComposePluginPath() string { return a.composePluginPath }
+
+// DockerCLISHA256 returns the exact signed content digest for Docker CLI execution.
+func (a DesktopAuthority) DockerCLISHA256() runtimeinstall.Hash { return a.dockerCLISHA256 }
+
+// ComposePluginSHA256 returns the exact signed content digest for Compose execution.
+func (a DesktopAuthority) ComposePluginSHA256() runtimeinstall.Hash { return a.composePluginSHA256 }
+
+// ExecutableOwnerIdentity returns the required native owner of installed tools.
+func (a DesktopAuthority) ExecutableOwnerIdentity() string {
+	if a.platform == runtimeinstall.PlatformDarwin {
+		return "uid:0"
+	}
+	return a.principalID
+}
+
+// ExecutablePublisherIdentity returns the independently constrained native signer identity.
+func (a DesktopAuthority) ExecutablePublisherIdentity() string {
+	if a.platform == runtimeinstall.PlatformDarwin {
+		return "teamid:9BNSXJN65R"
+	}
+	return a.publisher.identity
+}
+
+// ExecutablePublisherPolicyID returns the platform-native execution verification policy.
+func (a DesktopAuthority) ExecutablePublisherPolicyID() string {
+	if a.platform == runtimeinstall.PlatformDarwin {
+		return "apple:developer-id-notarized:v1"
+	}
+	return "windows:authenticode:v1"
+}
 
 // ProbeImage returns the digest-addressed capability probe image.
 func (a DesktopAuthority) ProbeImage() string { return a.probeImage }

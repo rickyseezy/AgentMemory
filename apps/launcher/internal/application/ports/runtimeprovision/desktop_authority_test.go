@@ -27,7 +27,10 @@ func TestDesktopAuthorityAcceptsOnlyClosedCertifiedMacAndWindowsPlans(t *testing
 			t.Parallel()
 			authority, err := NewDesktopAuthority(test.input)
 			if err != nil || !authority.ValidFor(test.plan) || authority.Digest().IsZero() ||
-				authority.Publisher().CertificateSHA256().IsZero() || authority.Terms().Digest().IsZero() {
+				authority.Publisher().CertificateSHA256().IsZero() || authority.Terms().Digest().IsZero() ||
+				authority.DockerCLISHA256().IsZero() || authority.ComposePluginSHA256().IsZero() ||
+				authority.ExecutableOwnerIdentity() == "" || authority.ExecutablePublisherIdentity() == "" ||
+				authority.ExecutablePublisherPolicyID() == "" {
 				t.Fatalf("valid desktop authority = %#v, %v", authority, err)
 			}
 			arguments := authority.InstallerArguments()
@@ -81,6 +84,9 @@ func TestDesktopAuthorityRejectsEveryAmbientOrBroadenedExecutionField(t *testing
 		{name: "extra installer switch", mutate: func(v *DesktopAuthorityInput) { v.InstallerArguments = append(v.InstallerArguments, "--allowed-org=x") }},
 		{name: "wrong destination", mutate: func(v *DesktopAuthorityInput) { v.ApplicationPath = "/Users/user/Docker.app" }},
 		{name: "ambient Docker CLI", mutate: func(v *DesktopAuthorityInput) { v.DockerCLIPath = "docker" }},
+		{name: "missing Docker CLI digest", mutate: func(v *DesktopAuthorityInput) { v.DockerCLISHA256 = runtimeinstall.Hash{} }},
+		{name: "missing Compose digest", mutate: func(v *DesktopAuthorityInput) { v.ComposePluginSHA256 = runtimeinstall.Hash{} }},
+		{name: "aliased executable digests", mutate: func(v *DesktopAuthorityInput) { v.ComposePluginSHA256 = v.DockerCLISHA256 }},
 		{name: "mutable probe tag", mutate: func(v *DesktopAuthorityInput) { v.ProbeImage = "docker.io/rickyseezy/agentmemory-runtime-probe:latest" }},
 		{name: "wrong probe digest", mutate: func(v *DesktopAuthorityInput) { v.ProbeImageDigest = runtimeinstall.Sum([]byte("other")) }},
 		{name: "unknown probe contract", mutate: func(v *DesktopAuthorityInput) { v.ProbeContractVersion = "2" }},
@@ -193,6 +199,8 @@ func desktopAuthorityInput(plan runtimeinstall.Plan, platform runtimeinstall.Pla
 		ApplicationExecutable:  "/Applications/Docker.app/Contents/MacOS/Docker Desktop",
 		DockerCLIPath:          "/Applications/Docker.app/Contents/Resources/bin/docker",
 		ComposePluginPath:      "/Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose",
+		DockerCLISHA256:        runtimeinstall.Sum([]byte("desktop docker cli")),
+		ComposePluginSHA256:    runtimeinstall.Sum([]byte("desktop compose plugin")),
 		ProbeImage:             "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + runtimeinstall.Sum([]byte("desktop-probe-image")).String(),
 		ProbeImageDigest:       runtimeinstall.Sum([]byte("desktop-probe-image")),
 		ProbeContractVersion:   "1",

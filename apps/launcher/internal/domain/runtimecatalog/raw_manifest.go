@@ -167,10 +167,19 @@ func desktopExecutionInputFromCanonical(
 	if err != nil {
 		return DesktopExecutionPolicyInput{}, err
 	}
+	dockerCLIDigest, err := ParseDigest(document.DockerCLISHA256)
+	if err != nil {
+		return DesktopExecutionPolicyInput{}, err
+	}
+	composePluginDigest, err := ParseDigest(document.ComposePluginSHA256)
+	if err != nil {
+		return DesktopExecutionPolicyInput{}, err
+	}
 	return DesktopExecutionPolicyInput{
 		AcquisitionSafetyBytes: document.AcquisitionSafetyBytes,
 		MinimumAvailableMemory: document.MinimumAvailableMemory,
 		ArtifactFileName:       document.ArtifactFileName, ProbeImage: document.ProbeImage,
+		DockerCLISHA256: dockerCLIDigest, ComposePluginSHA256: composePluginDigest,
 		ProbeImageDigest: probeDigest, ProbeContractVersion: document.ProbeContractVersion,
 		CapabilityPolicyDigest: capabilityDigest, RollbackHeadroomBytes: document.RollbackHeadroomBytes,
 		MinimumWSLVersion: document.MinimumWSLVersion,

@@ -80,27 +80,35 @@ type canonicalPublisher struct {
 }
 
 type canonicalLinuxExecution struct {
-	AcquisitionSafetyBytes    uint64                     `json:"acquisition_safety_bytes"`
-	CapabilityPolicyDigest    string                     `json:"capability_policy_digest"`
-	Codename                  string                     `json:"codename"`
-	MinimumAvailableMemory    uint64                     `json:"minimum_available_memory"`
-	MinimumKernel             string                     `json:"minimum_kernel"`
-	PackageManager            LinuxPackageManager        `json:"package_manager"`
-	PackageManagerVersion     string                     `json:"package_manager_version"`
-	PackageSetDigest          string                     `json:"package_set_digest"`
-	Packages                  []canonicalLinuxPackage    `json:"packages"`
-	ProbeContractVersion      string                     `json:"probe_contract_version"`
-	ProbeImage                string                     `json:"probe_image"`
-	ProbeImageDigest          string                     `json:"probe_image_digest"`
-	Repository                canonicalLinuxRepository   `json:"repository"`
-	VerificationRepositories  []canonicalLinuxRepository `json:"verification_repositories"`
-	RollbackHeadroomBytes     uint64                     `json:"rollback_headroom_bytes"`
-	RootlessToolDigest        string                     `json:"rootless_tool_digest"`
-	RootlessToolPath          string                     `json:"rootless_tool_path"`
-	SELinuxEnforcingSupported bool                       `json:"selinux_enforcing_supported"`
-	ServiceID                 string                     `json:"service_id"`
-	ServiceUnitDigest         string                     `json:"service_unit_digest"`
-	SubordinateIDCount        uint32                     `json:"subordinate_id_count"`
+	AcquisitionSafetyBytes      uint64                     `json:"acquisition_safety_bytes"`
+	CapabilityPolicyDigest      string                     `json:"capability_policy_digest"`
+	Codename                    string                     `json:"codename"`
+	ComposePluginPath           string                     `json:"compose_plugin_path"`
+	ComposePluginSHA256         string                     `json:"compose_plugin_sha256"`
+	DockerCLIPath               string                     `json:"docker_cli_path"`
+	DockerCLISHA256             string                     `json:"docker_cli_sha256"`
+	MinimumAvailableMemory      uint64                     `json:"minimum_available_memory"`
+	MinimumKernel               string                     `json:"minimum_kernel"`
+	PackageManager              LinuxPackageManager        `json:"package_manager"`
+	PackageManagerVersion       string                     `json:"package_manager_version"`
+	PackageSetDigest            string                     `json:"package_set_digest"`
+	Packages                    []canonicalLinuxPackage    `json:"packages"`
+	ProbeContractVersion        string                     `json:"probe_contract_version"`
+	ProbeImage                  string                     `json:"probe_image"`
+	ProbeImageDigest            string                     `json:"probe_image_digest"`
+	Repository                  canonicalLinuxRepository   `json:"repository"`
+	VerificationRepositories    []canonicalLinuxRepository `json:"verification_repositories"`
+	RollbackHeadroomBytes       uint64                     `json:"rollback_headroom_bytes"`
+	RPMKeysPackageReceiptDigest string                     `json:"rpm_keys_package_receipt_digest"`
+	RPMKeysPackageVersion       string                     `json:"rpm_keys_package_version"`
+	RPMKeysPath                 string                     `json:"rpm_keys_path"`
+	RPMKeysSHA256               string                     `json:"rpm_keys_sha256"`
+	RootlessToolDigest          string                     `json:"rootless_tool_digest"`
+	RootlessToolPath            string                     `json:"rootless_tool_path"`
+	SELinuxEnforcingSupported   bool                       `json:"selinux_enforcing_supported"`
+	ServiceID                   string                     `json:"service_id"`
+	ServiceUnitDigest           string                     `json:"service_unit_digest"`
+	SubordinateIDCount          uint32                     `json:"subordinate_id_count"`
 }
 
 type canonicalLinuxRepository struct {
@@ -221,9 +229,19 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			})
 		}
 		policy := manifest.linuxExecution
+		rpmKeysSHA256 := ""
+		rpmKeysPackageReceipt := ""
+		if !policy.rpmKeysSHA256.IsZero() {
+			rpmKeysSHA256 = policy.rpmKeysSHA256.Hex()
+		}
+		if !policy.rpmKeysPackageReceiptDigest.IsZero() {
+			rpmKeysPackageReceipt = policy.rpmKeysPackageReceiptDigest.Hex()
+		}
 		linuxExecution = &canonicalLinuxExecution{
 			AcquisitionSafetyBytes: policy.acquisitionSafetyBytes,
 			CapabilityPolicyDigest: policy.capabilityPolicyDigest.Hex(), Codename: policy.codename,
+			ComposePluginPath: policy.composePluginPath, ComposePluginSHA256: policy.composePluginSHA256.Hex(),
+			DockerCLIPath: policy.dockerCLIPath, DockerCLISHA256: policy.dockerCLISHA256.Hex(),
 			MinimumAvailableMemory: policy.minimumAvailableMemory, MinimumKernel: policy.minimumKernel,
 			PackageManager: policy.packageManager, PackageManagerVersion: policy.packageManagerVersion,
 			PackageSetDigest: policy.packageSetDigest.Hex(), Packages: packages,
@@ -240,7 +258,10 @@ func canonicalFromManifest(manifest Manifest) canonicalManifest {
 			},
 			VerificationRepositories: verificationRepositories,
 			RollbackHeadroomBytes:    policy.rollbackHeadroomBytes,
-			RootlessToolDigest:       policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
+			RPMKeysPath:              policy.rpmKeysPath, RPMKeysSHA256: rpmKeysSHA256,
+			RPMKeysPackageVersion:       policy.rpmKeysPackageVersion,
+			RPMKeysPackageReceiptDigest: rpmKeysPackageReceipt,
+			RootlessToolDigest:          policy.rootlessToolDigest.Hex(), RootlessToolPath: policy.rootlessToolPath,
 			SELinuxEnforcingSupported: policy.selinuxEnforcingSupported, ServiceID: policy.serviceID,
 			ServiceUnitDigest: policy.serviceUnitDigest.Hex(), SubordinateIDCount: policy.subordinateIDCount,
 		}

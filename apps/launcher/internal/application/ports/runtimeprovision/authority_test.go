@@ -36,6 +36,14 @@ func TestLinuxAuthorityRequiresCompleteExactSignedPackagePolicy(t *testing.T) {
 		{name: "unknown architecture", mutate: func(input *LinuxAuthorityInput) { input.Architecture = runtimeinstall.ArchitectureUnknown }},
 		{name: "manager distribution mismatch", mutate: func(input *LinuxAuthorityInput) { input.PackageManager = PackageManagerDNF }},
 		{name: "repository suite mismatch", mutate: func(input *LinuxAuthorityInput) { input.Repository.Suite = "jammy" }},
+		{name: "docker path", mutate: func(input *LinuxAuthorityInput) { input.DockerCLIPath = "/tmp/docker" }},
+		{name: "docker digest", mutate: func(input *LinuxAuthorityInput) { input.DockerCLISHA256 = runtimeinstall.Hash{} }},
+		{name: "compose path", mutate: func(input *LinuxAuthorityInput) { input.ComposePluginPath = "/tmp/compose" }},
+		{name: "compose digest", mutate: func(input *LinuxAuthorityInput) { input.ComposePluginSHA256 = runtimeinstall.Hash{} }},
+		{name: "apt rpmkeys", mutate: func(input *LinuxAuthorityInput) {
+			input.RPMKeysPath = "/usr/bin/rpmkeys"
+			input.RPMKeysSHA256 = runtimeinstall.Sum([]byte("rpmkeys"))
+		}},
 	}
 
 	for _, test := range tests {
@@ -121,6 +129,11 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 		authority.Endpoint() != input.Endpoint || authority.SELinuxEnforcingSupported() != input.SELinuxEnforcing ||
 		authority.ServiceID() != input.ServiceID || authority.RootlessToolPath() != input.RootlessToolPath ||
 		authority.RootlessToolDigest() != input.RootlessToolDigest ||
+		authority.DockerCLIPath() != input.DockerCLIPath || authority.DockerCLISHA256() != input.DockerCLISHA256 ||
+		authority.ComposePluginPath() != input.ComposePluginPath || authority.ComposePluginSHA256() != input.ComposePluginSHA256 ||
+		authority.RPMKeysPath() != input.RPMKeysPath || authority.RPMKeysSHA256() != input.RPMKeysSHA256 ||
+		authority.RPMKeysPackageVersion() != input.RPMKeysPackageVersion ||
+		authority.RPMKeysPackageReceiptDigest() != input.RPMKeysPackageReceiptDigest ||
 		authority.ProbeImage() != input.ProbeImage || authority.ProbeImageDigest() != input.ProbeImageDigest ||
 		authority.ProbeContractVersion() != input.ProbeContractVersion ||
 		authority.CapabilityPolicyDigest() != input.CapabilityPolicyDigest {
@@ -143,6 +156,9 @@ func TestLinuxAuthorityProjectsEverySignedFieldWithoutMutation(t *testing.T) {
 	dnf.Repository.URL, dnf.Repository.Suite = "https://download.docker.com/linux/fedora", "42"
 	dnf.Packages[6].Name, dnf.Packages[6].Version = "shadow-utils", "4.15.1-12.fc42"
 	dnf.Packages[6].NativeReceiptDigest = runtimeinstall.Sum([]byte("shadow-utils-receipt"))
+	dnf.RPMKeysPath, dnf.RPMKeysSHA256 = "/usr/bin/rpmkeys", runtimeinstall.Sum([]byte("rpmkeys"))
+	dnf.RPMKeysPackageVersion = "4.20.1-1.fc42"
+	dnf.RPMKeysPackageReceiptDigest = runtimeinstall.Sum([]byte("rpm package receipt"))
 	if dnfAuthority, dnfError := NewLinuxAuthority(dnf); dnfError != nil || dnfAuthority.PackageManager() != PackageManagerDNF {
 		t.Fatalf("valid DNF authority rejected: %v", dnfError)
 	}
@@ -247,6 +263,9 @@ func testAuthorityInput(plan runtimeinstall.Plan) LinuxAuthorityInput {
 		RuntimeDirectory: "/run/user/1000", Endpoint: "unix:///run/user/1000/docker.sock",
 		SubordinateIDCount: 65536, SELinuxEnforcing: true, ServiceID: "docker.service",
 		ServiceUnitDigest: runtimeinstall.Sum([]byte("unit")), RootlessToolPath: "/usr/bin/dockerd-rootless-setuptool.sh",
+		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: runtimeinstall.Sum([]byte("docker-cli")),
+		ComposePluginPath:      "/usr/libexec/docker/cli-plugins/docker-compose",
+		ComposePluginSHA256:    runtimeinstall.Sum([]byte("compose-plugin")),
 		RootlessToolDigest:     runtimeinstall.Sum([]byte("rootless-tool")),
 		ProbeImage:             "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probeDigest.String(),
 		ProbeImageDigest:       probeDigest,

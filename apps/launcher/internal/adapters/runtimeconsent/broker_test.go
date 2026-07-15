@@ -200,8 +200,11 @@ func brokerLinuxAuthority(t testing.TB) runtimeport.LinuxAuthority {
 		HomeDirectory: "/home/agentmemory", RuntimeDirectory: "/run/user/1000", Endpoint: "unix:///run/user/1000/docker.sock",
 		SubordinateIDCount: 65536, SELinuxEnforcing: true, ServiceID: "docker.service",
 		ServiceUnitDigest: runtimeinstall.Sum([]byte("unit")), RootlessToolPath: "/usr/bin/dockerd-rootless-setuptool.sh",
-		RootlessToolDigest: runtimeinstall.Sum([]byte("rootless")),
-		ProbeImage:         "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
+		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: runtimeinstall.Sum([]byte("docker-cli")),
+		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
+		ComposePluginSHA256: runtimeinstall.Sum([]byte("compose-plugin")),
+		RootlessToolDigest:  runtimeinstall.Sum([]byte("rootless")),
+		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + probe.String(), ProbeImageDigest: probe,
 		ProbeContractVersion: "1", CapabilityPolicyDigest: runtimeinstall.Sum([]byte("policy")),
 	})
 	if err != nil {

@@ -203,6 +203,28 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
 	}
+	dockerCLIDigest, err := ParseDigest(document.DockerCLISHA256)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	composePluginDigest, err := ParseDigest(document.ComposePluginSHA256)
+	if err != nil {
+		return LinuxExecutionPolicyInput{}, err
+	}
+	var rpmKeysDigest Digest
+	if document.RPMKeysSHA256 != "" {
+		rpmKeysDigest, err = ParseDigest(document.RPMKeysSHA256)
+		if err != nil {
+			return LinuxExecutionPolicyInput{}, err
+		}
+	}
+	var rpmKeysPackageReceipt Digest
+	if document.RPMKeysPackageReceiptDigest != "" {
+		rpmKeysPackageReceipt, err = ParseDigest(document.RPMKeysPackageReceiptDigest)
+		if err != nil {
+			return LinuxExecutionPolicyInput{}, err
+		}
+	}
 	probeImageDigest, err := ParseDigest(document.ProbeImageDigest)
 	if err != nil {
 		return LinuxExecutionPolicyInput{}, err
@@ -251,7 +273,12 @@ func linuxExecutionInputFromCanonical(document *canonicalLinuxExecution) (LinuxE
 		SubordinateIDCount:        document.SubordinateIDCount,
 		SELinuxEnforcingSupported: document.SELinuxEnforcingSupported,
 		ServiceID:                 document.ServiceID, ServiceUnitDigest: serviceUnitDigest,
-		RootlessToolPath: document.RootlessToolPath, RootlessToolDigest: rootlessToolDigest,
+		DockerCLIPath: document.DockerCLIPath, DockerCLISHA256: dockerCLIDigest,
+		ComposePluginPath: document.ComposePluginPath, ComposePluginSHA256: composePluginDigest,
+		RPMKeysPath: document.RPMKeysPath, RPMKeysSHA256: rpmKeysDigest,
+		RPMKeysPackageVersion:       document.RPMKeysPackageVersion,
+		RPMKeysPackageReceiptDigest: rpmKeysPackageReceipt,
+		RootlessToolPath:            document.RootlessToolPath, RootlessToolDigest: rootlessToolDigest,
 		ProbeImage: document.ProbeImage, ProbeImageDigest: probeImageDigest,
 		ProbeContractVersion:   document.ProbeContractVersion,
 		CapabilityPolicyDigest: capabilityPolicyDigest,

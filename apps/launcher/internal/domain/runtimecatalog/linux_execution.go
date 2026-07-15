@@ -412,52 +412,68 @@ func (p LinuxPackage) Source() SourceLocation { return p.source }
 // projection. Host identity and observations are deliberately supplied later
 // by a native probe and cannot be declared by the catalog.
 type LinuxExecutionPolicyInput struct {
-	PackageManager            LinuxPackageManager
-	PackageManagerVersion     string
-	Codename                  string
-	MinimumKernel             string
-	MinimumAvailableMemory    uint64
-	Repository                LinuxRepositoryInput
-	VerificationRepositories  []LinuxRepositoryInput
-	Packages                  []LinuxPackageInput
-	PackageSetDigest          Digest
-	RollbackHeadroomBytes     uint64
-	AcquisitionSafetyBytes    uint64
-	SubordinateIDCount        uint32
-	SELinuxEnforcingSupported bool
-	ServiceID                 string
-	ServiceUnitDigest         Digest
-	RootlessToolPath          string
-	RootlessToolDigest        Digest
-	ProbeImage                string
-	ProbeImageDigest          Digest
-	ProbeContractVersion      string
-	CapabilityPolicyDigest    Digest
+	PackageManager              LinuxPackageManager
+	PackageManagerVersion       string
+	Codename                    string
+	MinimumKernel               string
+	MinimumAvailableMemory      uint64
+	Repository                  LinuxRepositoryInput
+	VerificationRepositories    []LinuxRepositoryInput
+	Packages                    []LinuxPackageInput
+	PackageSetDigest            Digest
+	RollbackHeadroomBytes       uint64
+	AcquisitionSafetyBytes      uint64
+	SubordinateIDCount          uint32
+	SELinuxEnforcingSupported   bool
+	ServiceID                   string
+	ServiceUnitDigest           Digest
+	DockerCLIPath               string
+	DockerCLISHA256             Digest
+	ComposePluginPath           string
+	ComposePluginSHA256         Digest
+	RPMKeysPath                 string
+	RPMKeysSHA256               Digest
+	RPMKeysPackageVersion       string
+	RPMKeysPackageReceiptDigest Digest
+	RootlessToolPath            string
+	RootlessToolDigest          Digest
+	ProbeImage                  string
+	ProbeImageDigest            Digest
+	ProbeContractVersion        string
+	CapabilityPolicyDigest      Digest
 }
 
 // LinuxExecutionPolicy is present only in a Linux catalog cell.
 type LinuxExecutionPolicy struct {
-	packageManager            LinuxPackageManager
-	packageManagerVersion     string
-	codename                  string
-	minimumKernel             string
-	minimumAvailableMemory    uint64
-	repository                LinuxRepository
-	verificationRepositories  []LinuxRepository
-	packages                  []LinuxPackage
-	packageSetDigest          Digest
-	rollbackHeadroomBytes     uint64
-	acquisitionSafetyBytes    uint64
-	subordinateIDCount        uint32
-	selinuxEnforcingSupported bool
-	serviceID                 string
-	serviceUnitDigest         Digest
-	rootlessToolPath          string
-	rootlessToolDigest        Digest
-	probeImage                string
-	probeImageDigest          Digest
-	probeContractVersion      string
-	capabilityPolicyDigest    Digest
+	packageManager              LinuxPackageManager
+	packageManagerVersion       string
+	codename                    string
+	minimumKernel               string
+	minimumAvailableMemory      uint64
+	repository                  LinuxRepository
+	verificationRepositories    []LinuxRepository
+	packages                    []LinuxPackage
+	packageSetDigest            Digest
+	rollbackHeadroomBytes       uint64
+	acquisitionSafetyBytes      uint64
+	subordinateIDCount          uint32
+	selinuxEnforcingSupported   bool
+	serviceID                   string
+	serviceUnitDigest           Digest
+	dockerCLIPath               string
+	dockerCLISHA256             Digest
+	composePluginPath           string
+	composePluginSHA256         Digest
+	rpmKeysPath                 string
+	rpmKeysSHA256               Digest
+	rpmKeysPackageVersion       string
+	rpmKeysPackageReceiptDigest Digest
+	rootlessToolPath            string
+	rootlessToolDigest          Digest
+	probeImage                  string
+	probeImageDigest            Digest
+	probeContractVersion        string
+	capabilityPolicyDigest      Digest
 }
 
 func newLinuxExecutionPolicy(
@@ -470,6 +486,7 @@ func newLinuxExecutionPolicy(
 		input.PackageSetDigest.IsZero() || input.RollbackHeadroomBytes == 0 ||
 		input.AcquisitionSafetyBytes == 0 || input.SubordinateIDCount < 65536 ||
 		input.ServiceID != "docker.service" || input.ServiceUnitDigest.IsZero() ||
+		!validLinuxExecutableAuthority(input) ||
 		input.RootlessToolPath != "/usr/bin/dockerd-rootless-setuptool.sh" || input.RootlessToolDigest.IsZero() ||
 		input.ProbeContractVersion != "1" || input.CapabilityPolicyDigest.IsZero() ||
 		!validLinuxProbeImage(input.ProbeImage, input.ProbeImageDigest) {
@@ -514,11 +531,31 @@ func newLinuxExecutionPolicy(
 		subordinateIDCount:        input.SubordinateIDCount,
 		selinuxEnforcingSupported: input.SELinuxEnforcingSupported,
 		serviceID:                 input.ServiceID, serviceUnitDigest: input.ServiceUnitDigest,
-		rootlessToolPath: input.RootlessToolPath, rootlessToolDigest: input.RootlessToolDigest,
+		dockerCLIPath: input.DockerCLIPath, dockerCLISHA256: input.DockerCLISHA256,
+		composePluginPath: input.ComposePluginPath, composePluginSHA256: input.ComposePluginSHA256,
+		rpmKeysPath: input.RPMKeysPath, rpmKeysSHA256: input.RPMKeysSHA256,
+		rpmKeysPackageVersion:       input.RPMKeysPackageVersion,
+		rpmKeysPackageReceiptDigest: input.RPMKeysPackageReceiptDigest,
+		rootlessToolPath:            input.RootlessToolPath, rootlessToolDigest: input.RootlessToolDigest,
 		probeImage: input.ProbeImage, probeImageDigest: input.ProbeImageDigest,
 		probeContractVersion:   input.ProbeContractVersion,
 		capabilityPolicyDigest: input.CapabilityPolicyDigest,
 	}, nil
+}
+
+func validLinuxExecutableAuthority(input LinuxExecutionPolicyInput) bool {
+	if input.DockerCLIPath != "/usr/bin/docker" || input.DockerCLISHA256.IsZero() ||
+		input.ComposePluginPath != "/usr/libexec/docker/cli-plugins/docker-compose" ||
+		input.ComposePluginSHA256.IsZero() {
+		return false
+	}
+	if input.PackageManager == LinuxPackageManagerAPT {
+		return input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
+			input.RPMKeysPackageVersion == "" && input.RPMKeysPackageReceiptDigest.IsZero()
+	}
+	return input.PackageManager == LinuxPackageManagerDNF && input.RPMKeysPath == "/usr/bin/rpmkeys" &&
+		!input.RPMKeysSHA256.IsZero() && validLinuxPackageVersion(input.RPMKeysPackageVersion) &&
+		!input.RPMKeysPackageReceiptDigest.IsZero()
 }
 
 func newLinuxVerificationRepositories(
@@ -948,6 +985,32 @@ func (p LinuxExecutionPolicy) ServiceID() string { return p.serviceID }
 // ServiceUnitDigest returns the expected packaged user-unit digest.
 func (p LinuxExecutionPolicy) ServiceUnitDigest() Digest { return p.serviceUnitDigest }
 
+// DockerCLIPath returns the fixed package-owned Docker client path.
+func (p LinuxExecutionPolicy) DockerCLIPath() string { return p.dockerCLIPath }
+
+// DockerCLISHA256 returns the exact installed Docker client byte digest.
+func (p LinuxExecutionPolicy) DockerCLISHA256() Digest { return p.dockerCLISHA256 }
+
+// ComposePluginPath returns the fixed package-owned Compose plugin path.
+func (p LinuxExecutionPolicy) ComposePluginPath() string { return p.composePluginPath }
+
+// ComposePluginSHA256 returns the exact installed Compose plugin byte digest.
+func (p LinuxExecutionPolicy) ComposePluginSHA256() Digest { return p.composePluginSHA256 }
+
+// RPMKeysPath returns the DNF cell's fixed RPM signature verifier path.
+func (p LinuxExecutionPolicy) RPMKeysPath() string { return p.rpmKeysPath }
+
+// RPMKeysSHA256 returns the DNF cell's exact RPM verifier byte digest.
+func (p LinuxExecutionPolicy) RPMKeysSHA256() Digest { return p.rpmKeysSHA256 }
+
+// RPMKeysPackageVersion returns the exact installed distribution RPM package version.
+func (p LinuxExecutionPolicy) RPMKeysPackageVersion() string { return p.rpmKeysPackageVersion }
+
+// RPMKeysPackageReceiptDigest returns the signed native package receipt binding for rpmkeys.
+func (p LinuxExecutionPolicy) RPMKeysPackageReceiptDigest() Digest {
+	return p.rpmKeysPackageReceiptDigest
+}
+
 // RootlessToolPath returns the fixed packaged setup-tool path.
 func (p LinuxExecutionPolicy) RootlessToolPath() string { return p.rootlessToolPath }
 
@@ -1032,7 +1095,12 @@ func (p LinuxExecutionPolicy) ValidFor(artifact ArtifactPolicy) bool {
 		SubordinateIDCount:        p.subordinateIDCount,
 		SELinuxEnforcingSupported: p.selinuxEnforcingSupported,
 		ServiceID:                 p.serviceID, ServiceUnitDigest: p.serviceUnitDigest,
-		RootlessToolPath: p.rootlessToolPath, RootlessToolDigest: p.rootlessToolDigest,
+		DockerCLIPath: p.dockerCLIPath, DockerCLISHA256: p.dockerCLISHA256,
+		ComposePluginPath: p.composePluginPath, ComposePluginSHA256: p.composePluginSHA256,
+		RPMKeysPath: p.rpmKeysPath, RPMKeysSHA256: p.rpmKeysSHA256,
+		RPMKeysPackageVersion:       p.rpmKeysPackageVersion,
+		RPMKeysPackageReceiptDigest: p.rpmKeysPackageReceiptDigest,
+		RootlessToolPath:            p.rootlessToolPath, RootlessToolDigest: p.rootlessToolDigest,
 		ProbeImage: p.probeImage, ProbeImageDigest: p.probeImageDigest,
 		ProbeContractVersion:   p.probeContractVersion,
 		CapabilityPolicyDigest: p.capabilityPolicyDigest,

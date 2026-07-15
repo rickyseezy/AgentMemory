@@ -144,49 +144,57 @@ func (r Repository) MetadataDigest() runtimeinstall.Hash { return r.metadataDige
 // execution projection. AuthorityResolver, not an inbound caller, owns this
 // construction input in production.
 type LinuxAuthorityInput struct {
-	PlanDigest             runtimeinstall.Hash
-	CatalogDigest          runtimeinstall.Hash
-	TermsDigest            runtimeinstall.Hash
-	TermsID                string
-	TermsVersion           string
-	TermsURL               string
-	TermsPresentation      string
-	ArtifactDigest         runtimeinstall.Hash
-	SigningKeyID           string
-	Architecture           runtimeinstall.Architecture
-	Distribution           string
-	VersionID              string
-	Codename               string
-	MinimumKernel          string
-	MinimumCPUs            uint16
-	MinimumTotalMemory     uint64
-	MinimumAvailableMemory uint64
-	MinimumFreeDisk        uint64
-	PackageManager         PackageManager
-	PackageManagerVersion  string
-	Repository             RepositoryInput
-	Packages               []PackageInput
-	RuntimeVersion         string
-	ComposeVersion         string
-	UnrelatedWorkloads     uint32
-	InvokingUID            uint32
-	InvokingGID            uint32
-	AccountName            string
-	PrincipalID            string
-	MachineDigest          runtimeinstall.Hash
-	HomeDirectory          string
-	RuntimeDirectory       string
-	Endpoint               string
-	SubordinateIDCount     uint32
-	SELinuxEnforcing       bool
-	ServiceID              string
-	ServiceUnitDigest      runtimeinstall.Hash
-	RootlessToolPath       string
-	RootlessToolDigest     runtimeinstall.Hash
-	ProbeImage             string
-	ProbeImageDigest       runtimeinstall.Hash
-	ProbeContractVersion   string
-	CapabilityPolicyDigest runtimeinstall.Hash
+	PlanDigest                  runtimeinstall.Hash
+	CatalogDigest               runtimeinstall.Hash
+	TermsDigest                 runtimeinstall.Hash
+	TermsID                     string
+	TermsVersion                string
+	TermsURL                    string
+	TermsPresentation           string
+	ArtifactDigest              runtimeinstall.Hash
+	SigningKeyID                string
+	Architecture                runtimeinstall.Architecture
+	Distribution                string
+	VersionID                   string
+	Codename                    string
+	MinimumKernel               string
+	MinimumCPUs                 uint16
+	MinimumTotalMemory          uint64
+	MinimumAvailableMemory      uint64
+	MinimumFreeDisk             uint64
+	PackageManager              PackageManager
+	PackageManagerVersion       string
+	Repository                  RepositoryInput
+	Packages                    []PackageInput
+	RuntimeVersion              string
+	ComposeVersion              string
+	UnrelatedWorkloads          uint32
+	InvokingUID                 uint32
+	InvokingGID                 uint32
+	AccountName                 string
+	PrincipalID                 string
+	MachineDigest               runtimeinstall.Hash
+	HomeDirectory               string
+	RuntimeDirectory            string
+	Endpoint                    string
+	SubordinateIDCount          uint32
+	SELinuxEnforcing            bool
+	ServiceID                   string
+	ServiceUnitDigest           runtimeinstall.Hash
+	DockerCLIPath               string
+	DockerCLISHA256             runtimeinstall.Hash
+	ComposePluginPath           string
+	ComposePluginSHA256         runtimeinstall.Hash
+	RPMKeysPath                 string
+	RPMKeysSHA256               runtimeinstall.Hash
+	RPMKeysPackageVersion       string
+	RPMKeysPackageReceiptDigest runtimeinstall.Hash
+	RootlessToolPath            string
+	RootlessToolDigest          runtimeinstall.Hash
+	ProbeImage                  string
+	ProbeImageDigest            runtimeinstall.Hash
+	ProbeContractVersion        string
+	CapabilityPolicyDigest      runtimeinstall.Hash
 }
 
 // LinuxAuthority is the immutable, digest-bound execution projection. Its
@@ -240,6 +248,7 @@ func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 		input.Endpoint != "unix://"+input.RuntimeDirectory+"/docker.sock" ||
 		input.SubordinateIDCount < minimumSubordinateIDs || !validIdentity(input.ServiceID) ||
 		input.ServiceID != "docker.service" || input.ServiceUnitDigest.IsZero() ||
+		!validLinuxExecutableAuthority(input) ||
 		input.RootlessToolPath != "/usr/bin/dockerd-rootless-setuptool.sh" ||
 		input.RootlessToolDigest.IsZero() || !validProbeImage(input.ProbeImage, input.ProbeImageDigest) ||
 		input.ProbeContractVersion != "1" || input.CapabilityPolicyDigest.IsZero() {
@@ -247,6 +256,21 @@ func validLinuxAuthorityScalar(input LinuxAuthorityInput) bool {
 	}
 	return !strings.HasPrefix(input.HomeDirectory, "/tmp/") && input.HomeDirectory != "/tmp" &&
 		input.HomeDirectory != input.RuntimeDirectory
+}
+
+func validLinuxExecutableAuthority(input LinuxAuthorityInput) bool {
+	if input.DockerCLIPath != "/usr/bin/docker" || input.DockerCLISHA256.IsZero() ||
+		input.ComposePluginPath != "/usr/libexec/docker/cli-plugins/docker-compose" ||
+		input.ComposePluginSHA256.IsZero() {
+		return false
+	}
+	if input.PackageManager == PackageManagerAPT {
+		return input.RPMKeysPath == "" && input.RPMKeysSHA256.IsZero() &&
+			input.RPMKeysPackageVersion == "" && input.RPMKeysPackageReceiptDigest.IsZero()
+	}
+	return input.PackageManager == PackageManagerDNF && input.RPMKeysPath == "/usr/bin/rpmkeys" &&
+		!input.RPMKeysSHA256.IsZero() && validPackageVersion(input.RPMKeysPackageVersion) &&
+		!input.RPMKeysPackageReceiptDigest.IsZero()
 }
 
 func validLinuxTerms(input LinuxAuthorityInput) bool {
@@ -430,61 +454,76 @@ func (a LinuxAuthority) canonicalBytes() ([]byte, error) {
 		})
 	}
 	document := struct {
-		Architecture string             `json:"architecture"`
-		AccountName  string             `json:"account_name"`
-		Artifact     string             `json:"artifact_digest"`
-		Capability   string             `json:"capability_policy_digest"`
-		Catalog      string             `json:"catalog_digest"`
-		Codename     string             `json:"codename"`
-		Compose      string             `json:"compose_version"`
-		Distribution string             `json:"distribution"`
-		Endpoint     string             `json:"endpoint"`
-		GID          uint32             `json:"gid"`
-		Home         string             `json:"home"`
-		Kernel       string             `json:"minimum_kernel"`
-		Machine      string             `json:"machine_digest"`
-		Manager      string             `json:"package_manager"`
-		ManagerVer   string             `json:"package_manager_version"`
-		MinimumCPUs  uint16             `json:"minimum_cpus"`
-		MinimumDisk  uint64             `json:"minimum_free_disk"`
-		MinimumFree  uint64             `json:"minimum_available_memory"`
-		MinimumTotal uint64             `json:"minimum_total_memory"`
-		Packages     []canonicalPackage `json:"packages"`
-		Plan         string             `json:"plan_digest"`
-		Principal    string             `json:"principal"`
-		Repository   RepositoryInput    `json:"repository"`
-		RootlessPath string             `json:"rootless_tool_path"`
-		RootlessSHA  string             `json:"rootless_tool_digest"`
-		ProbeImage   string             `json:"probe_image"`
-		ProbeSHA     string             `json:"probe_image_digest"`
-		ProbeVersion string             `json:"probe_contract_version"`
-		Runtime      string             `json:"runtime_version"`
-		RuntimeDir   string             `json:"runtime_directory"`
-		SELinux      bool               `json:"selinux_enforcing_supported"`
-		Service      string             `json:"service_id"`
-		ServiceSHA   string             `json:"service_unit_digest"`
-		SigningKey   string             `json:"signing_key_id"`
-		SubIDs       uint32             `json:"subordinate_id_count"`
-		Terms        string             `json:"terms_digest"`
-		TermsID      string             `json:"terms_id"`
-		TermsMode    string             `json:"terms_presentation"`
-		TermsURL     string             `json:"terms_url"`
-		TermsVersion string             `json:"terms_version"`
-		UID          uint32             `json:"uid"`
-		Workloads    uint32             `json:"unrelated_workloads"`
-		Version      string             `json:"version_id"`
+		Architecture          string             `json:"architecture"`
+		AccountName           string             `json:"account_name"`
+		Artifact              string             `json:"artifact_digest"`
+		Capability            string             `json:"capability_policy_digest"`
+		Catalog               string             `json:"catalog_digest"`
+		Codename              string             `json:"codename"`
+		Compose               string             `json:"compose_version"`
+		ComposePath           string             `json:"compose_plugin_path"`
+		ComposeSHA            string             `json:"compose_plugin_sha256"`
+		Distribution          string             `json:"distribution"`
+		DockerPath            string             `json:"docker_cli_path"`
+		DockerSHA             string             `json:"docker_cli_sha256"`
+		Endpoint              string             `json:"endpoint"`
+		GID                   uint32             `json:"gid"`
+		Home                  string             `json:"home"`
+		Kernel                string             `json:"minimum_kernel"`
+		Machine               string             `json:"machine_digest"`
+		Manager               string             `json:"package_manager"`
+		ManagerVer            string             `json:"package_manager_version"`
+		MinimumCPUs           uint16             `json:"minimum_cpus"`
+		MinimumDisk           uint64             `json:"minimum_free_disk"`
+		MinimumFree           uint64             `json:"minimum_available_memory"`
+		MinimumTotal          uint64             `json:"minimum_total_memory"`
+		Packages              []canonicalPackage `json:"packages"`
+		Plan                  string             `json:"plan_digest"`
+		Principal             string             `json:"principal"`
+		Repository            RepositoryInput    `json:"repository"`
+		RPMKeysPath           string             `json:"rpm_keys_path"`
+		RPMKeysPackageVersion string             `json:"rpm_keys_package_version"`
+		RPMKeysPackageReceipt string             `json:"rpm_keys_package_receipt_digest"`
+		RPMKeysSHA            string             `json:"rpm_keys_sha256"`
+		RootlessPath          string             `json:"rootless_tool_path"`
+		RootlessSHA           string             `json:"rootless_tool_digest"`
+		ProbeImage            string             `json:"probe_image"`
+		ProbeSHA              string             `json:"probe_image_digest"`
+		ProbeVersion          string             `json:"probe_contract_version"`
+		Runtime               string             `json:"runtime_version"`
+		RuntimeDir            string             `json:"runtime_directory"`
+		SELinux               bool               `json:"selinux_enforcing_supported"`
+		Service               string             `json:"service_id"`
+		ServiceSHA            string             `json:"service_unit_digest"`
+		SigningKey            string             `json:"signing_key_id"`
+		SubIDs                uint32             `json:"subordinate_id_count"`
+		Terms                 string             `json:"terms_digest"`
+		TermsID               string             `json:"terms_id"`
+		TermsMode             string             `json:"terms_presentation"`
+		TermsURL              string             `json:"terms_url"`
+		TermsVersion          string             `json:"terms_version"`
+		UID                   uint32             `json:"uid"`
+		Workloads             uint32             `json:"unrelated_workloads"`
+		Version               string             `json:"version_id"`
 	}{
 		Architecture: a.input.Architecture.String(), AccountName: a.input.AccountName,
 		Artifact:   a.input.ArtifactDigest.String(),
 		Capability: a.input.CapabilityPolicyDigest.String(), Catalog: a.input.CatalogDigest.String(),
-		Codename: a.input.Codename, Compose: a.input.ComposeVersion, Distribution: a.input.Distribution,
-		Endpoint: a.input.Endpoint, GID: a.input.InvokingGID, Home: a.input.HomeDirectory,
+		Codename: a.input.Codename, Compose: a.input.ComposeVersion,
+		ComposePath: a.input.ComposePluginPath, ComposeSHA: a.input.ComposePluginSHA256.String(),
+		Distribution: a.input.Distribution, DockerPath: a.input.DockerCLIPath,
+		DockerSHA: a.input.DockerCLISHA256.String(),
+		Endpoint:  a.input.Endpoint, GID: a.input.InvokingGID, Home: a.input.HomeDirectory,
 		Kernel: a.input.MinimumKernel, Machine: a.input.MachineDigest.String(), Manager: string(a.input.PackageManager),
 		ManagerVer: a.input.PackageManagerVersion, MinimumCPUs: a.input.MinimumCPUs,
 		MinimumDisk: a.input.MinimumFreeDisk, MinimumFree: a.input.MinimumAvailableMemory,
 		MinimumTotal: a.input.MinimumTotalMemory, Packages: packages, Plan: a.input.PlanDigest.String(),
-		Principal: a.input.PrincipalID, Repository: a.input.Repository, RootlessPath: a.input.RootlessToolPath,
-		RootlessSHA: a.input.RootlessToolDigest.String(), ProbeImage: a.input.ProbeImage,
+		Principal: a.input.PrincipalID, Repository: a.input.Repository,
+		RPMKeysPath: a.input.RPMKeysPath, RPMKeysSHA: a.input.RPMKeysSHA256.String(),
+		RPMKeysPackageVersion: a.input.RPMKeysPackageVersion,
+		RPMKeysPackageReceipt: a.input.RPMKeysPackageReceiptDigest.String(),
+		RootlessPath:          a.input.RootlessToolPath,
+		RootlessSHA:           a.input.RootlessToolDigest.String(), ProbeImage: a.input.ProbeImage,
 		ProbeSHA: a.input.ProbeImageDigest.String(), ProbeVersion: a.input.ProbeContractVersion,
 		Runtime:    a.input.RuntimeVersion,
 		RuntimeDir: a.input.RuntimeDirectory, SELinux: a.input.SELinuxEnforcing,
@@ -622,10 +661,36 @@ func (a LinuxAuthority) ServiceID() string { return a.input.ServiceID }
 // ServiceUnitDigest returns the exact expected user unit bytes.
 func (a LinuxAuthority) ServiceUnitDigest() runtimeinstall.Hash { return a.input.ServiceUnitDigest }
 
+// DockerCLIPath returns the fixed package-owned Docker client path.
+func (a LinuxAuthority) DockerCLIPath() string { return a.input.DockerCLIPath }
+
+// DockerCLISHA256 returns the exact installed Docker client byte digest.
+func (a LinuxAuthority) DockerCLISHA256() runtimeinstall.Hash { return a.input.DockerCLISHA256 }
+
+// ComposePluginPath returns the fixed package-owned Compose plugin path.
+func (a LinuxAuthority) ComposePluginPath() string { return a.input.ComposePluginPath }
+
+// ComposePluginSHA256 returns the exact installed Compose plugin byte digest.
+func (a LinuxAuthority) ComposePluginSHA256() runtimeinstall.Hash { return a.input.ComposePluginSHA256 }
+
+// RPMKeysPath returns the exact DNF package-signature verifier path.
+func (a LinuxAuthority) RPMKeysPath() string { return a.input.RPMKeysPath }
+
+// RPMKeysSHA256 returns the exact DNF package-signature verifier byte digest.
+func (a LinuxAuthority) RPMKeysSHA256() runtimeinstall.Hash { return a.input.RPMKeysSHA256 }
+
+// RPMKeysPackageVersion returns the exact installed distribution RPM package version.
+func (a LinuxAuthority) RPMKeysPackageVersion() string { return a.input.RPMKeysPackageVersion }
+
+// RPMKeysPackageReceiptDigest returns the signed native package receipt binding for rpmkeys.
+func (a LinuxAuthority) RPMKeysPackageReceiptDigest() runtimeinstall.Hash {
+	return a.input.RPMKeysPackageReceiptDigest
+}
+
 // RootlessToolPath returns the packaged setup tool's fixed path.
 func (a LinuxAuthority) RootlessToolPath() string { return a.input.RootlessToolPath }
 
-// RootlessToolDigest returns the exact setup tool package receipt binding.
+// RootlessToolDigest returns the exact setup-tool byte digest.
 func (a LinuxAuthority) RootlessToolDigest() runtimeinstall.Hash { return a.input.RootlessToolDigest }
 
 // ProbeImage returns the exact immutable OCI digest reference for the signed

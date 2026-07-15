@@ -137,6 +137,13 @@ the exact component-license inventory and independently approve any offline
 redistribution; an open-source component license does not automatically grant
 redistribution authority for every bundled vendor artifact.
 
+Every signed Linux catalog cell must supply the exact installed Docker CLI,
+Compose plugin, and rootless setup executable SHA-256 values. DNF cells must
+also supply the exact distribution-owned `/usr/bin/rpmkeys` SHA-256, `rpm`
+package version, and authenticated native package-receipt digest. These are
+release inputs derived from the certified native packages; the launcher does
+not discover or synthesize them from a user's machine.
+
 ## Native certification hosts
 
 The release owner must provide pristine, supported, non-virtualized or

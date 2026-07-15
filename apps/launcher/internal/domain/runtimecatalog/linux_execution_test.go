@@ -23,6 +23,10 @@ func TestLinuxExecutionPolicyBindsCompleteRetainedPackageSet(t *testing.T) {
 		len(policy.Repository().VerificationArtifacts()) != 3 ||
 		policy.Packages()[0].Name() != "containerd.io" ||
 		policy.Packages()[6].Name() != "uidmap" || policy.SubordinateIDCount() != 65536 ||
+		policy.DockerCLIPath() != "/usr/bin/docker" || policy.DockerCLISHA256().IsZero() ||
+		policy.ComposePluginPath() != "/usr/libexec/docker/cli-plugins/docker-compose" ||
+		policy.ComposePluginSHA256().IsZero() || policy.RPMKeysPath() != "" || !policy.RPMKeysSHA256().IsZero() ||
+		policy.RPMKeysPackageVersion() != "" || !policy.RPMKeysPackageReceiptDigest().IsZero() ||
 		policy.ProbeContractVersion() != "1" || !policy.ValidFor(validatedArtifact) {
 		t.Fatal("Linux execution projection is incomplete")
 	}
@@ -93,6 +97,16 @@ func TestLinuxExecutionPolicyRejectsMutableOrIncompleteAuthority(t *testing.T) {
 		{name: "rollback headroom", edit: func(v *LinuxExecutionPolicyInput) { v.RollbackHeadroomBytes = 0 }},
 		{name: "capacity mismatch", edit: func(v *LinuxExecutionPolicyInput) { v.AcquisitionSafetyBytes++ }},
 		{name: "service", edit: func(v *LinuxExecutionPolicyInput) { v.ServiceID = "docker-root.service" }},
+		{name: "docker cli path", edit: func(v *LinuxExecutionPolicyInput) { v.DockerCLIPath = "/tmp/docker" }},
+		{name: "docker cli digest", edit: func(v *LinuxExecutionPolicyInput) { v.DockerCLISHA256 = Digest{} }},
+		{name: "compose path", edit: func(v *LinuxExecutionPolicyInput) { v.ComposePluginPath = "/tmp/docker-compose" }},
+		{name: "compose digest", edit: func(v *LinuxExecutionPolicyInput) { v.ComposePluginSHA256 = Digest{} }},
+		{name: "apt rpmkeys authority", edit: func(v *LinuxExecutionPolicyInput) {
+			v.RPMKeysPath = "/usr/bin/rpmkeys"
+			v.RPMKeysSHA256 = DigestBytes([]byte("rpmkeys"))
+			v.RPMKeysPackageVersion = "4.20.1-1.fc42"
+			v.RPMKeysPackageReceiptDigest = DigestBytes([]byte("rpm receipt"))
+		}},
 		{name: "rootless path", edit: func(v *LinuxExecutionPolicyInput) { v.RootlessToolPath = "/tmp/setup.sh" }},
 		{name: "probe tag", edit: func(v *LinuxExecutionPolicyInput) {
 			v.ProbeImage = "docker.io/rickyseezy/agentmemory-runtime-probe:latest"
@@ -257,10 +271,13 @@ func linuxExecutionPolicyInput(t testReporter, artifact ArtifactPolicyInput) Lin
 		RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
 		SubordinateIDCount: 65536, SELinuxEnforcingSupported: true,
 		ServiceID: "docker.service", ServiceUnitDigest: DigestBytes([]byte("docker user service")),
-		RootlessToolPath:   "/usr/bin/dockerd-rootless-setuptool.sh",
-		RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
-		ProbeImage:         "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
-		ProbeImageDigest:   DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
+		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: DigestBytes([]byte("docker cli")),
+		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
+		ComposePluginSHA256: DigestBytes([]byte("compose plugin")),
+		RootlessToolPath:    "/usr/bin/dockerd-rootless-setuptool.sh",
+		RootlessToolDigest:  DigestBytes([]byte("rootless setup tool")),
+		ProbeImage:          "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
+		ProbeImageDigest:    DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: LinuxCapabilityPolicyDigest(linuxCapabilities()),
 	}
 }
@@ -369,7 +386,13 @@ func linuxDNFExecutionPolicyInput() (LinuxExecutionPolicyInput, ArtifactPolicyIn
 		RollbackHeadroomBytes: 200_000_000, AcquisitionSafetyBytes: 200_000_000,
 		SubordinateIDCount: 65536, SELinuxEnforcingSupported: true,
 		ServiceID: "docker.service", ServiceUnitDigest: DigestBytes([]byte("docker user service")),
-		RootlessToolPath: "/usr/bin/dockerd-rootless-setuptool.sh", RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
+		DockerCLIPath: "/usr/bin/docker", DockerCLISHA256: DigestBytes([]byte("docker cli")),
+		ComposePluginPath:   "/usr/libexec/docker/cli-plugins/docker-compose",
+		ComposePluginSHA256: DigestBytes([]byte("compose plugin")),
+		RPMKeysPath:         "/usr/bin/rpmkeys", RPMKeysSHA256: DigestBytes([]byte("rpmkeys")),
+		RPMKeysPackageVersion:       "4.20.1-1.fc42",
+		RPMKeysPackageReceiptDigest: DigestBytes([]byte("rpm package receipt")),
+		RootlessToolPath:            "/usr/bin/dockerd-rootless-setuptool.sh", RootlessToolDigest: DigestBytes([]byte("rootless setup tool")),
 		ProbeImage:       "docker.io/rickyseezy/agentmemory-runtime-probe@sha256:" + DigestBytes([]byte("probe image")).Hex(),
 		ProbeImageDigest: DigestBytes([]byte("probe image")), ProbeContractVersion: "1",
 		CapabilityPolicyDigest: LinuxCapabilityPolicyDigest(linuxCapabilities()),

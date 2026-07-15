@@ -90,6 +90,7 @@ var candidateArtifacts = []candidateArtifact{
 
 type publicationParts struct {
 	options            PublicationOptions
+	distribution       []byte
 	distributionDigest releaseinventory.Digest
 	distributionSize   uint64
 	releaseTrustDigest releaseinventory.Digest
@@ -99,6 +100,7 @@ type publicationParts struct {
 
 func (p publicationParts) clone() publicationParts {
 	result := p
+	result.distribution = append([]byte(nil), p.distribution...)
 	result.artifacts = append([]releasepublication.ArtifactInput(nil), p.artifacts...)
 	return result
 }
@@ -253,12 +255,14 @@ func inspectCandidate(options PublicationOptions) (publicationParts, error) {
 	if err != nil || len(seenFiles) != len(allowedFiles) {
 		return publicationParts{}, errors.New("candidate tree is incomplete or open")
 	}
-	distributionDigest, distributionSize, err := digestRegularFile(
+	distribution, err := readBoundedRegular(
 		filepath.Join(options.CandidateRoot, distributionEnvelopeName), maximumEnvelopeSize,
 	)
 	if err != nil {
-		return publicationParts{}, fmt.Errorf("hash distribution envelope: %w", err)
+		return publicationParts{}, fmt.Errorf("read distribution envelope: %w", err)
 	}
+	distributionDigest := releaseinventory.DigestBytes(distribution)
+	distributionSize := uint64(len(distribution)) // #nosec G115 -- the read is bounded to 32 MiB.
 	releaseTrustDigest, releaseTrustSize, err := digestRegularFile(
 		filepath.Join(options.CandidateRoot, releaseTrustName), maximumEnvelopeSize,
 	)
@@ -266,7 +270,8 @@ func inspectCandidate(options PublicationOptions) (publicationParts, error) {
 		return publicationParts{}, fmt.Errorf("hash release trust: %w", err)
 	}
 	parts := publicationParts{
-		options: options, distributionDigest: distributionDigest, distributionSize: distributionSize,
+		options: options, distribution: distribution,
+		distributionDigest: distributionDigest, distributionSize: distributionSize,
 		releaseTrustDigest: releaseTrustDigest, releaseTrustSize: releaseTrustSize,
 	}
 	for _, definition := range candidateArtifacts {
@@ -356,6 +361,20 @@ func readBoundedRegular(path string, maximum int64) ([]byte, error) {
 }
 
 func compilePublication(parts publicationParts) ([]byte, error) {
+	signed, err := releaseinventory.DecodeSignedManifestV1(parts.distribution)
+	if err != nil {
+		return nil, errors.New("distribution envelope is not canonical signed authority")
+	}
+	manifest := signed.Manifest()
+	if manifest.ReleaseID() != parts.options.ReleaseID || manifest.Version() != parts.options.Version ||
+		manifest.BuildID() != parts.options.BuildID || manifest.SourceCommit() != parts.options.SourceCommit ||
+		manifest.BuildTimestamp().Unix() != parts.options.SourceEpoch {
+		return nil, errors.New("distribution identity disagrees with publication identity")
+	}
+	return compilePublicationRecord(parts)
+}
+
+func compilePublicationRecord(parts publicationParts) ([]byte, error) {
 	publication, err := releasepublication.NewPublication(releasepublication.PublicationInput{
 		SchemaVersion: releasepublication.SupportedSchemaMajor, ReleaseID: parts.options.ReleaseID,
 		Version: parts.options.Version, BuildID: parts.options.BuildID, SourceCommit: parts.options.SourceCommit,

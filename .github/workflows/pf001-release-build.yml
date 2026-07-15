@@ -105,7 +105,7 @@ jobs:
           test -f "$asset"
           printf '%s  %s\n' '${{ inputs.sealed_asset_sha256 }}' "$asset" | sha256sum --check --strict
 
-      - name: Expand only the closed unsigned-evidence candidate layout
+      - name: Expand only the closed native and bootstrap candidate layout
         shell: bash
         run: |
           set -euo pipefail
@@ -113,7 +113,7 @@ jobs:
           root="$RUNNER_TEMP/release-build"
           install -d -m 0700 "$root"
           if tar --zstd --list --file "$asset" | \
-            awk 'BEGIN { bad=0 } !/^candidate\// || /(^|\/)\.\.($|\/)/ || /\\/ { bad=1 } END { exit bad }'; then
+            awk 'BEGIN { bad=0 } !/^(candidate|bootstrap)\// || /(^|\/)\.\.($|\/)/ || /\\/ { bad=1 } END { exit bad }'; then
             :
           else
             echo 'Sealed candidate contains an unsafe or foreign path' >&2
@@ -129,6 +129,19 @@ jobs:
           test "$(find "$candidate" -type f | wc -l | tr -d ' ')" -eq 26
           test -z "$(find "$candidate" -type l -print -quit)"
           test -z "$(find "$candidate/evidence" -name '*.sigstore.json' -print -quit)"
+          bootstrap="$root/bootstrap"
+          test -d "$bootstrap/evidence"
+          for cell in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            test -f "$bootstrap/agentmemory-bootstrap-$cell"
+            test -f "$bootstrap/evidence/agentmemory-bootstrap-$cell.cyclonedx.json"
+            test -f "$bootstrap/evidence/agentmemory-bootstrap-$cell.provenance.json"
+          done
+          test -f "$bootstrap/agentmemory-bootstrap-windows-amd64.exe"
+          test -f "$bootstrap/evidence/agentmemory-bootstrap-windows-amd64.cyclonedx.json"
+          test -f "$bootstrap/evidence/agentmemory-bootstrap-windows-amd64.provenance.json"
+          test "$(find "$bootstrap" -type f | wc -l | tr -d ' ')" -eq 15
+          test -z "$(find "$bootstrap" -type l -print -quit)"
+          test -z "$(find "$bootstrap/evidence" -name '*.sigstore.json' -print -quit)"
 
       - name: Sign every exact release object with the trusted build identity
         shell: bash
@@ -149,6 +162,17 @@ jobs:
               "$object"
           done
           test "$(find "$candidate/evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 24
+          bootstrap="$RUNNER_TEMP/release-build/bootstrap"
+          for object in "$bootstrap"/agentmemory-bootstrap-*; do
+            name=$(basename "$object")
+            id=${name%.exe}
+            test -f "$bootstrap/evidence/$id.cyclonedx.json"
+            test -f "$bootstrap/evidence/$id.provenance.json"
+            cosign sign-blob --yes \
+              --bundle "$bootstrap/evidence/$id.sigstore.json" \
+              "$object"
+          done
+          test "$(find "$bootstrap/evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 15
 
       - name: Build canonical publication authority from exact bytes
         shell: bash
@@ -167,7 +191,7 @@ jobs:
           go run ./apps/launcher/cmd/agentmemory-publication-record \
             -candidate-root "$root/candidate" \
             -verify-record "$root/publication.json"
-          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 35
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 55
 
       - name: Attest every exact release-build output
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1

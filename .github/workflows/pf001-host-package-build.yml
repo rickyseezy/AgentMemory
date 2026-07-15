@@ -1,0 +1,201 @@
+name: PF-001 signed agent-host package build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SemVer core matching the selected v-prefixed tag
+        required: true
+        type: string
+      build_run_id:
+        description: Successful trusted PF-001 release-build workflow run ID
+        required: true
+        type: string
+      build_artifact:
+        description: Exact release-build artifact name
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pf001-host-package-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Sign publication and assemble exact host packages
+    if: github.repository == 'rickyseezy/AgentMemory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pf001-host-package-build
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ inputs.version }}
+    steps:
+      - name: Check out exact tagged source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Install the pinned Cosign signer and verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.1
+
+      - name: Download the exact release-build authority
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.build_artifact }}
+          path: ${{ runner.temp }}/host-build
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.build_run_id }}
+
+      - name: Verify tag and every release-build provenance attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ '${{ inputs.version }}' =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$TAG"
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+          test "$(git status --porcelain=v1 --untracked-files=all)" = ''
+          root="$RUNNER_TEMP/host-build"
+          test -d "$root/candidate"
+          test -d "$root/bootstrap/evidence"
+          test -f "$root/publication.json"
+          count=0
+          while IFS= read -r -d '' subject; do
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/pf001-release-build.yml" \
+              --signer-digest "$GITHUB_SHA" \
+              --source-digest "$GITHUB_SHA" \
+              --source-ref "$GITHUB_REF" \
+              --deny-self-hosted-runners >/dev/null
+            count=$((count + 1))
+          done < <(find "$root" -type f -print0 | sort -z)
+          test "$count" -eq 55
+          go run ./apps/launcher/cmd/agentmemory-publication-record \
+            -candidate-root "$root/candidate" \
+            -verify-record "$root/publication.json"
+
+      - name: Reverify every bootstrap object signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/host-build"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-release-build.yml@$GITHUB_REF"
+          for object in "$root"/bootstrap/agentmemory-bootstrap-*; do
+            id=$(basename "$object")
+            id=${id%.exe}
+            cosign verify-blob \
+              --bundle "$root/bootstrap/evidence/$id.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$object"
+          done
+
+      - name: Sign and immediately verify publication authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/host-build"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-host-package-build.yml@$GITHUB_REF"
+          cosign sign-blob --yes \
+            --bundle "$root/publication.sigstore.json" \
+            "$root/publication.json"
+          cosign verify-blob \
+            --bundle "$root/publication.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$root/publication.json"
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 56
+
+      - name: Assemble every Claude, Gemini, and generic MCP package
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/host-build"
+          packages="$root/host-packages"
+          install -d -m 0700 "$packages"
+          source_epoch=$(jq -r '.build_timestamp' "$root/publication.json")
+          source_commit=$(jq -r '.source_commit' "$root/publication.json")
+          for cell in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64; do
+            os=${cell%/*}
+            arch=${cell#*/}
+            bootstrap="$root/bootstrap/agentmemory-bootstrap-$os-$arch"
+            if test "$os" = windows; then bootstrap="$bootstrap.exe"; fi
+            id="agentmemory-bootstrap-$os-$arch"
+            for host in claude gemini generic; do
+              extension=zip
+              if test "$host" = claude; then extension=mcpb; fi
+              package="$packages/agentmemory-$host-$os-$arch.$extension"
+              record="$package.record.json"
+              go run ./apps/launcher/cmd/agentmemory-host-package \
+                -candidate-root "$root/candidate" \
+                -publication "$root/publication.json" \
+                -publication-sigstore "$root/publication.sigstore.json" \
+                -bootstrap "$bootstrap" \
+                -bootstrap-sigstore "$root/bootstrap/evidence/$id.sigstore.json" \
+                -trust "$root/candidate/release-trust.json" \
+                -output "$package" \
+                -record-output "$record" \
+                -host "$host" \
+                -os "$os" \
+                -arch "$arch" \
+                -version '${{ inputs.version }}' \
+                -source-commit "$source_commit" \
+                -source-date-epoch "$source_epoch"
+            done
+          done
+          test "$(find "$packages" -type f | wc -l | tr -d ' ')" -eq 30
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 86
+
+      - name: Sign and immediately verify every host package and record
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/host-build"
+          packages="$root/host-packages"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-host-package-build.yml@$GITHUB_REF"
+          while IFS= read -r -d '' subject; do
+            cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"
+            cosign verify-blob \
+              --bundle "$subject.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$subject"
+          done < <(find "$packages" -type f ! -name '*.sigstore.json' -print0 | sort -z)
+          test "$(find "$packages" -type f | wc -l | tr -d ' ')" -eq 60
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" -eq 116
+
+      - name: Attest the complete non-circular host release set
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ runner.temp }}/host-build/**/*
+
+      - name: Retain exact host candidate for native qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pf001-host-package-build-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/host-build
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: false

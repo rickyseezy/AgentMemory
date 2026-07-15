@@ -49,8 +49,16 @@ func TestPF001ReleaseAssemblerUsesTheProductionTrustDecoder(t *testing.T) {
 	if err := ValidateNativeReleaseTrustBase64(valid); err != nil {
 		t.Fatalf("ValidateNativeReleaseTrustBase64(valid) error = %v", err)
 	}
+	publication, object, err := NativeReleaseArtifactVerifiersBase64(valid)
+	if err != nil || publication == nil || object == nil {
+		t.Fatalf("NativeReleaseArtifactVerifiersBase64(valid) = %T/%T/%v", publication, object, err)
+	}
 	if err := ValidateNativeReleaseTrustBase64(""); !errors.Is(err, errNativeInstallerIntegrity) {
 		t.Fatalf("ValidateNativeReleaseTrustBase64(empty) error = %v", err)
+	}
+	if publication, object, err := NativeReleaseArtifactVerifiersBase64(""); publication != nil || object != nil ||
+		!errors.Is(err, errNativeInstallerIntegrity) {
+		t.Fatalf("NativeReleaseArtifactVerifiersBase64(empty) = %T/%T/%v", publication, object, err)
 	}
 }
 

@@ -113,6 +113,36 @@ evidence, trusted time, revocation material, and artifact digest. Keyless online
 verification performed during CI is not a substitute for the shipped offline
 bundle.
 
+The production trust document now contains two deliberately distinct keyless
+identities. `releaseObject` is the exact
+`pf001-release-build.yml` workflow identity and verifies native installers plus
+the five portable bootstrap executables. `publication` is the exact
+`pf001-host-package-build.yml` workflow identity and verifies the release
+publication embedded in every host package. The two certificate SANs MUST NOT
+alias. The release owner must supply an official bounded Sigstore trusted-root
+document, exact Rekor log ID, OIDC issuer, trust-root IDs, and those exact SANs;
+a live ambient Fulcio/Rekor lookup is not accepted by the offline installer.
+
+The immutable sealed native candidate must additionally contain independently
+publisher-verified bootstrap executables for Darwin amd64/arm64, Linux
+amd64/arm64, and Windows amd64, with CycloneDX and provenance evidence. Darwin
+bootstrap binaries require the same approved Developer ID identity and native
+execution assessment as the package payload; the Windows bootstrap requires
+the exact approved Authenticode leaf certificate. Release build adds the
+offline object Sigstore bundles, and host-package build refuses to archive a
+bootstrap whose bundle does not verify against `releaseObject`.
+
+The host-package workflow signs the publication before assembling MCPB,
+Gemini-extension, and generic MCP archives. It then signs each completed
+archive and its detached non-circular record. Qualification must reproduce all
+15 archives byte-for-byte, validate the embedded vendor manifests, compare
+native package payloads with the retained release bundle, and reverify every
+detached signature. Immutable promotion copies those bytes only. The release
+owner must configure and protect the `pf001-release-build`,
+`pf001-host-package-build`, `pf001-release-qualification`, and
+`pf001-production-release` environments and enable GitHub immutable releases;
+the repository cannot enable or approve those owner controls itself.
+
 ## Docker Desktop terms and redistribution decision
 
 For macOS and Windows, the release owner and user-facing installer policy must

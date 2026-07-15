@@ -15,7 +15,7 @@ import (
 func TestPF001PublicationAssemblerHashesClosedCandidateTree(t *testing.T) {
 	t.Parallel()
 	fixture := newCandidateFixture(t)
-	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+	if err := AssemblePublication(context.Background(), fixture.options, compileFixturePublication); err != nil {
 		t.Fatalf("AssemblePublication() error=%v", err)
 	}
 	raw, err := os.ReadFile(fixture.options.Output)
@@ -79,7 +79,7 @@ func TestPF001PublicationAssemblerRejectsOpenOrChangedCandidateTrees(t *testing.
 			t.Parallel()
 			fixture := newCandidateFixture(t)
 			mutate(fixture)
-			if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err == nil {
+			if err := AssemblePublication(context.Background(), fixture.options, compileFixturePublication); err == nil {
 				t.Fatal("AssemblePublication() error=nil")
 			}
 		})
@@ -98,7 +98,7 @@ func TestPF001PublicationAssemblerRejectsInvalidCapabilitiesAndIdentity(t *testi
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := AssemblePublication(cancelled, fixture.options, compilePublication); !errors.Is(err, context.Canceled) {
+	if err := AssemblePublication(cancelled, fixture.options, compileFixturePublication); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled error=%v", err)
 	}
 	for name, mutate := range map[string]func(*PublicationOptions){
@@ -114,7 +114,7 @@ func TestPF001PublicationAssemblerRejectsInvalidCapabilitiesAndIdentity(t *testi
 			t.Parallel()
 			candidate := newCandidateFixture(t)
 			mutate(&candidate.options)
-			if err := AssemblePublication(context.Background(), candidate.options, compilePublication); err == nil {
+			if err := AssemblePublication(context.Background(), candidate.options, compileFixturePublication); err == nil {
 				t.Fatal("AssemblePublication() error=nil")
 			}
 		})
@@ -124,7 +124,7 @@ func TestPF001PublicationAssemblerRejectsInvalidCapabilitiesAndIdentity(t *testi
 func TestPF001PublicationVerifierRehashesBeforePromotion(t *testing.T) {
 	t.Parallel()
 	fixture := newCandidateFixture(t)
-	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+	if err := AssemblePublication(context.Background(), fixture.options, compileFixturePublication); err != nil {
 		t.Fatal(err)
 	}
 	if err := VerifyPublication(
@@ -144,7 +144,7 @@ func TestPF001PublicationVerifierRehashesBeforePromotion(t *testing.T) {
 func TestPF001PublicationVerifierRejectsMalformedAuthorityAndCapabilities(t *testing.T) {
 	t.Parallel()
 	fixture := newCandidateFixture(t)
-	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+	if err := AssemblePublication(context.Background(), fixture.options, compileFixturePublication); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(fixture.options.Output, []byte(`{"open":true}`), 0o600); err != nil {
@@ -177,7 +177,7 @@ func TestPF001PublicationCommandFailsClosed(t *testing.T) {
 func TestPF001PublicationCommandVerifiesCandidateMode(t *testing.T) {
 	t.Parallel()
 	fixture := newCandidateFixture(t)
-	if err := AssemblePublication(context.Background(), fixture.options, compilePublication); err != nil {
+	if err := AssemblePublication(context.Background(), fixture.options, compileFixturePublication); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -190,8 +190,28 @@ func TestPF001PublicationCommandVerifiesCandidateMode(t *testing.T) {
 	}
 }
 
+func TestPF001ProductionPublicationCompilerRejectsUnboundDistributionIdentity(t *testing.T) {
+	t.Parallel()
+	fixture := newCandidateFixture(t)
+	parts, err := inspectCandidate(fixture.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compilePublication(parts); err == nil {
+		t.Fatal("noncanonical distribution envelope was accepted by the production compiler")
+	}
+	parts.distribution = nil
+	if _, err := compilePublication(parts); err == nil {
+		t.Fatal("missing distribution envelope was accepted by the production compiler")
+	}
+}
+
 type candidateFixture struct {
 	options PublicationOptions
+}
+
+func compileFixturePublication(parts publicationParts) ([]byte, error) {
+	return compilePublicationRecord(parts)
 }
 
 func newCandidateFixture(t testing.TB) *candidateFixture {

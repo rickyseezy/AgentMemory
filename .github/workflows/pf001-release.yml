@@ -103,7 +103,7 @@ jobs:
               --deny-self-hosted-runners >/dev/null
             count=$((count + 1))
           done < <(find "$QUALIFIED_ROOT" -type f -print0 | sort -z)
-          test "$count" -eq 35
+          test "$count" -eq 116
 
       - name: Rehash the closed candidate and bind selected release identity
         shell: bash
@@ -116,35 +116,40 @@ jobs:
           test "$(jq -r '.source_commit' "$QUALIFIED_ROOT/publication.json")" = "$GITHUB_SHA"
           test "$(jq -r '.schema_version' "$QUALIFIED_ROOT/publication.json")" = 1
 
-      - name: Stage the exact publish set without rebuilding
+      - name: Stage the exact qualified publish set without rebuilding or signing
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 0700 "$PUBLISH_ROOT"
-          install -m 0600 "$QUALIFIED_ROOT/publication.json" \
-            "$PUBLISH_ROOT/agentmemory-release-publication.json"
-          install -m 0600 "$QUALIFIED_ROOT/candidate/distribution-manifest.json" \
-            "$PUBLISH_ROOT/distribution-manifest.json"
-          install -m 0600 "$QUALIFIED_ROOT/candidate/release-trust.json" \
-            "$PUBLISH_ROOT/release-trust.json"
-          find "$QUALIFIED_ROOT/candidate/objects" "$QUALIFIED_ROOT/candidate/evidence" \
-            -mindepth 1 -maxdepth 1 -type f -exec install -m 0600 '{}' "$PUBLISH_ROOT/" ';'
-          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 35
+          while IFS= read -r -d '' subject; do
+            name=$(basename "$subject")
+            case "$subject" in
+              "$QUALIFIED_ROOT/publication.json") name=agentmemory-release-publication.json ;;
+              "$QUALIFIED_ROOT/publication.sigstore.json") name=agentmemory-release-publication.sigstore.json ;;
+            esac
+            test ! -e "$PUBLISH_ROOT/$name"
+            install -m 0600 "$subject" "$PUBLISH_ROOT/$name"
+          done < <(find "$QUALIFIED_ROOT" -type f -print0 | sort -z)
+          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 116
 
-      - name: Sign and immediately verify the publication authority
+      - name: Reverify publication and every detached host-package signature
         shell: bash
         run: |
           set -euo pipefail
-          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-release.yml@$GITHUB_REF"
-          cosign sign-blob --yes \
-            --bundle "$PUBLISH_ROOT/agentmemory-release-publication.sigstore.json" \
-            "$PUBLISH_ROOT/agentmemory-release-publication.json"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-host-package-build.yml@$GITHUB_REF"
           cosign verify-blob \
             --bundle "$PUBLISH_ROOT/agentmemory-release-publication.sigstore.json" \
             --certificate-identity "$identity" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "$PUBLISH_ROOT/agentmemory-release-publication.json"
-          test "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 36
+          while IFS= read -r -d '' subject; do
+            cosign verify-blob \
+              --bundle "$subject.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$subject"
+          done < <(find "$PUBLISH_ROOT" -maxdepth 1 -type f \
+            \( -name '*.mcpb' -o -name '*.zip' -o -name '*.record.json' \) -print0 | sort -z)
 
       - name: Attest the complete exact promotion set
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -187,7 +192,7 @@ jobs:
           release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id')
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
             --jq '.[] | [.name, .size, .digest] | @tsv' | sort > "$RUNNER_TEMP/published-assets.tsv"
-          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 36
+          test "$(wc -l < "$RUNNER_TEMP/published-assets.tsv" | tr -d ' ')" -eq 116
           while IFS= read -r -d '' local_asset; do
             name=$(basename "$local_asset")
             size=$(stat --format='%s' "$local_asset")

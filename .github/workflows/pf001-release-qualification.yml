@@ -8,11 +8,11 @@ on:
         required: true
         type: string
       build_run_id:
-        description: Successful trusted PF-001 release-build workflow run ID
+        description: Successful trusted PF-001 host-package-build workflow run ID
         required: true
         type: string
       build_artifact:
-        description: Exact unqualified release-candidate artifact name
+        description: Exact signed host-package candidate artifact name
         required: true
         type: string
 
@@ -57,7 +57,7 @@ jobs:
         with:
           cosign-release: v3.1.1
 
-      - name: Download exact release-build candidate
+      - name: Download exact signed host-package candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.build_artifact }}
@@ -66,7 +66,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.build_run_id }}
 
-      - name: Verify tag, source, candidate provenance, and closed record
+      - name: Verify tag, source, host-candidate provenance, and closed record
         shell: bash
         run: |
           set -euo pipefail
@@ -77,24 +77,83 @@ jobs:
           test "$(git status --porcelain=v1 --untracked-files=all)" = ''
           root="$RUNNER_TEMP/release-build"
           test -d "$root/candidate"
+          test -d "$root/bootstrap"
+          test -d "$root/host-packages"
           test -f "$root/publication.json"
+          test -f "$root/publication.sigstore.json"
           count=0
           while IFS= read -r -d '' subject; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/pf001-release-build.yml" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/pf001-host-package-build.yml" \
               --signer-digest "$GITHUB_SHA" \
               --source-digest "$GITHUB_SHA" \
               --source-ref "$GITHUB_REF" \
               --deny-self-hosted-runners >/dev/null
             count=$((count + 1))
           done < <(find "$root" -type f -print0 | sort -z)
-          test "$count" -eq 35
+          test "$count" -eq 116
           go run ./apps/launcher/cmd/agentmemory-publication-record \
             -candidate-root "$root/candidate" \
             -verify-record "$root/publication.json"
           test "$(jq -r '.version' "$root/publication.json")" = '${{ inputs.version }}'
           test "$(jq -r '.source_commit' "$root/publication.json")" = "$GITHUB_SHA"
+
+      - name: Verify and reproduce every host package before native qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/release-build"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/pf001-host-package-build.yml@$GITHUB_REF"
+          cosign verify-blob \
+            --bundle "$root/publication.sigstore.json" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$root/publication.json"
+          while IFS= read -r -d '' subject; do
+            cosign verify-blob \
+              --bundle "$subject.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$subject"
+          done < <(find "$root/host-packages" -type f ! -name '*.sigstore.json' -print0 | sort -z)
+          rebuilt="$RUNNER_TEMP/rebuilt-host-packages"
+          install -d -m 0700 "$rebuilt"
+          source_epoch=$(jq -r '.build_timestamp' "$root/publication.json")
+          source_commit=$(jq -r '.source_commit' "$root/publication.json")
+          for cell in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64; do
+            os=${cell%/*}
+            arch=${cell#*/}
+            bootstrap="$root/bootstrap/agentmemory-bootstrap-$os-$arch"
+            if test "$os" = windows; then bootstrap="$bootstrap.exe"; fi
+            id="agentmemory-bootstrap-$os-$arch"
+            for host in claude gemini generic; do
+              extension=zip
+              if test "$host" = claude; then extension=mcpb; fi
+              name="agentmemory-$host-$os-$arch.$extension"
+              package="$rebuilt/$name"
+              record="$package.record.json"
+              go run ./apps/launcher/cmd/agentmemory-host-package \
+                -candidate-root "$root/candidate" \
+                -publication "$root/publication.json" \
+                -publication-sigstore "$root/publication.sigstore.json" \
+                -bootstrap "$bootstrap" \
+                -bootstrap-sigstore "$root/bootstrap/evidence/$id.sigstore.json" \
+                -trust "$root/candidate/release-trust.json" \
+                -output "$package" \
+                -record-output "$record" \
+                -host "$host" \
+                -os "$os" \
+                -arch "$arch" \
+                -version '${{ inputs.version }}' \
+                -source-commit "$source_commit" \
+                -source-date-epoch "$source_epoch"
+              cmp "$package" "$root/host-packages/$name"
+              cmp "$record" "$root/host-packages/$name.record.json"
+              unzip -t "$package" >/dev/null
+            done
+          done
+          test "$(find "$rebuilt" -type f | wc -l | tr -d ' ')" -eq 30
 
       - name: Verify every package's offline Sigstore bundle
         shell: bash
@@ -222,6 +281,41 @@ jobs:
           grep -Fxq './Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper' \
             "$RUNNER_TEMP/package-payload.txt"
           pkgutil --expand-full "$package" "$RUNNER_TEMP/expanded"
+
+          offline="$RUNNER_TEMP/offline"
+          install -d -m 0700 "$offline"
+          archive="$root/candidate/objects/agentmemory-offline-bundle.tar.zst"
+          if tar --zstd --list --file "$archive" | \
+            awk 'BEGIN { bad=0 } /^\// || /(^|\/)\.\.($|\/)/ || /\\/ { bad=1 } END { exit bad }'; then
+            :
+          else
+            echo 'Offline bundle contains an unsafe path' >&2
+            exit 1
+          fi
+          tar --zstd --extract --file "$archive" --directory "$offline" \
+            --no-same-owner --no-same-permissions
+          expected="$RUNNER_TEMP/expected-stage"
+          source_epoch=$(jq -r '.build_timestamp' "$root/publication.json")
+          go run ./apps/launcher/cmd/agentmemory-native-package-stage \
+            -root . \
+            -bundle "$offline/bundle" \
+            -trust "$root/candidate/release-trust.json" \
+            -output "$expected" \
+            -os darwin \
+            -arch '${{ matrix.arch }}' \
+            -source-date-epoch "$source_epoch" \
+            -verification-epoch "$(date -u +%s)"
+
+          actual_payload=$(find "$RUNNER_TEMP/expanded" -type d -name Payload -print)
+          test "$(printf '%s\n' "$actual_payload" | grep -c .)" -eq 1
+          test -z "$(find "$actual_payload" -type l -print -quit)"
+          test "$(find "$expected/payload" -type f | wc -l | tr -d ' ')" = \
+            "$(find "$actual_payload" -type f | wc -l | tr -d ' ')"
+          while IFS= read -r -d '' expected_file; do
+            relative=${expected_file#"$expected/payload/"}
+            cmp "$expected_file" "$actual_payload/$relative"
+          done < <(find "$expected/payload" -type f -print0 | sort -z)
+
           launcher=$(find "$RUNNER_TEMP/expanded" -path '*/Payload/usr/local/bin/agentmemory' -type f -print -quit)
           helper=$(find "$RUNNER_TEMP/expanded" \
             -path '*/Payload/Library/PrivilegedHelperTools/com.rickyseezy.agentmemory.runtime-helper' \
@@ -232,6 +326,10 @@ jobs:
             codesign --verify --strict --verbose=4 "$executable"
             codesign --display --verbose=4 "$executable" 2>&1 | grep -Fq "TeamIdentifier=$EXPECTED_TEAM_ID"
           done
+          bootstrap="$root/bootstrap/agentmemory-bootstrap-darwin-${{ matrix.arch }}"
+          codesign --verify --strict --verbose=4 "$bootstrap"
+          codesign --display --verbose=4 "$bootstrap" 2>&1 | grep -Fq "TeamIdentifier=$EXPECTED_TEAM_ID"
+          spctl --assess --verbose=4 --type execute "$bootstrap"
 
   windows-package:
     name: Native Windows package (amd64)
@@ -298,11 +396,58 @@ jobs:
             -ArgumentList @('/a', $package, '/qn', "TARGETDIR=$expanded") `
             -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "MSI administrative extraction failed: $($process.ExitCode)" }
+
+          $offline = Join-Path $env:RUNNER_TEMP 'offline'
+          New-Item -ItemType Directory -Path $offline | Out-Null
+          $archive = Join-Path $root 'candidate/objects/agentmemory-offline-bundle.tar.zst'
+          $entries = & tar.exe --list --file $archive
+          if ($LASTEXITCODE -ne 0 -or $entries.Count -eq 0) { throw 'Offline bundle listing failed' }
+          foreach ($entry in $entries) {
+            $segments = $entry -split '/'
+            if ($entry.StartsWith('/') -or $entry.Contains('\') -or $segments -contains '..') {
+              throw "Offline bundle contains unsafe path: $entry"
+            }
+          }
+          & tar.exe --extract --file $archive --directory $offline
+          if ($LASTEXITCODE -ne 0) { throw 'Offline bundle extraction failed' }
+          $expected = Join-Path $env:RUNNER_TEMP 'expected-stage'
+          $sourceEpoch = (Get-Content -LiteralPath (Join-Path $root 'publication.json') -Raw | ConvertFrom-Json).build_timestamp
+          go run ./apps/launcher/cmd/agentmemory-native-package-stage `
+            -root . `
+            -bundle (Join-Path $offline 'bundle') `
+            -trust (Join-Path $root 'candidate/release-trust.json') `
+            -output $expected `
+            -os windows `
+            -arch amd64 `
+            -source-date-epoch $sourceEpoch `
+            -verification-epoch ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+          if ($LASTEXITCODE -ne 0) { throw 'Expected Windows payload reconstruction failed' }
+
           $launcher = Get-ChildItem -LiteralPath $expanded -Filter agentmemory.exe -File -Recurse
           $helper = Get-ChildItem -LiteralPath $expanded -Filter agentmemory-runtime-helper.exe -File -Recurse
           if ($launcher.Count -ne 1 -or $helper.Count -ne 1) { throw 'MSI payload executable set is incomplete' }
+
+          $expectedPayload = Join-Path $expected 'payload'
+          $actualPayload = $launcher[0].Directory.FullName
+          if (Get-ChildItem -LiteralPath $actualPayload -Recurse -Force -Attributes ReparsePoint | Select-Object -First 1) {
+            throw 'MSI payload contains a reparse point'
+          }
+          $expectedFiles = @(Get-ChildItem -LiteralPath $expectedPayload -File -Recurse)
+          $actualFiles = @(Get-ChildItem -LiteralPath $actualPayload -File -Recurse)
+          if ($expectedFiles.Count -ne $actualFiles.Count) { throw 'MSI payload file set differs from verified stage' }
+          foreach ($expectedFile in $expectedFiles) {
+            $relative = [IO.Path]::GetRelativePath($expectedPayload, $expectedFile.FullName)
+            $actualFile = Join-Path $actualPayload $relative
+            if (-not (Test-Path -LiteralPath $actualFile -PathType Leaf) -or
+              (Get-FileHash -LiteralPath $expectedFile.FullName -Algorithm SHA256).Hash -cne
+              (Get-FileHash -LiteralPath $actualFile -Algorithm SHA256).Hash) {
+              throw "MSI payload byte mismatch: $relative"
+            }
+          }
+
           Assert-ExactSignature $launcher[0].FullName
           Assert-ExactSignature $helper[0].FullName
+          Assert-ExactSignature (Join-Path $root 'bootstrap/agentmemory-bootstrap-windows-amd64.exe')
 
   linux-packages:
     name: Native Linux package payloads
@@ -341,6 +486,21 @@ jobs:
             -candidate-root "$root/candidate" \
             -verify-record "$root/publication.json"
           command -v rpm >/dev/null
+          command -v cpio >/dev/null
+          offline="$RUNNER_TEMP/offline"
+          install -d -m 0700 "$offline"
+          archive="$root/candidate/objects/agentmemory-offline-bundle.tar.zst"
+          if tar --zstd --list --file "$archive" | \
+            awk 'BEGIN { bad=0 } /^\// || /(^|\/)\.\.($|\/)/ || /\\/ { bad=1 } END { exit bad }'; then
+            :
+          else
+            echo 'Offline bundle contains an unsafe path' >&2
+            exit 1
+          fi
+          tar --zstd --extract --file "$archive" --directory "$offline" \
+            --no-same-owner --no-same-permissions
+          source_epoch=$(jq -r '.build_timestamp' "$root/publication.json")
+          verification_epoch=$(date -u +%s)
           for arch in amd64 arm64; do
             deb="$root/candidate/objects/agentmemory-linux-$arch-deb.deb"
             rpm_package="$root/candidate/objects/agentmemory-linux-$arch-rpm.rpm"
@@ -351,6 +511,29 @@ jobs:
             rpm -qpl "$rpm_package" > "$RUNNER_TEMP/rpm-$arch.txt"
             grep -Fxq '/usr/libexec/agentmemory/agentmemory' "$RUNNER_TEMP/rpm-$arch.txt"
             grep -Fxq '/usr/libexec/agentmemory/agentmemory-runtime-helper' "$RUNNER_TEMP/rpm-$arch.txt"
+            expected="$RUNNER_TEMP/expected-linux-$arch"
+            go run ./apps/launcher/cmd/agentmemory-linux-release \
+              -root . \
+              -bundle "$offline/bundle" \
+              -trust "$root/candidate/release-trust.json" \
+              -output "$expected" \
+              -arch "$arch" \
+              -source-date-epoch "$source_epoch" \
+              -verification-epoch "$verification_epoch"
+            deb_root="$RUNNER_TEMP/deb-root-$arch"
+            rpm_root="$RUNNER_TEMP/rpm-root-$arch"
+            install -d -m 0700 "$deb_root" "$rpm_root"
+            dpkg-deb --extract "$deb" "$deb_root"
+            rpm2cpio "$rpm_package" | (cd "$rpm_root" && cpio -idm --quiet)
+            expected_count=$((2 + $(find "$expected/bundle" -type f | wc -l)))
+            for payload_root in "$deb_root" "$rpm_root"; do
+              installed="$payload_root/usr/libexec/agentmemory"
+              test -z "$(find "$installed" -type l -print -quit)"
+              test "$(find "$installed" -type f | wc -l)" -eq "$expected_count"
+              cmp "$expected/agentmemory" "$installed/agentmemory"
+              cmp "$expected/agentmemory-runtime-helper" "$installed/agentmemory-runtime-helper"
+              diff -qr "$expected/bundle" "$installed/resources/bundle"
+            done
           done
 
   qualify:

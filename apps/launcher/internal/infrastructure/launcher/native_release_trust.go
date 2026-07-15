@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -80,6 +81,39 @@ func loadEmbeddedNativeReleaseTrust() (nativeReleaseTrustMaterial, error) {
 func ValidateNativeReleaseTrustBase64(encoded string) error {
 	_, err := decodeNativeReleaseTrust(encoded)
 	return err
+}
+
+// NativeArtifactSignatureVerifier is the narrow offline verification boundary
+// used by release packaging commands. Implementations accept only an exact
+// authority digest and its official Sigstore bundle.
+type NativeArtifactSignatureVerifier interface {
+	VerifyArtifactSignature(context.Context, releaseinventory.Digest, []byte) error
+}
+
+// NativeReleaseArtifactVerifiersBase64 returns the separately constrained
+// publication and release-object verifiers from one production trust document.
+// Keeping the identities distinct prevents a build workflow from minting the
+// final publication authority or vice versa.
+func NativeReleaseArtifactVerifiersBase64(
+	encoded string,
+) (NativeArtifactSignatureVerifier, NativeArtifactSignatureVerifier, error) {
+	trust, err := decodeNativeReleaseTrust(encoded)
+	if err != nil {
+		return nil, nil, err
+	}
+	publication, err := releaseverifyadapter.NewSigstoreCertificateTransparencyVerifier(
+		trust.PublicationSigstore,
+	)
+	if err != nil {
+		return nil, nil, errNativeInstallerIntegrity
+	}
+	object, err := releaseverifyadapter.NewSigstoreCertificateTransparencyVerifier(
+		trust.ReleaseObjectSigstore,
+	)
+	if err != nil {
+		return nil, nil, errNativeInstallerIntegrity
+	}
+	return publication, object, nil
 }
 
 func decodeNativeReleaseTrust(encoded string) (nativeReleaseTrustMaterial, error) {

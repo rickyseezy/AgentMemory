@@ -10,9 +10,10 @@ agent vendors while keeping the Brain and its data on the user's own machine.
 > AgentMemory is in **early production implementation**. PF-001 now has a substantial,
 > fail-closed installer control plane—including the default verified first-start composition,
 > durable active cancellation with ownership-scoped runtime compensation, split capacity policy,
-> operation-scoped release-bound Docker/Compose
-> execution, and signed-launcher Linux/macOS/Windows agent configuration—but there is not yet a
-> working release or installable MCP package. See the
+> operation-scoped release-bound Docker/Compose execution, native package transactions, and a
+> portable MCP bootstrap plus deterministic Claude MCPB, Gemini extension, and generic host-package
+> assemblers. No production-signed package has been released yet: external platform signing,
+> immutable-release configuration, vendor approvals, and pristine-host certification remain. See the
 > [PF-001 implementation record](docs/implementation/PF-001.md) for the exact delivered and
 > outstanding scope; no current code should be interpreted as a completed installer.
 
@@ -345,25 +346,20 @@ Present today:
   authenticated operation/cancellation journals and rollback anchors, signed runtime/release
   catalogs, resumable artifact acquisition and per-purpose capacity state, release-bound direct
   Docker/Compose execution policy, Docker resource policy, readiness and activation gates,
-  protected Linux/macOS/Windows configuration stores, and strict quality tooling.
+  protected Linux/macOS/Windows configuration stores, native package installer/postconditions,
+  live portable-to-installed MCP handoff, deterministic host packages, sealed qualification and
+  copy-only promotion workflows, and strict quality tooling.
 
 Not present yet:
 
-- a working end-user installer or runnable Brain/core application;
+- a production-signed end-user release (the runnable local Core and installer composition exist,
+  but no qualified artifact set has been minted);
 - signed production Docker images, model files, Compose bundles, schemas, migrations, SBOMs,
   provenance, or release catalogs;
-- a production launcher composition root, runnable product runtime, native runtime provisioners,
-  setup/status UI, supported-agent format/lifecycle adapters, or signed-launcher MCP handshake;
-- signed target-representation fields and the corresponding representation-specific Docker
-  execution engines; physical capacity leases, source-bound expanded-target lifecycle journals,
-  exact-usage reconciliation, ownership transfer, and verified retirement are implemented but
-  intentionally reject the current under-authorized signed plan before target mutation;
-- a Windows native process broker with atomic Job Object assignment or a Windows artifact
-  reservation implementation; these paths intentionally fail closed today;
 - platform signing/notarization identities, vendor redistribution approvals, or the full
   PF-001 pristine-host, offline, interruption, packet-capture, usability, and certified-host
   acceptance evidence;
-- an installable MCP package;
+- a published, production-signed MCPB/Gemini/generic package (the verified builders exist);
 - published releases or support guarantees.
 
 ## Contributing

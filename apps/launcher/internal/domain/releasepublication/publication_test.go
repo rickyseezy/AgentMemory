@@ -47,6 +47,37 @@ func TestPF001PublicationCanonicalRoundTripBindsExactPromotedObjects(t *testing.
 	}
 }
 
+func TestPF001PublicationSelectsExactlyOneNativeInstallerCell(t *testing.T) {
+	t.Parallel()
+	publication, err := NewPublication(validPublicationInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := publication.NativePackage("linux", "arm64", FormatRPM)
+	if err != nil || selected.ID() != "agentmemory-linux-arm64-rpm" ||
+		selected.NativePublisherPolicy() != PublisherPolicyLinuxPackage {
+		t.Fatalf("NativePackage() = %+v, %v", selected, err)
+	}
+	for name, request := range map[string][3]string{
+		"unsupported format": {"darwin", "arm64", string(FormatDEB)},
+		"unsupported OS":     {"freebsd", "amd64", string(FormatRPM)},
+		"empty":              {"", "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if artifact, err := publication.NativePackage(
+				request[0], request[1], Format(request[2]),
+			); err == nil || artifact.ID() != "" {
+				t.Fatalf("NativePackage() = %+v, %v", artifact, err)
+			}
+		})
+	}
+	var absent Publication
+	if artifact, err := absent.NativePackage("linux", "amd64", FormatDEB); err == nil || artifact.ID() != "" {
+		t.Fatalf("zero publication NativePackage() = %+v, %v", artifact, err)
+	}
+}
+
 func TestPF001PublicationRequiresClosedCertifiedNativePackageMatrix(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*PublicationInput){

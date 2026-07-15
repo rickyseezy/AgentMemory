@@ -212,5 +212,26 @@ func (p Publication) ReleaseTrustSize() uint64 { return p.releaseTrustSize }
 // Artifacts returns an independently copied canonical artifact inventory.
 func (p Publication) Artifacts() []Artifact { return append([]Artifact(nil), p.artifacts...) }
 
+// NativePackage returns the single signed native installer authorized for an
+// exact certified operating-system, architecture, and package-format cell.
+// It never falls back across cells or returns the all-platform offline bundle.
+func (p Publication) NativePackage(
+	operatingSystem string,
+	architecture string,
+	format Format,
+) (Artifact, error) {
+	if len(p.canonical) == 0 || operatingSystem == "" || architecture == "" || format == "" {
+		return Artifact{}, errors.New("native publication selection is invalid")
+	}
+	for _, artifact := range p.artifacts {
+		if artifact.Kind() == ArtifactKindNativePackage &&
+			artifact.OperatingSystem() == operatingSystem &&
+			artifact.Architecture() == architecture && artifact.Format() == format {
+			return artifact, nil
+		}
+	}
+	return Artifact{}, errors.New("native publication cell is unsupported")
+}
+
 // Canonical returns the exact bytes signed for promotion.
 func (p Publication) Canonical() []byte { return append([]byte(nil), p.canonical...) }

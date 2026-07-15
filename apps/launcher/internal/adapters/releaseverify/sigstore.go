@@ -136,6 +136,33 @@ func (v *SigstoreCertificateTransparencyVerifier) VerifyManifestSignature(
 	return nil
 }
 
+// VerifyArtifactSignature verifies one exact SHA-256-bound non-manifest blob
+// with the same entirely offline certificate, SCT, Rekor proof/checkpoint,
+// observer timestamp, and identity policy as release manifests. Callers must
+// obtain the digest from their canonical domain authority before invoking it.
+func (v *SigstoreCertificateTransparencyVerifier) VerifyArtifactSignature(
+	ctx context.Context,
+	digest releaseinventory.Digest,
+	bundle []byte,
+) error {
+	if err := adapterContextError(ctx); err != nil {
+		return err
+	}
+	if v == nil || adapterNil(v.verifier) {
+		return application.ErrDependencyUnavailable
+	}
+	if digest.IsZero() {
+		return application.ErrSignatureInvalid
+	}
+	if err := v.verifyBundleDigest(bundle, digest[:]); err != nil {
+		return errors.Join(application.ErrSignatureInvalid, err)
+	}
+	if err := adapterContextError(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *SigstoreCertificateTransparencyVerifier) verifyBundleDigest(raw, digest []byte) error {
 	if v == nil || adapterNil(v.verifier) || len(digest) != sha256.Size {
 		return errEvidenceContent

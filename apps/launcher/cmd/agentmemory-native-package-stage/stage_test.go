@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,8 @@ func TestPF001NativePackageStagePublishesExactVerifiedDesktopLayouts(t *testing.
 						"bootstrap/distribution-manifest.json", fixture.launcherBundlePath,
 					} {
 						info, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(relative)))
-						if statErr != nil || info.Mode().Perm() != 0o600 {
+						if statErr != nil || !info.Mode().IsRegular() ||
+							(runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 							t.Fatalf("verification input %s info=%+v error=%v", relative, info, statErr)
 						}
 					}

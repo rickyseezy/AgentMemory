@@ -39,6 +39,30 @@ func TestSigstoreVerifierValidatesCompleteOfficialBundleEntirelyOffline(t *testi
 	}
 }
 
+func TestSigstoreVerifierValidatesAnExactPublicationDigestEntirelyOffline(t *testing.T) {
+	verifier, rawBundle, _, _, _ := staticSigstoreVerifier(t)
+	digest, err := releaseinventory.ParseDigest(testArtifactDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.VerifyArtifactSignature(context.Background(), digest, rawBundle); err != nil {
+		t.Fatalf("VerifyArtifactSignature() error = %v", err)
+	}
+	wrong := releaseinventory.DigestBytes([]byte("substituted publication"))
+	if err := verifier.VerifyArtifactSignature(context.Background(), wrong, rawBundle); !errors.Is(err, application.ErrSignatureInvalid) {
+		t.Fatalf("wrong-digest error = %v, want ErrSignatureInvalid", err)
+	}
+	var absent *SigstoreCertificateTransparencyVerifier
+	if err := absent.VerifyArtifactSignature(context.Background(), digest, rawBundle); !errors.Is(err, application.ErrDependencyUnavailable) {
+		t.Fatalf("nil-verifier error = %v, want ErrDependencyUnavailable", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := verifier.VerifyArtifactSignature(cancelled, digest, rawBundle); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled error = %v, want context.Canceled", err)
+	}
+}
+
 func TestSigstoreVerifierRejectsDigestIdentityAndTrustSubstitution(t *testing.T) {
 	verifier, rawBundle, digest, logID, rootJSON := staticSigstoreVerifier(t)
 

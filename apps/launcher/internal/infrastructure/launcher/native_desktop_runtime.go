@@ -9,9 +9,26 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/artifactapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
+	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimeinstallapp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/runtimeinstall"
 )
+
+type nativeDesktopAuthoritySet struct {
+	resolver  runtimeport.DesktopAuthorityResolver
+	authority runtimeport.DesktopAuthority
+}
+
+type nativeDesktopArtifactSet struct {
+	acquirer runtimeport.DesktopArtifactAcquirer
+	verifier runtimeport.DesktopArtifactVerifier
+}
+
+type nativeDesktopHelperSet struct {
+	authority runtimeport.DesktopHelperAuthorityResolver
+	publisher runtimeport.DesktopHelperPublisherVerifier
+	encoder   runtimeprovision.DesktopMutationRequestEncoder
+}
 
 func (f *nativePlatformRuntimeFactory) buildDesktopRuntimeApplication(
 	ctx context.Context,

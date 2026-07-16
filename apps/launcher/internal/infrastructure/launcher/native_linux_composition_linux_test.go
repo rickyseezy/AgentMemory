@@ -132,6 +132,8 @@ func TestPF006LinuxHelperCommandRejectsAmbientAndIncompleteAuthority(t *testing.
 	if err := privilegeHelperCommandContextOrIntegrity(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled helper context error=%v", err)
 	}
+	//lint:ignore SA1012 Deliberate nil-context helper-error boundary attack.
+	//nolint:staticcheck // SA1012: security regression fixture; owner=security expiry=2027-07-15.
 	if err := privilegeHelperCommandContextOrIntegrity(nil); !errors.Is(err, runtimeport.ErrPrivilegeIntegrity) {
 		t.Fatalf("nil helper context error=%v", err)
 	}

@@ -11,22 +11,6 @@ import (
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 )
 
-type nativeDesktopAuthoritySet struct {
-	resolver  runtimeport.DesktopAuthorityResolver
-	authority runtimeport.DesktopAuthority
-}
-
-type nativeDesktopArtifactSet struct {
-	acquirer runtimeport.DesktopArtifactAcquirer
-	verifier runtimeport.DesktopArtifactVerifier
-}
-
-type nativeDesktopHelperSet struct {
-	authority runtimeport.DesktopHelperAuthorityResolver
-	publisher runtimeport.DesktopHelperPublisherVerifier
-	encoder   runtimeprovisionadapter.DesktopMutationRequestEncoder
-}
-
 type nativeDesktopAuthorityBuilder func(
 	context.Context,
 	nativeVerifiedRuntimeExecution,

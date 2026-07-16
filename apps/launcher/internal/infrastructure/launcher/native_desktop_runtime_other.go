@@ -9,6 +9,10 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installphase"
 )
 
+type nativeDesktopAuthoritySet struct{}
+type nativeDesktopArtifactSet struct{}
+type nativeDesktopHelperSet struct{}
+
 func (f *nativePlatformRuntimeFactory) buildDesktopRuntimeApplication(
 	ctx context.Context,
 	_ nativeVerifiedRuntimeExecution,

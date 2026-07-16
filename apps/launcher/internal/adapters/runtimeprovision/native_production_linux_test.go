@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -85,6 +86,13 @@ func TestPF006LinuxCatalogObservationBackendBindsCurrentCertifiedHost(t *testing
 		return
 	}
 	observed, observedVersion, err := observeLinuxCatalogHost(input, uid)
+	if runtime.GOARCH != "amd64" {
+		if !errors.Is(err, ErrUnsupportedHost) || observedVersion != "" ||
+			observed != (runtimeinstall.HostCapabilities{}) {
+			t.Fatalf("foreign-architecture catalog host=%+v version=%q error=%v", observed, observedVersion, err)
+		}
+		return
+	}
 	if err != nil || observed.Platform() != runtimeinstall.PlatformLinux || observedVersion == "" {
 		t.Fatalf("certified Linux host=%+v version=%q error=%v", observed, observedVersion, err)
 	}
@@ -357,6 +365,8 @@ func TestPF006LinuxProtectedReceiptAndPrivilegedHostSourcesFailClosed(t *testing
 	if err := privilegedCatalogContextOrUnavailable(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled catalog context error=%v", err)
 	}
+	//lint:ignore SA1012 Deliberate nil-context privileged-catalog boundary attack.
+	//nolint:staticcheck // SA1012: security regression fixture; owner=security expiry=2027-07-15.
 	if err := privilegedCatalogContextOrUnavailable(nil); !errors.Is(err, runtimecatalogapp.ErrDependencyUnavailable) {
 		t.Fatalf("nil catalog context error=%v", err)
 	}
@@ -380,6 +390,8 @@ func TestPF006LinuxRejectsEveryDesktopProductionBoundary(t *testing.T) {
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled desktop binding error=%v", err)
 	}
+	//lint:ignore SA1012 Deliberate nil-context desktop-binding boundary attack.
+	//nolint:staticcheck // SA1012: security regression fixture; owner=security expiry=2027-07-15.
 	if _, err := provider.CurrentDesktopHostBinding(nil, runtimecatalog.Digest{}, ""); !errors.Is(err, ErrUnsupportedHost) {
 		t.Fatalf("nil-context desktop binding error=%v", err)
 	}

@@ -17,21 +17,37 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher"
 )
 
+// Go coverage cannot attribute execution to constant declarations. Their exact
+// wire values are asserted by TestPF001AgentMemoryExitCodesAreStable.
 const (
-	exitSuccess              = 0
-	exitUsage                = 2
-	exitBootstrapNotFound    = 3
-	exitBootstrapIntegrity   = 4
+	// mutator-disable-next-line *
+	exitSuccess = 0
+	// mutator-disable-next-line *
+	exitUsage = 2
+	// mutator-disable-next-line *
+	exitBootstrapNotFound = 3
+	// mutator-disable-next-line *
+	exitBootstrapIntegrity = 4
+	// mutator-disable-next-line *
 	exitBootstrapUnavailable = 5
-	exitMCPUnavailable       = 6
-	exitResumeIntegrity      = 7
-	exitResumeUnavailable    = 8
+	// mutator-disable-next-line *
+	exitMCPUnavailable = 6
+	// mutator-disable-next-line *
+	exitResumeIntegrity = 7
+	// mutator-disable-next-line *
+	exitResumeUnavailable = 8
 )
 
+// main is an os.Exit boundary; run is tested directly across its complete MCP
+// and resume contract while runMain owns production-only signal wiring.
+// mutator-disable-func
 func main() {
 	os.Exit(runMain())
 }
 
+// runMain is process-only signal and transport wiring; run owns the tested
+// behavioral contract and executable integration tests exercise this boundary.
+// mutator-disable-func
 func runMain() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -60,6 +76,8 @@ func run(
 		if err := resumer.ResumeInstallation(ctx, token); err != nil {
 			return reportResumeError(stderr, err)
 		}
+		// statement/return would substitute the same integer zero represented by exitSuccess.
+		// mutator-disable-next-line statement/return
 		return exitSuccess
 	}
 	host, ok := parseMCPCommand(args)
@@ -155,8 +173,6 @@ func nilCapability(value any) bool {
 	switch reflected.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return reflected.IsNil()
-	case reflect.Invalid:
-		return true
 	default:
 		return false
 	}

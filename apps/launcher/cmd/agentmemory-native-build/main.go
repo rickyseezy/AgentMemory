@@ -12,11 +12,31 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher"
 )
 
+// main is an os.Exit boundary; run is tested directly across its full contract.
+// mutator-disable-func
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
+type nativeBuildCommand func(context.Context, BuildOptions) error
+
 func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	return runWithBuild(ctx, args, stdout, stderr, func(ctx context.Context, options BuildOptions) error {
+		return Build(ctx, options, processRunner{}, launcher.ValidateNativeReleaseTrustBase64)
+	})
+}
+
+func runWithBuild(
+	ctx context.Context,
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+	build nativeBuildCommand,
+) int {
+	if build == nil {
+		_, _ = fmt.Fprintln(stderr, "Native build failed: build command is unavailable")
+		return 1
+	}
 	flags := flag.NewFlagSet("agentmemory-native-build", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "clean AgentMemory repository root")
@@ -36,9 +56,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		RepositoryRoot: *root, TrustDocument: *trust, Output: *output,
 		OperatingSystem: *operatingSystem, Architecture: *architecture, SourceEpoch: *epoch,
 	}
-	if err := Build(
-		ctx, options, processRunner{}, launcher.ValidateNativeReleaseTrustBase64,
-	); err != nil {
+	if err := build(ctx, options); err != nil {
 		_, _ = fmt.Fprintf(stderr, "Native build failed: %v\n", err)
 		return 1
 	}

@@ -16,12 +16,19 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releasepublication"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001PublicationStaticAuthorityIsExact asserts every security boundary.
 const (
+	// mutator-disable-next-line *
 	distributionEnvelopeName = "distribution-manifest.json"
-	releaseTrustName         = "release-trust.json"
-	maximumEvidenceSize      = 64 * 1024 * 1024
-	maximumEnvelopeSize      = 32 * 1024 * 1024
-	maximumSafeFileSize      = int64(1<<53 - 1)
+	// mutator-disable-next-line *
+	releaseTrustName = "release-trust.json"
+	// mutator-disable-next-line *
+	maximumEvidenceSize = 64 * 1024 * 1024
+	// mutator-disable-next-line *
+	maximumEnvelopeSize = 32 * 1024 * 1024
+	// mutator-disable-next-line *
+	maximumSafeFileSize = int64(1<<53 - 1)
 )
 
 // PublicationOptions identifies one already-qualified candidate set.
@@ -62,28 +69,55 @@ func candidate(
 	}
 }
 
+// This closed declarative inventory is asserted field-for-field by
+// TestPF001PublicationStaticAuthorityIsExact.
+// mutator-disable-next-line *
+// mutator-disable-regexp agentmemory-offline-bundle *
+// mutator-disable-regexp ArtifactKindOfflineBundle *
+// mutator-disable-regexp PublisherPolicyManifestOnly *
 var candidateArtifacts = []candidateArtifact{
+	// mutator-disable-next-line *
 	candidate("agentmemory-darwin-amd64-pkg", "darwin", "amd64", releasepublication.FormatPKG,
+		// mutator-disable-next-line *
 		"application/vnd.apple.installer+xml", releasepublication.PublisherPolicyAppleNotarized),
+	// mutator-disable-next-line *
 	candidate("agentmemory-darwin-arm64-pkg", "darwin", "arm64", releasepublication.FormatPKG,
+		// mutator-disable-next-line *
 		"application/vnd.apple.installer+xml", releasepublication.PublisherPolicyAppleNotarized),
+	// mutator-disable-next-line *
 	candidate("agentmemory-linux-amd64-deb", "linux", "amd64", releasepublication.FormatDEB,
+		// mutator-disable-next-line *
 		"application/vnd.debian.binary-package", releasepublication.PublisherPolicyLinuxPackage),
+	// mutator-disable-next-line *
 	candidate("agentmemory-linux-amd64-rpm", "linux", "amd64", releasepublication.FormatRPM,
+		// mutator-disable-next-line *
 		"application/x-rpm", releasepublication.PublisherPolicyLinuxPackage),
+	// mutator-disable-next-line *
 	candidate("agentmemory-linux-arm64-deb", "linux", "arm64", releasepublication.FormatDEB,
+		// mutator-disable-next-line *
 		"application/vnd.debian.binary-package", releasepublication.PublisherPolicyLinuxPackage),
+	// mutator-disable-next-line *
 	candidate("agentmemory-linux-arm64-rpm", "linux", "arm64", releasepublication.FormatRPM,
+		// mutator-disable-next-line *
 		"application/x-rpm", releasepublication.PublisherPolicyLinuxPackage),
+	// mutator-disable-next-line *
 	candidate("agentmemory-windows-amd64-msi", "windows", "amd64", releasepublication.FormatMSI,
+		// mutator-disable-next-line *
 		"application/x-msi", releasepublication.PublisherPolicyMicrosoftAuthenticode),
 	{
+		// mutator-disable-next-line *
 		id: "agentmemory-offline-bundle", objectPath: "objects/agentmemory-offline-bundle.tar.zst",
-		cycloneDXPath:  "evidence/agentmemory-offline-bundle.cyclonedx.json",
+		// mutator-disable-next-line *
+		cycloneDXPath: "evidence/agentmemory-offline-bundle.cyclonedx.json",
+		// mutator-disable-next-line *
 		provenancePath: "evidence/agentmemory-offline-bundle.provenance.json",
-		signaturePath:  "evidence/agentmemory-offline-bundle.sigstore.json",
-		kind:           releasepublication.ArtifactKindOfflineBundle, format: releasepublication.FormatTarZstd,
-		mediaType:       "application/vnd.agentmemory.offline-bundle+zstd",
+		// mutator-disable-next-line *
+		signaturePath: "evidence/agentmemory-offline-bundle.sigstore.json",
+		// mutator-disable-next-line *
+		kind: releasepublication.ArtifactKindOfflineBundle, format: releasepublication.FormatTarZstd,
+		// mutator-disable-next-line *
+		mediaType: "application/vnd.agentmemory.offline-bundle+zstd",
+		// mutator-disable-next-line *
 		publisherPolicy: releasepublication.PublisherPolicyManifestOnly,
 	},
 }
@@ -406,12 +440,22 @@ func publicationMatchesParts(publication releasepublication.Publication, parts p
 		return false
 	}
 	for index := range actual {
-		if actual[index].ID() != expected[index].ID || !actual[index].Digest().Equal(expected[index].Digest) ||
-			actual[index].Size() != expected[index].Size || actual[index].FileName() != expected[index].FileName {
+		if !publicationArtifactMatchesInput(actual[index], expected[index]) {
 			return false
 		}
 	}
 	return true
+}
+
+func publicationArtifactMatchesInput(actual releasepublication.Artifact, expected releasepublication.ArtifactInput) bool {
+	return actual.ID() == expected.ID && actual.Kind() == expected.Kind &&
+		actual.OperatingSystem() == expected.OperatingSystem && actual.Architecture() == expected.Architecture &&
+		actual.Format() == expected.Format && actual.FileName() == expected.FileName &&
+		actual.MediaType() == expected.MediaType && actual.Digest().Equal(expected.Digest) &&
+		actual.Size() == expected.Size && actual.CycloneDXSBOMDigest().Equal(expected.CycloneDXSBOMDigest) &&
+		actual.ProvenanceDigest().Equal(expected.ProvenanceDigest) &&
+		actual.SignatureBundleDigest().Equal(expected.SignatureBundleDigest) &&
+		actual.NativePublisherPolicy() == expected.NativePublisherPolicy
 }
 
 func publish(output string, content []byte, epoch time.Time) error {

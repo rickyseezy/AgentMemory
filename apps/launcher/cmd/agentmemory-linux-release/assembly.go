@@ -15,9 +15,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/releasefile"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001LinuxReleaseStaticLimitsAreExact asserts this security boundary.
 const (
+	// mutator-disable-next-line *
 	maximumTrustDocumentBytes = 128 * 1024
 )
 
@@ -48,6 +53,44 @@ type CommandRunner interface {
 type trustValidator func(string) error
 type bundleResolver func(context.Context, string, string, string, string, time.Time) (verifiedNativePackage, error)
 
+type assemblyOperations interface {
+	MkdirTemp(string, string) (string, error)
+	CopyBundle(string, string, time.Time) error
+	CopyVerifiedNativeResource(string, string, verifiedNativeResource, time.Time) error
+	NormalizeDirectoryTree(string, time.Time) error
+	Rename(string, string) error
+	RemoveAll(string) error
+}
+
+type systemAssemblyOperations struct{}
+
+func (systemAssemblyOperations) MkdirTemp(parent string, pattern string) (string, error) {
+	return os.MkdirTemp(parent, pattern)
+}
+
+func (systemAssemblyOperations) CopyBundle(source string, target string, epoch time.Time) error {
+	return copyBundle(source, target, epoch)
+}
+
+func (systemAssemblyOperations) CopyVerifiedNativeResource(
+	root string,
+	target string,
+	resource verifiedNativeResource,
+	epoch time.Time,
+) error {
+	return copyVerifiedNativeResource(root, target, resource, epoch)
+}
+
+func (systemAssemblyOperations) NormalizeDirectoryTree(root string, epoch time.Time) error {
+	return normalizeDirectoryTree(root, epoch)
+}
+
+func (systemAssemblyOperations) Rename(oldPath string, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
+
+func (systemAssemblyOperations) RemoveAll(path string) error { return os.RemoveAll(path) }
+
 type verifiedNativeResource struct {
 	resourceID string
 	bundlePath string
@@ -59,8 +102,8 @@ func (r verifiedNativeResource) valid() bool {
 	if r.resourceID == "" || r.bundlePath == "" || r.size == 0 || len(r.sha256) != sha256.Size*2 {
 		return false
 	}
-	digest, err := hex.DecodeString(r.sha256)
-	return err == nil && len(digest) == sha256.Size
+	_, err := hex.DecodeString(r.sha256)
+	return err == nil
 }
 
 type verifiedNativePackage struct {
@@ -87,7 +130,20 @@ func Assemble(
 	validateTrust trustValidator,
 	resolveBundle bundleResolver,
 ) error {
-	if ctx == nil || runner == nil || validateTrust == nil || resolveBundle == nil {
+	return assembleWithOperations(
+		ctx, options, runner, validateTrust, resolveBundle, systemAssemblyOperations{},
+	)
+}
+
+func assembleWithOperations(
+	ctx context.Context,
+	options AssemblyOptions,
+	runner CommandRunner,
+	validateTrust trustValidator,
+	resolveBundle bundleResolver,
+	operations assemblyOperations,
+) error {
+	if ctx == nil || runner == nil || validateTrust == nil || resolveBundle == nil || operations == nil {
 		return errors.New("assembly capabilities are incomplete")
 	}
 	if err := ctx.Err(); err != nil {
@@ -102,6 +158,10 @@ func Assemble(
 		return fmt.Errorf("read release trust: %w", err)
 	}
 	encodedTrust := base64.StdEncoding.EncodeToString(trust)
+	// Clearing the transient public-authority bytes is a defense-in-depth memory-hygiene action;
+	// it has no observable functional outcome that a mutation test can assert.
+	// mutator-disable-next-line statement/remove
+	clear(trust)
 	if err := validateTrust(encodedTrust); err != nil {
 		return errors.New("release trust is not accepted by the production decoder")
 	}
@@ -111,19 +171,14 @@ func Assemble(
 	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
 
 	parent := filepath.Dir(resolved.Output)
-	temporary, err := os.MkdirTemp(parent, ".agentmemory-linux-stage-")
+	temporary, err := operations.MkdirTemp(parent, ".agentmemory-linux-stage-")
 	if err != nil {
 		return fmt.Errorf("create private staging directory: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.RemoveAll(temporary)
-		}
-	}()
+	defer func() { _ = operations.RemoveAll(temporary) }()
 
 	stagedBundle := filepath.Join(temporary, "bundle")
-	if err := copyBundle(resolved.BundleRoot, stagedBundle, epoch); err != nil {
+	if err := operations.CopyBundle(resolved.BundleRoot, stagedBundle, epoch); err != nil {
 		return fmt.Errorf("stage release bundle: %w", err)
 	}
 	verifiedAt := time.Unix(resolved.VerificationEpoch, 0).UTC()
@@ -140,28 +195,23 @@ func Assemble(
 		{name: "agentmemory", resource: selection.launcher},
 		{name: "agentmemory-runtime-helper", resource: selection.helper},
 	} {
-		if err := copyVerifiedNativeResource(
+		if err := operations.CopyVerifiedNativeResource(
 			stagedBundle, filepath.Join(temporary, binary.name), binary.resource, epoch,
 		); err != nil {
 			return fmt.Errorf("stage verified %s: %w", binary.name, err)
 		}
 	}
-	if err := normalizeDirectoryTree(temporary, epoch); err != nil {
+	if err := operations.NormalizeDirectoryTree(temporary, epoch); err != nil {
 		return fmt.Errorf("normalize staging directories: %w", err)
 	}
-	if err := os.Rename(temporary, resolved.Output); err != nil {
+	if err := operations.Rename(temporary, resolved.Output); err != nil {
 		return fmt.Errorf("publish staging directory: %w", err)
 	}
-	committed = true
 	return nil
 }
 
 func resolveAssemblyOptions(options AssemblyOptions) (AssemblyOptions, error) {
-	root := options.RepositoryRoot
-	if root == "" {
-		root = "."
-	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(options.RepositoryRoot)
 	if err != nil {
 		return AssemblyOptions{}, fmt.Errorf("resolve repository root: %w", err)
 	}
@@ -170,7 +220,7 @@ func resolveAssemblyOptions(options AssemblyOptions) (AssemblyOptions, error) {
 		return AssemblyOptions{}, fmt.Errorf("resolve repository root links: %w", err)
 	}
 	rootInfo, err := os.Lstat(absRoot)
-	if err != nil || !rootInfo.IsDir() {
+	if !releasefile.StableDirectory(rootInfo, err) {
 		return AssemblyOptions{}, errors.New("repository root is not a directory")
 	}
 	if options.Architecture != "amd64" && options.Architecture != "arm64" {
@@ -205,7 +255,7 @@ func resolveAssemblyOptions(options AssemblyOptions) (AssemblyOptions, error) {
 	}
 	parent := filepath.Dir(resolved.Output)
 	parentInfo, err := os.Lstat(parent)
-	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(parentInfo, err) {
 		return AssemblyOptions{}, errors.New("output parent must be an existing non-symlink directory")
 	}
 	return resolved, nil
@@ -226,7 +276,7 @@ func requireCleanRevision(ctx context.Context, runner CommandRunner, root string
 
 func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 	rootInfo, err := os.Lstat(sourceRoot)
-	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(rootInfo, err) {
 		return errors.New("bundle root must be a non-symlink directory")
 	}
 	if err := os.Mkdir(targetRoot, 0o700); err != nil {
@@ -239,8 +289,8 @@ func copyBundle(sourceRoot string, targetRoot string, epoch time.Time) error {
 		if path == sourceRoot {
 			return nil
 		}
-		relative, err := filepath.Rel(sourceRoot, path)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		relative, confined := releasefile.ConfinedRelative(sourceRoot, path)
+		if !confined {
 			return errors.New("bundle entry escaped its root")
 		}
 		target := filepath.Join(targetRoot, relative)
@@ -280,7 +330,7 @@ func copyRegularFile(source string, target string, expected os.FileInfo, epoch t
 	}
 	defer func() { _ = input.Close() }()
 	opened, err := input.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
+	if !releasefile.SameRegularFile(expected, opened, err) {
 		return errors.New("bundle file changed while opening")
 	}
 	// #nosec G304 -- target is constructed from the private staging root and a root-confined relative path.
@@ -328,13 +378,11 @@ func copyVerifiedNativeResource(
 		return errors.New("native resource projection is invalid")
 	}
 	source := filepath.Join(bundleRoot, filepath.FromSlash(resource.bundlePath))
-	relative, err := filepath.Rel(bundleRoot, source)
-	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if _, confined := releasefile.ConfinedRelative(bundleRoot, source); !confined {
 		return errors.New("native resource escaped the retained bundle")
 	}
 	expected, err := os.Lstat(source)
-	if err != nil || !expected.Mode().IsRegular() || expected.Mode()&os.ModeSymlink != 0 ||
-		expected.Size() <= 0 || uint64(expected.Size()) != resource.size { // #nosec G115 -- positivity is checked first.
+	if !releasefile.ExactRegularSize(expected, err, resource.size) {
 		return errors.New("native resource size or type does not match its verified projection")
 	}
 	// #nosec G304 -- source is a confined, canonical signed bundle path validated above.
@@ -344,7 +392,7 @@ func copyVerifiedNativeResource(
 	}
 	defer func() { _ = input.Close() }()
 	opened, err := input.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
+	if !releasefile.SameRegularFile(expected, opened, err) {
 		return errors.New("native resource changed while opening")
 	}
 	// #nosec G304 -- target is one fixed leaf beneath the private staging root.
@@ -361,10 +409,9 @@ func copyVerifiedNativeResource(
 	}()
 	digest := sha256.New()
 	written, err := io.Copy(io.MultiWriter(output, digest), input)
-	if err != nil || written <= 0 || uint64(written) != resource.size { // #nosec G115 -- positivity is checked first.
-		return errors.New("native resource changed while copying")
-	}
-	if !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), resource.sha256) {
+	if !releasefile.ExactDigestTransfer(
+		written, err, resource.size, hex.EncodeToString(digest.Sum(nil)), resource.sha256, true,
+	) {
 		return errors.New("native resource digest does not match its verified projection")
 	}
 	if err := output.Sync(); err != nil {
@@ -391,7 +438,7 @@ func normalizeDirectoryTree(root string, epoch time.Time) error {
 			return err
 		}
 		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		if !releasefile.StableEntry(info, err) {
 			return errors.New("staging tree contains an invalid entry")
 		}
 		switch {
@@ -419,10 +466,6 @@ func normalizeDirectoryTree(root string, epoch time.Time) error {
 	}); err != nil {
 		return err
 	}
-	sort.Slice(directories, func(i, j int) bool {
-		return strings.Count(directories[i], string(filepath.Separator)) >
-			strings.Count(directories[j], string(filepath.Separator))
-	})
 	for _, directory := range directories {
 		if err := normalizeDirectory(directory, epoch); err != nil {
 			return err
@@ -441,7 +484,7 @@ func normalizeDirectory(path string, epoch time.Time) error {
 
 func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximum {
+	if !releasefile.BoundedRegular(info, err, maximum) {
 		return nil, errors.New("input must be a bounded non-empty regular file")
 	}
 	// #nosec G304 -- path is an explicit release input already constrained by Lstat and size checks.
@@ -451,11 +494,11 @@ func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	}
 	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if !releasefile.SameRegularFile(info, opened, err) {
 		return nil, errors.New("input changed while opening")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maximum+1))
-	if err != nil || int64(len(content)) != info.Size() || int64(len(content)) > maximum {
+	if !releasefile.StableContent(len(content), err, info.Size(), maximum) {
 		return nil, errors.New("input changed while reading")
 	}
 	return content, nil

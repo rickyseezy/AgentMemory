@@ -12,11 +12,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/releasefile"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001NativeStageStaticLimitsAreExact asserts this security boundary.
+// mutator-disable-next-line *
 const maximumTrustDocumentBytes = 128 * 1024
 
 // StageOptions contains every caller-controlled desktop package input.
@@ -46,6 +50,60 @@ type CommandRunner interface {
 type trustValidator func(string) error
 type bundleResolver func(context.Context, string, string, string, string, time.Time) (verifiedNativePackage, error)
 
+type stageOperations interface {
+	MkdirTemp(string, string) (string, error)
+	CopyBundleTree(string, string, os.FileMode, os.FileMode, time.Time) error
+	Mkdir(string, os.FileMode) error
+	MkdirAll(string, os.FileMode) error
+	CopyVerifiedNativeResource(string, string, verifiedNativeResource, time.Time) error
+	RemoveAll(string) error
+	NormalizePackageDirectories(string, time.Time) error
+	Rename(string, string) error
+}
+
+type systemStageOperations struct{}
+
+func (systemStageOperations) MkdirTemp(parent string, pattern string) (string, error) {
+	return os.MkdirTemp(parent, pattern)
+}
+
+func (systemStageOperations) CopyBundleTree(
+	source string,
+	target string,
+	directoryMode os.FileMode,
+	fileMode os.FileMode,
+	epoch time.Time,
+) error {
+	return copyBundleTree(source, target, directoryMode, fileMode, epoch)
+}
+
+func (systemStageOperations) Mkdir(path string, mode os.FileMode) error {
+	return os.Mkdir(path, mode)
+}
+
+func (systemStageOperations) MkdirAll(path string, mode os.FileMode) error {
+	return os.MkdirAll(path, mode)
+}
+
+func (systemStageOperations) CopyVerifiedNativeResource(
+	root string,
+	target string,
+	resource verifiedNativeResource,
+	epoch time.Time,
+) error {
+	return copyVerifiedNativeResource(root, target, resource, epoch)
+}
+
+func (systemStageOperations) RemoveAll(path string) error { return os.RemoveAll(path) }
+
+func (systemStageOperations) NormalizePackageDirectories(root string, epoch time.Time) error {
+	return normalizePackageDirectories(root, epoch)
+}
+
+func (systemStageOperations) Rename(oldPath string, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
+
 type verifiedNativeResource struct {
 	resourceID string
 	bundlePath string
@@ -57,8 +115,8 @@ func (r verifiedNativeResource) valid() bool {
 	if r.resourceID == "" || r.bundlePath == "" || r.size == 0 || len(r.sha256) != sha256.Size*2 {
 		return false
 	}
-	decoded, err := hex.DecodeString(r.sha256)
-	return err == nil && len(decoded) == sha256.Size
+	_, err := hex.DecodeString(r.sha256)
+	return err == nil
 }
 
 type verifiedNativePackage struct {
@@ -83,7 +141,20 @@ func Stage(
 	validateTrust trustValidator,
 	resolveBundle bundleResolver,
 ) error {
-	if ctx == nil || runner == nil || validateTrust == nil || resolveBundle == nil {
+	return stageWithOperations(
+		ctx, options, runner, validateTrust, resolveBundle, systemStageOperations{},
+	)
+}
+
+func stageWithOperations(
+	ctx context.Context,
+	options StageOptions,
+	runner CommandRunner,
+	validateTrust trustValidator,
+	resolveBundle bundleResolver,
+	operations stageOperations,
+) error {
+	if ctx == nil || runner == nil || validateTrust == nil || resolveBundle == nil || operations == nil {
 		return errors.New("native package staging capabilities are incomplete")
 	}
 	if err := ctx.Err(); err != nil {
@@ -98,6 +169,9 @@ func Stage(
 		return fmt.Errorf("read release trust: %w", err)
 	}
 	encodedTrust := base64.StdEncoding.EncodeToString(trust)
+	// Clearing the transient public-authority bytes is a defense-in-depth memory-hygiene action;
+	// it has no observable functional outcome that a mutation test can assert.
+	// mutator-disable-next-line statement/remove
 	clear(trust)
 	if err := validateTrust(encodedTrust); err != nil {
 		return errors.New("release trust is not accepted by the production decoder")
@@ -107,18 +181,13 @@ func Stage(
 	}
 	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
 	parent := filepath.Dir(resolved.Output)
-	temporary, err := os.MkdirTemp(parent, ".agentmemory-native-package-")
+	temporary, err := operations.MkdirTemp(parent, ".agentmemory-native-package-")
 	if err != nil {
 		return fmt.Errorf("create private package root: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.RemoveAll(temporary)
-		}
-	}()
+	defer func() { _ = operations.RemoveAll(temporary) }()
 	verificationRoot := filepath.Join(temporary, ".verification-bundle")
-	if err := copyBundleTree(resolved.BundleRoot, verificationRoot, 0o700, 0o600, epoch); err != nil {
+	if err := operations.CopyBundleTree(resolved.BundleRoot, verificationRoot, 0o700, 0o600, epoch); err != nil {
 		return fmt.Errorf("retain private release bundle: %w", err)
 	}
 	selection, err := resolveBundle(
@@ -129,7 +198,7 @@ func Stage(
 		return errors.New("release bundle failed the production verification stack")
 	}
 	payload := filepath.Join(temporary, "payload")
-	if err := os.Mkdir(payload, 0o700); err != nil {
+	if err := operations.Mkdir(payload, 0o700); err != nil {
 		return fmt.Errorf("create package payload: %w", err)
 	}
 	layout, err := desktopPackageLayout(resolved.OperatingSystem)
@@ -137,10 +206,10 @@ func Stage(
 		return err
 	}
 	bundleTarget := filepath.Join(payload, filepath.FromSlash(layout.bundle))
-	if err := os.MkdirAll(filepath.Dir(bundleTarget), 0o700); err != nil {
+	if err := operations.MkdirAll(filepath.Dir(bundleTarget), 0o700); err != nil {
 		return fmt.Errorf("create installed bundle parent: %w", err)
 	}
-	if err := copyBundleTree(verificationRoot, bundleTarget, 0o755, 0o644, epoch); err != nil {
+	if err := operations.CopyBundleTree(verificationRoot, bundleTarget, 0o755, 0o644, epoch); err != nil {
 		return fmt.Errorf("stage installed release bundle: %w", err)
 	}
 	for _, target := range []struct {
@@ -151,23 +220,22 @@ func Stage(
 		{path: layout.helper, resource: selection.helper},
 	} {
 		absolute := filepath.Join(payload, filepath.FromSlash(target.path))
-		if err := os.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
+		if err := operations.MkdirAll(filepath.Dir(absolute), 0o700); err != nil {
 			return fmt.Errorf("create native package directory: %w", err)
 		}
-		if err := copyVerifiedNativeResource(verificationRoot, absolute, target.resource, epoch); err != nil {
+		if err := operations.CopyVerifiedNativeResource(verificationRoot, absolute, target.resource, epoch); err != nil {
 			return fmt.Errorf("stage verified native resource: %w", err)
 		}
 	}
-	if err := os.RemoveAll(verificationRoot); err != nil {
+	if err := operations.RemoveAll(verificationRoot); err != nil {
 		return fmt.Errorf("remove private verification authority: %w", err)
 	}
-	if err := normalizePackageDirectories(temporary, epoch); err != nil {
+	if err := operations.NormalizePackageDirectories(temporary, epoch); err != nil {
 		return fmt.Errorf("normalize native package directories: %w", err)
 	}
-	if err := os.Rename(temporary, resolved.Output); err != nil {
+	if err := operations.Rename(temporary, resolved.Output); err != nil {
 		return fmt.Errorf("publish native package stage: %w", err)
 	}
-	committed = true
 	return nil
 }
 
@@ -196,11 +264,7 @@ func desktopPackageLayout(operatingSystem string) (packageLayout, error) {
 }
 
 func resolveStageOptions(options StageOptions) (StageOptions, error) {
-	root := options.RepositoryRoot
-	if root == "" {
-		root = "."
-	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(options.RepositoryRoot)
 	if err != nil {
 		return StageOptions{}, fmt.Errorf("resolve repository root: %w", err)
 	}
@@ -209,7 +273,7 @@ func resolveStageOptions(options StageOptions) (StageOptions, error) {
 		return StageOptions{}, fmt.Errorf("resolve repository root links: %w", err)
 	}
 	info, err := os.Lstat(absRoot)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(info, err) {
 		return StageOptions{}, errors.New("repository root is not a directory")
 	}
 	if options.OperatingSystem != "darwin" && options.OperatingSystem != "windows" {
@@ -240,7 +304,7 @@ func resolveStageOptions(options StageOptions) (StageOptions, error) {
 		return StageOptions{}, fmt.Errorf("inspect output: %w", err)
 	}
 	parent, err := os.Lstat(filepath.Dir(resolved.Output))
-	if err != nil || !parent.IsDir() || parent.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(parent, err) {
 		return StageOptions{}, errors.New("output parent must be an existing non-symlink directory")
 	}
 	return resolved, nil
@@ -267,7 +331,7 @@ func copyBundleTree(
 	epoch time.Time,
 ) error {
 	rootInfo, err := os.Lstat(sourceRoot)
-	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(rootInfo, err) {
 		return errors.New("bundle root must be a non-symlink directory")
 	}
 	if err := os.Mkdir(targetRoot, directoryMode); err != nil {
@@ -281,8 +345,8 @@ func copyBundleTree(
 		if path == sourceRoot {
 			return nil
 		}
-		relative, err := filepath.Rel(sourceRoot, path)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		relative, confined := releasefile.ConfinedRelative(sourceRoot, path)
+		if !confined {
 			return errors.New("bundle entry escaped its root")
 		}
 		target := filepath.Join(targetRoot, relative)
@@ -312,7 +376,6 @@ func copyBundleTree(
 	if info, err := os.Lstat(manifest); err != nil || !info.Mode().IsRegular() {
 		return errors.New("bundle is missing bootstrap/distribution-manifest.json")
 	}
-	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
 	for _, directory := range directories {
 		if err := os.Chmod(directory, directoryMode); err != nil { // #nosec G302 -- caller supplies a closed private/public package mode.
 			return err
@@ -338,7 +401,7 @@ func copyRegularFile(
 	}
 	defer func() { _ = input.Close() }()
 	opened, err := input.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(expected, opened) {
+	if !releasefile.SameRegularFile(expected, opened, err) {
 		return errors.New("bundle file changed while opening")
 	}
 	// #nosec G304 -- target is beneath a private staging root and confined relative path.
@@ -385,7 +448,7 @@ func copyVerifiedNativeResource(
 	}
 	source := filepath.Join(bundleRoot, filepath.FromSlash(resource.bundlePath))
 	expected, err := os.Lstat(source)
-	if err != nil || !expected.Mode().IsRegular() || expected.Size() <= 0 || uint64(expected.Size()) != resource.size { // #nosec G115 -- positivity is checked.
+	if !releasefile.ExactRegularSize(expected, err, resource.size) {
 		return errors.New("native resource size or type differs from its verified projection")
 	}
 	// #nosec G304 -- source is one canonical manifest-selected bundle path.
@@ -395,7 +458,7 @@ func copyVerifiedNativeResource(
 	}
 	defer func() { _ = input.Close() }()
 	opened, err := input.Stat()
-	if err != nil || !os.SameFile(expected, opened) {
+	if !releasefile.SameRegularFile(expected, opened, err) {
 		return errors.New("native resource changed while opening")
 	}
 	// #nosec G304 -- target is one fixed native package leaf.
@@ -412,8 +475,9 @@ func copyVerifiedNativeResource(
 	}()
 	digest := sha256.New()
 	written, err := io.Copy(io.MultiWriter(output, digest), input)
-	if err != nil || written <= 0 || uint64(written) != resource.size ||
-		!strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), resource.sha256) { // #nosec G115 -- positivity is checked.
+	if !releasefile.ExactDigestTransfer(
+		written, err, resource.size, hex.EncodeToString(digest.Sum(nil)), resource.sha256, true,
+	) {
 		return errors.New("native resource bytes differ from their verified projection")
 	}
 	if err := output.Sync(); err != nil {
@@ -440,7 +504,7 @@ func normalizePackageDirectories(root string, epoch time.Time) error {
 			return err
 		}
 		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		if !releasefile.StableEntry(info, err) {
 			return errors.New("package stage contains an invalid entry")
 		}
 		if entry.IsDir() {
@@ -452,7 +516,6 @@ func normalizePackageDirectories(root string, epoch time.Time) error {
 	}); err != nil {
 		return err
 	}
-	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
 	for _, directory := range directories {
 		// #nosec G122,G302 -- private symlink-rejected stage paths become root-owned package directories.
 		if err := os.Chmod(directory, 0o755); err != nil {
@@ -468,7 +531,7 @@ func normalizePackageDirectories(root string, epoch time.Time) error {
 
 func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximum {
+	if !releasefile.BoundedRegular(info, err, maximum) {
 		return nil, errors.New("input must be a bounded non-empty regular file")
 	}
 	// #nosec G304 -- explicit release input constrained above.
@@ -478,11 +541,11 @@ func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	}
 	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if !releasefile.SameRegularFile(info, opened, err) {
 		return nil, errors.New("input changed while opening")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maximum+1))
-	if err != nil || int64(len(content)) != info.Size() || int64(len(content)) > maximum {
+	if !releasefile.StableContent(len(content), err, info.Size(), maximum) {
 		return nil, errors.New("input changed while reading")
 	}
 	return content, nil

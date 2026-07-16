@@ -10,6 +10,9 @@ import (
 	"os"
 )
 
+// main is an os.Exit boundary and cannot be called in-process. Tests exercise
+// run directly across creation, verification, usage, and failure contracts.
+// mutator-disable-func
 func main() { os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

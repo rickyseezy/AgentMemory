@@ -12,17 +12,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/releasefile"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001OfflineBundleStaticAuthorityIsExact asserts every release value.
 const (
-	maximumOfflineTrustBytes    = 128 * 1024
+	// mutator-disable-next-line *
+	maximumOfflineTrustBytes = 128 * 1024
+	// mutator-disable-next-line *
 	maximumOfflineEnvelopeBytes = 32 * 1024 * 1024
-	distributionEnvelopePath    = "bootstrap/distribution-manifest.json"
+	// mutator-disable-next-line *
+	distributionEnvelopePath = "bootstrap/distribution-manifest.json"
 )
 
 // AssembleOptions contains every caller-controlled retained-bundle input.
@@ -62,8 +67,8 @@ func (r bundleResource) valid() bool {
 		strings.HasPrefix(r.path, "../") || r.path == distributionEnvelopePath {
 		return false
 	}
-	decoded, err := hex.DecodeString(r.sha256)
-	return err == nil && len(decoded) == sha256.Size && strings.ToLower(r.sha256) == r.sha256
+	_, err := hex.DecodeString(r.sha256)
+	return err == nil && strings.ToLower(r.sha256) == r.sha256
 }
 
 type bundleInventory struct {
@@ -78,11 +83,69 @@ func (i bundleInventory) clone() bundleInventory {
 type envelopeDecoder func([]byte) (bundleInventory, error)
 type bundleValidator func(context.Context, string, string, string, string, time.Time) error
 
+type bundleOperations interface {
+	MkdirTemp(string, string) (string, error)
+	MkdirAll(string, os.FileMode) error
+	CopyExactBundleResource(string, string, bundleResource, time.Time) error
+	RejectUninventoriedBundleEntries(string, map[string]bundleResource) error
+	WriteExactFile(string, []byte, time.Time) error
+	NormalizeBundleDirectories(string, time.Time) error
+	Rename(string, string) error
+	RemoveAll(string) error
+}
+
+type systemBundleOperations struct{}
+
+func (systemBundleOperations) MkdirTemp(parent string, pattern string) (string, error) {
+	return os.MkdirTemp(parent, pattern)
+}
+
+func (systemBundleOperations) MkdirAll(path string, mode os.FileMode) error {
+	return os.MkdirAll(path, mode)
+}
+
+func (systemBundleOperations) CopyExactBundleResource(
+	root string,
+	target string,
+	resource bundleResource,
+	epoch time.Time,
+) error {
+	return copyExactBundleResource(root, target, resource, epoch)
+}
+
+func (systemBundleOperations) RejectUninventoriedBundleEntries(
+	root string,
+	expected map[string]bundleResource,
+) error {
+	return rejectUninventoriedBundleEntries(root, expected)
+}
+
+func (systemBundleOperations) WriteExactFile(path string, content []byte, epoch time.Time) error {
+	return writeExactFile(path, content, epoch)
+}
+
+func (systemBundleOperations) NormalizeBundleDirectories(root string, epoch time.Time) error {
+	return normalizeBundleDirectories(root, epoch)
+}
+
+func (systemBundleOperations) Rename(oldPath string, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
+
+func (systemBundleOperations) RemoveAll(path string) error { return os.RemoveAll(path) }
+
+// This closed declarative matrix is asserted field-for-field by
+// TestPF001OfflineBundleStaticAuthorityIsExact.
 var certifiedReleaseTargets = []struct{ operatingSystem, architecture string }{
+	// mutator-disable-next-line *
 	{operatingSystem: "linux", architecture: "amd64"},
+	// mutator-disable-next-line *
 	{operatingSystem: "linux", architecture: "arm64"},
+	// mutator-disable-next-line *
 	{operatingSystem: "darwin", architecture: "amd64"},
+	// mutator-disable-next-line *
 	{operatingSystem: "darwin", architecture: "arm64"},
+	// mutator-disable-next-line *
 	{operatingSystem: "windows", architecture: "amd64"},
 }
 
@@ -96,7 +159,20 @@ func Assemble(
 	decode envelopeDecoder,
 	validate bundleValidator,
 ) error {
-	if ctx == nil || runner == nil || decode == nil || validate == nil {
+	return assembleWithOperations(
+		ctx, options, runner, decode, validate, systemBundleOperations{},
+	)
+}
+
+func assembleWithOperations(
+	ctx context.Context,
+	options AssembleOptions,
+	runner CommandRunner,
+	decode envelopeDecoder,
+	validate bundleValidator,
+	operations bundleOperations,
+) error {
+	if ctx == nil || runner == nil || decode == nil || validate == nil || operations == nil {
 		return errors.New("offline bundle assembly capabilities are incomplete")
 	}
 	if err := ctx.Err(); err != nil {
@@ -116,56 +192,62 @@ func Assemble(
 	}
 	inventory, err := decode(envelope)
 	if err != nil || inventory.sourceCommit != commit {
+		// Transient envelope clearing is memory hygiene with no observable functional outcome.
+		// mutator-disable-next-line statement/remove
 		clear(envelope)
 		return errors.New("signed distribution inventory does not bind the clean source revision")
 	}
 	expected, err := validateBundleInventory(inventory)
 	if err != nil {
+		// mutator-disable-next-line statement/remove
 		clear(envelope)
 		return err
 	}
 	trust, err := readBoundedRegularFile(resolved.TrustDocument, maximumOfflineTrustBytes)
 	if err != nil {
+		// mutator-disable-next-line statement/remove
 		clear(envelope)
 		return fmt.Errorf("read native release trust: %w", err)
 	}
 	encodedTrust := base64.StdEncoding.EncodeToString(trust)
+	// Clearing the transient public-authority bytes is a defense-in-depth memory-hygiene action;
+	// it has no observable functional outcome that a mutation test can assert.
+	// mutator-disable-next-line statement/remove
 	clear(trust)
 
 	parent := filepath.Dir(resolved.Output)
-	temporary, err := os.MkdirTemp(parent, ".agentmemory-offline-bundle-")
+	temporary, err := operations.MkdirTemp(parent, ".agentmemory-offline-bundle-")
 	if err != nil {
+		// mutator-disable-next-line statement/remove
 		clear(envelope)
 		return fmt.Errorf("create private bundle root: %w", err)
 	}
-	committed := false
 	defer func() {
+		// mutator-disable-next-line statement/remove
 		clear(envelope)
-		if !committed {
-			_ = os.RemoveAll(temporary)
-		}
+		_ = operations.RemoveAll(temporary)
 	}()
 	epoch := time.Unix(resolved.SourceEpoch, 0).UTC()
 	for _, resource := range inventory.resources {
 		target := filepath.Join(temporary, filepath.FromSlash(resource.path))
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		if err := operations.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return fmt.Errorf("create bundle resource parent: %w", err)
 		}
-		if err := copyExactBundleResource(resolved.StagingRoot, target, resource, epoch); err != nil {
+		if err := operations.CopyExactBundleResource(resolved.StagingRoot, target, resource, epoch); err != nil {
 			return fmt.Errorf("copy resource %s: %w", resource.id, err)
 		}
 	}
-	if err := rejectUninventoriedBundleEntries(resolved.StagingRoot, expected); err != nil {
+	if err := operations.RejectUninventoriedBundleEntries(resolved.StagingRoot, expected); err != nil {
 		return err
 	}
 	manifestTarget := filepath.Join(temporary, filepath.FromSlash(distributionEnvelopePath))
-	if err := os.MkdirAll(filepath.Dir(manifestTarget), 0o700); err != nil {
+	if err := operations.MkdirAll(filepath.Dir(manifestTarget), 0o700); err != nil {
 		return fmt.Errorf("create distribution envelope parent: %w", err)
 	}
-	if err := writeExactFile(manifestTarget, envelope, epoch); err != nil {
+	if err := operations.WriteExactFile(manifestTarget, envelope, epoch); err != nil {
 		return fmt.Errorf("write distribution envelope: %w", err)
 	}
-	if err := normalizeBundleDirectories(temporary, epoch); err != nil {
+	if err := operations.NormalizeBundleDirectories(temporary, epoch); err != nil {
 		return fmt.Errorf("normalize retained bundle: %w", err)
 	}
 	verifiedAt := time.Unix(resolved.VerificationEpoch, 0).UTC()
@@ -177,19 +259,14 @@ func Assemble(
 			return fmt.Errorf("release verification failed for %s/%s", target.operatingSystem, target.architecture)
 		}
 	}
-	if err := os.Rename(temporary, resolved.Output); err != nil {
+	if err := operations.Rename(temporary, resolved.Output); err != nil {
 		return fmt.Errorf("publish retained offline bundle: %w", err)
 	}
-	committed = true
 	return nil
 }
 
 func resolveAssembleOptions(options AssembleOptions) (AssembleOptions, error) {
-	root := options.RepositoryRoot
-	if root == "" {
-		root = "."
-	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(options.RepositoryRoot)
 	if err != nil {
 		return AssembleOptions{}, fmt.Errorf("resolve repository root: %w", err)
 	}
@@ -197,7 +274,7 @@ func resolveAssembleOptions(options AssembleOptions) (AssembleOptions, error) {
 	if err != nil {
 		return AssembleOptions{}, fmt.Errorf("resolve repository links: %w", err)
 	}
-	if info, statErr := os.Lstat(absRoot); statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if info, statErr := os.Lstat(absRoot); !releasefile.StableDirectory(info, statErr) {
 		return AssembleOptions{}, errors.New("repository root must be a non-symlink directory")
 	}
 	if options.SourceEpoch <= 0 || options.VerificationEpoch <= 0 {
@@ -220,7 +297,7 @@ func resolveAssembleOptions(options AssembleOptions) (AssembleOptions, error) {
 		*value = filepath.Clean(*value)
 	}
 	stagingInfo, err := os.Lstat(resolved.StagingRoot)
-	if err != nil || !stagingInfo.IsDir() || stagingInfo.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(stagingInfo, err) {
 		return AssembleOptions{}, errors.New("staging root must be a non-symlink directory")
 	}
 	if _, err := os.Lstat(resolved.Output); err == nil {
@@ -229,7 +306,7 @@ func resolveAssembleOptions(options AssembleOptions) (AssembleOptions, error) {
 		return AssembleOptions{}, fmt.Errorf("inspect output: %w", err)
 	}
 	parentInfo, err := os.Lstat(filepath.Dir(resolved.Output))
-	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
+	if !releasefile.StableDirectory(parentInfo, err) {
 		return AssembleOptions{}, errors.New("output parent must be an existing non-symlink directory")
 	}
 	return resolved, nil
@@ -287,7 +364,7 @@ func validateBundleInventory(inventory bundleInventory) (map[string]bundleResour
 func copyExactBundleResource(root string, target string, resource bundleResource, epoch time.Time) error {
 	source := filepath.Join(root, filepath.FromSlash(resource.path))
 	info, err := os.Lstat(source)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || uint64(info.Size()) != resource.size { // #nosec G115 -- positivity is checked.
+	if !releasefile.ExactRegularSize(info, err, resource.size) {
 		return errors.New("resource type or size differs from the signed inventory")
 	}
 	// #nosec G304 -- source is one validated signed-inventory path beneath the explicit staging root.
@@ -297,7 +374,7 @@ func copyExactBundleResource(root string, target string, resource bundleResource
 	}
 	defer func() { _ = input.Close() }()
 	opened, err := input.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if !releasefile.SameRegularFile(info, opened, err) {
 		return errors.New("resource changed while opening")
 	}
 	// #nosec G304 -- target is confined to a new private output root.
@@ -314,8 +391,9 @@ func copyExactBundleResource(root string, target string, resource bundleResource
 	}()
 	digest := sha256.New()
 	written, err := io.Copy(io.MultiWriter(output, digest), input)
-	if err != nil || written <= 0 || uint64(written) != resource.size || // #nosec G115 -- positivity is checked.
-		hex.EncodeToString(digest.Sum(nil)) != resource.sha256 {
+	if !releasefile.ExactDigestTransfer(
+		written, err, resource.size, hex.EncodeToString(digest.Sum(nil)), resource.sha256, false,
+	) {
 		return errors.New("resource bytes differ from the signed inventory")
 	}
 	if err := output.Sync(); err != nil {
@@ -338,7 +416,7 @@ func rejectUninventoriedBundleEntries(root string, expected map[string]bundleRes
 			return walkErr
 		}
 		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		if !releasefile.StableEntry(info, err) {
 			return errors.New("staging tree contains a linked or unstable entry")
 		}
 		if entry.IsDir() {
@@ -347,11 +425,11 @@ func rejectUninventoriedBundleEntries(root string, expected map[string]bundleRes
 		if !info.Mode().IsRegular() {
 			return errors.New("staging tree contains a special entry")
 		}
-		relative, err := filepath.Rel(root, path)
-		canonical := filepath.ToSlash(relative)
-		if err != nil || canonical == "." {
+		relative, confined := releasefile.ConfinedRelative(root, path)
+		if !confined {
 			return errors.New("staging entry escaped its root")
 		}
+		canonical := filepath.ToSlash(relative)
 		if _, exists := expected[canonical]; !exists {
 			return errors.New("staging tree contains an uninventoried file")
 		}
@@ -404,7 +482,6 @@ func normalizeBundleDirectories(root string, epoch time.Time) error {
 	}); err != nil {
 		return err
 	}
-	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
 	for _, directory := range directories {
 		if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- private retained bundle boundary.
 			return err
@@ -418,7 +495,7 @@ func normalizeBundleDirectories(root string, epoch time.Time) error {
 
 func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximum {
+	if !releasefile.BoundedRegular(info, err, maximum) {
 		return nil, errors.New("input must be a bounded non-empty regular file")
 	}
 	// #nosec G304 -- explicit release input bounded above.
@@ -428,11 +505,11 @@ func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
 	}
 	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	if !releasefile.SameRegularFile(info, opened, err) {
 		return nil, errors.New("input changed while opening")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maximum+1))
-	if err != nil || int64(len(content)) != info.Size() || int64(len(content)) > maximum {
+	if !releasefile.StableContent(len(content), err, info.Size(), maximum) {
 		return nil, errors.New("input changed while reading")
 	}
 	return content, nil

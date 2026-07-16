@@ -13,11 +13,34 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher"
 )
 
+// main is an os.Exit boundary; run is tested directly across its full contract.
+// mutator-disable-func
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
+type stageCommand func(context.Context, StageOptions) error
+
 func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	return runWithStage(ctx, args, stdout, stderr, func(ctx context.Context, options StageOptions) error {
+		return Stage(
+			ctx, options, processRunner{}, launcher.ValidateNativeReleaseTrustBase64,
+			resolveProductionNativePackage,
+		)
+	})
+}
+
+func runWithStage(
+	ctx context.Context,
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+	stage stageCommand,
+) int {
+	if stage == nil {
+		_, _ = fmt.Fprintln(stderr, "Native package staging failed: stage command is unavailable")
+		return 1
+	}
 	flags := flag.NewFlagSet("agentmemory-native-package-stage", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "clean AgentMemory repository root")
@@ -40,10 +63,7 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		OperatingSystem: *operatingSystem, Architecture: *architecture,
 		SourceEpoch: *epoch, VerificationEpoch: *verificationEpoch,
 	}
-	if err := Stage(
-		ctx, options, processRunner{}, launcher.ValidateNativeReleaseTrustBase64,
-		resolveProductionNativePackage,
-	); err != nil {
+	if err := stage(ctx, options); err != nil {
 		_, _ = fmt.Fprintf(stderr, "Native package staging failed: %v\n", err)
 		return 1
 	}
@@ -67,14 +87,35 @@ func resolveProductionNativePackage(
 	if err != nil {
 		return verifiedNativePackage{}, err
 	}
-	project := func(resource launcher.NativeReleasePackageResource) verifiedNativeResource {
-		return verifiedNativeResource{
-			resourceID: resource.ResourceID(), bundlePath: resource.BundlePath(),
-			sha256: resource.SHA256(), size: resource.Size(),
-		}
-	}
+	launcherResource := selected.Launcher()
+	helperResource := selected.Helper()
+	return newVerifiedNativePackage(
+		selected.OperatingSystem(), selected.Architecture(),
+		newVerifiedNativeResource(
+			launcherResource.ResourceID(), launcherResource.BundlePath(),
+			launcherResource.SHA256(), launcherResource.Size(),
+		),
+		newVerifiedNativeResource(
+			helperResource.ResourceID(), helperResource.BundlePath(),
+			helperResource.SHA256(), helperResource.Size(),
+		),
+	), nil
+}
+
+func newVerifiedNativeResource(resourceID string, bundlePath string, digest string, size uint64) verifiedNativeResource {
+	return verifiedNativeResource{resourceID: resourceID, bundlePath: bundlePath, sha256: digest, size: size}
+}
+
+func newVerifiedNativePackage(
+	operatingSystem string,
+	architecture string,
+	launcherResource verifiedNativeResource,
+	helperResource verifiedNativeResource,
+) verifiedNativePackage {
 	return verifiedNativePackage{
-		operatingSystem: selected.OperatingSystem(), architecture: selected.Architecture(),
-		launcher: project(selected.Launcher()), helper: project(selected.Helper()),
-	}, nil
+		operatingSystem: operatingSystem,
+		architecture:    architecture,
+		launcher:        launcherResource,
+		helper:          helperResource,
+	}
 }

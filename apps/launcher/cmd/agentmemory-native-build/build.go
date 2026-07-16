@@ -19,12 +19,19 @@ import (
 	"time"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001NativeBuildStaticAuthorityIsExact asserts every release value.
 const (
-	requiredGoVersion         = "go1.26.5"
+	// mutator-disable-next-line *
+	requiredGoVersion = "go1.26.5"
+	// mutator-disable-next-line *
 	maximumTrustDocumentBytes = 128 * 1024
-	maximumNativeBinaryBytes  = 512 * 1024 * 1024
-	nativeBuildMetadataName   = "unsigned-build.json"
-	releaseTrustVariable      = "github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher.embeddedNativeReleaseTrustBase64"
+	// mutator-disable-next-line *
+	maximumNativeBinaryBytes = 512 * 1024 * 1024
+	// mutator-disable-next-line *
+	nativeBuildMetadataName = "unsigned-build.json"
+	// mutator-disable-next-line *
+	releaseTrustVariable = "github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher.embeddedNativeReleaseTrustBase64"
 )
 
 // BuildOptions contains every caller-controlled native build input.
@@ -51,6 +58,41 @@ type CommandRunner interface {
 }
 
 type trustValidator func(string) error
+
+type buildOperations interface {
+	MkdirTemp(string, string) (string, error)
+	Mkdir(string, os.FileMode) error
+	RemoveAll(string) error
+	WriteBuildMetadata(string, nativeBuildMetadata, time.Time) error
+	NormalizeDirectory(string, time.Time) error
+	Rename(string, string) error
+}
+
+type systemBuildOperations struct{}
+
+func (systemBuildOperations) MkdirTemp(parent string, pattern string) (string, error) {
+	return os.MkdirTemp(parent, pattern)
+}
+
+func (systemBuildOperations) Mkdir(path string, mode os.FileMode) error { return os.Mkdir(path, mode) }
+
+func (systemBuildOperations) RemoveAll(path string) error { return os.RemoveAll(path) }
+
+func (systemBuildOperations) WriteBuildMetadata(
+	path string,
+	metadata nativeBuildMetadata,
+	epoch time.Time,
+) error {
+	return writeBuildMetadata(path, metadata, epoch)
+}
+
+func (systemBuildOperations) NormalizeDirectory(root string, epoch time.Time) error {
+	return normalizeDirectory(root, epoch)
+}
+
+func (systemBuildOperations) Rename(oldPath string, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}
 
 type nativeBuildArtifact struct {
 	Name    string `json:"name"`
@@ -83,7 +125,17 @@ func Build(
 	runner CommandRunner,
 	validateTrust trustValidator,
 ) error {
-	if ctx == nil || runner == nil || validateTrust == nil {
+	return buildWithOperations(ctx, options, runner, validateTrust, systemBuildOperations{})
+}
+
+func buildWithOperations(
+	ctx context.Context,
+	options BuildOptions,
+	runner CommandRunner,
+	validateTrust trustValidator,
+	operations buildOperations,
+) error {
+	if ctx == nil || runner == nil || validateTrust == nil || operations == nil {
 		return errors.New("native build capabilities are incomplete")
 	}
 	if err := ctx.Err(); err != nil {
@@ -98,6 +150,9 @@ func Build(
 		return fmt.Errorf("read release trust: %w", err)
 	}
 	encodedTrust := base64.StdEncoding.EncodeToString(trust)
+	// Clearing the transient public-authority bytes is a defense-in-depth memory-hygiene action;
+	// it has no observable functional outcome that a mutation test can assert.
+	// mutator-disable-next-line statement/remove
 	clear(trust)
 	if err := validateTrust(encodedTrust); err != nil {
 		return errors.New("release trust is not accepted by the production decoder")
@@ -110,20 +165,15 @@ func Build(
 		return err
 	}
 	parent := filepath.Dir(resolved.Output)
-	temporary, err := os.MkdirTemp(parent, ".agentmemory-native-build-")
+	temporary, err := operations.MkdirTemp(parent, ".agentmemory-native-build-")
 	if err != nil {
 		return fmt.Errorf("create private native build root: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.RemoveAll(temporary)
-		}
-	}()
+	defer func() { _ = operations.RemoveAll(temporary) }()
 	firstRoot := filepath.Join(temporary, ".first")
 	secondRoot := filepath.Join(temporary, ".second")
 	for _, path := range []string{firstRoot, secondRoot} {
-		if err := os.Mkdir(path, 0o700); err != nil {
+		if err := operations.Mkdir(path, 0o700); err != nil {
 			return fmt.Errorf("create reproducibility pass: %w", err)
 		}
 	}
@@ -146,10 +196,10 @@ func Build(
 		}
 		artifacts = append(artifacts, artifact)
 	}
-	if err := os.RemoveAll(firstRoot); err != nil {
+	if err := operations.RemoveAll(firstRoot); err != nil {
 		return fmt.Errorf("remove first comparison root: %w", err)
 	}
-	if err := os.RemoveAll(secondRoot); err != nil {
+	if err := operations.RemoveAll(secondRoot); err != nil {
 		return fmt.Errorf("remove second comparison root: %w", err)
 	}
 	metadata := nativeBuildMetadata{
@@ -157,25 +207,28 @@ func Build(
 		OperatingSystem: resolved.OperatingSystem, Architecture: resolved.Architecture,
 		SourceEpoch: resolved.SourceEpoch, Artifacts: artifacts,
 	}
-	if err := writeBuildMetadata(filepath.Join(temporary, nativeBuildMetadataName), metadata, epoch); err != nil {
+	if err := operations.WriteBuildMetadata(filepath.Join(temporary, nativeBuildMetadataName), metadata, epoch); err != nil {
 		return fmt.Errorf("write native build metadata: %w", err)
 	}
-	if err := normalizeDirectory(temporary, epoch); err != nil {
+	if err := operations.NormalizeDirectory(temporary, epoch); err != nil {
 		return fmt.Errorf("normalize native build root: %w", err)
 	}
-	if err := os.Rename(temporary, resolved.Output); err != nil {
+	if err := operations.Rename(temporary, resolved.Output); err != nil {
 		return fmt.Errorf("publish native build: %w", err)
 	}
-	committed = true
 	return nil
 }
 
 func resolveBuildOptions(options BuildOptions) (resolvedBuildOptions, error) {
-	root := options.RepositoryRoot
-	if root == "" {
-		root = "."
-	}
-	absRoot, err := filepath.Abs(root)
+	return resolveBuildOptionsForRuntime(options, runtime.GOOS, runtime.GOARCH)
+}
+
+func resolveBuildOptionsForRuntime(
+	options BuildOptions,
+	runnerOperatingSystem string,
+	runnerArchitecture string,
+) (resolvedBuildOptions, error) {
+	absRoot, err := filepath.Abs(options.RepositoryRoot)
 	if err != nil {
 		return resolvedBuildOptions{}, fmt.Errorf("resolve repository root: %w", err)
 	}
@@ -197,7 +250,7 @@ func resolveBuildOptions(options BuildOptions) (resolvedBuildOptions, error) {
 		return resolvedBuildOptions{}, errors.New("source date epoch must be positive")
 	}
 	if options.OperatingSystem == "darwin" &&
-		(runtime.GOOS != "darwin" || runtime.GOARCH != options.Architecture) {
+		(runnerOperatingSystem != "darwin" || runnerArchitecture != options.Architecture) {
 		return resolvedBuildOptions{}, errors.New("darwin CGO release builds require an exact native runner")
 	}
 	resolved := resolvedBuildOptions{BuildOptions: options, cgoEnabled: "0"}

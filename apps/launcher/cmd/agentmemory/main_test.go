@@ -29,6 +29,15 @@ func TestPF001AgentMemoryCommandDispatchesExactMCPAgentWithoutDiagnosticOutput(t
 	}
 }
 
+func TestPF001AgentMemoryExitCodesAreStable(t *testing.T) {
+	t.Parallel()
+	if exitSuccess != 0 || exitUsage != 2 || exitBootstrapNotFound != 3 || exitBootstrapIntegrity != 4 ||
+		exitBootstrapUnavailable != 5 || exitMCPUnavailable != 6 || exitResumeIntegrity != 7 ||
+		exitResumeUnavailable != 8 {
+		t.Fatal("public process exit-code contract changed")
+	}
+}
+
 func TestPF001AgentMemoryCommandAcceptsOnlyClosedHostAndArgumentGrammar(t *testing.T) {
 	t.Parallel()
 	for _, host := range []agentconfig.AgentHost{
@@ -77,11 +86,23 @@ func TestPF001AgentMemoryCommandRunsOnlyTokenizedNativeContinuation(t *testing.T
 		t.Fatalf("parseResumeCommand() = (%q, %t)", parsed, ok)
 	}
 	for _, args := range [][]string{
-		{"resume"}, {"resume", "--continuation"}, {"resume", "--continuation", strings.Repeat("A", 64)},
-		{"resume", "--continuation", strings.Repeat("g", 64)}, {"resume", "--continuation", token, "extra"},
+		{"resume"}, {"resume", "--continuation"}, {"continue", "--continuation", token},
+		{"resume", "--token", token}, {"resume", "--continuation", strings.Repeat("A", 64)},
+		{"resume", "--continuation", strings.Repeat("/", 64)}, {"resume", "--continuation", strings.Repeat(":", 64)},
+		{"resume", "--continuation", strings.Repeat("`", 64)}, {"resume", "--continuation", strings.Repeat("g", 64)},
+		{"resume", "--continuation", strings.Repeat("a", 63)},
+		{"resume", "--continuation", strings.Repeat("a", 65)},
+		{"resume", "--continuation", token, "extra"},
 	} {
 		if parsed, ok := parseResumeCommand(args); ok || parsed != "" {
 			t.Fatalf("invalid resume arguments accepted: %q", args)
+		}
+	}
+	for _, valid := range []string{
+		strings.Repeat("0", 64), strings.Repeat("9", 64), strings.Repeat("a", 64), strings.Repeat("f", 64),
+	} {
+		if parsed, ok := parseResumeCommand([]string{"resume", "--continuation", valid}); !ok || parsed != valid {
+			t.Fatalf("boundary token %q rejected", valid[:1])
 		}
 	}
 }
@@ -196,6 +217,47 @@ func TestPF001AgentMemoryCommandRequiresEveryInvocationCapability(t *testing.T) 
 	}
 }
 
+func TestPF001AgentMemoryResumeRequiresAndPropagatesTheExactCapability(t *testing.T) {
+	t.Parallel()
+	token := strings.Repeat("c", 64)
+	var stderr strings.Builder
+	if code := run(context.Background(), []string{"resume", "--continuation", token}, &stderr,
+		mcpOnlyFactory{}, nil); code != exitResumeIntegrity || stderr.String() != "AM_RESUME_INTEGRITY\n" {
+		t.Fatalf("non-resumer factory code=%d stderr=%q", code, stderr.String())
+	}
+	ctx := context.WithValue(context.Background(), contextKey{}, "exact")
+	factory := &factoryStub{}
+	stderr.Reset()
+	if code := run(ctx, []string{"resume", "--continuation", token}, &stderr, factory, nil); code != exitSuccess ||
+		factory.resumeCtx != ctx {
+		t.Fatalf("resume context code=%d observed=%v", code, factory.resumeCtx)
+	}
+}
+
+func TestPF001AgentMemoryNilCapabilityClassifiesEveryNilableKind(t *testing.T) {
+	t.Parallel()
+	var channel chan int
+	var function func()
+	var mapping map[string]string
+	var pointer *int
+	var slice []byte
+	for name, value := range map[string]any{
+		"nil": nil, "channel": channel, "function": function, "map": mapping, "pointer": pointer, "slice": slice,
+	} {
+		if !nilCapability(value) {
+			t.Fatalf("%s nil capability accepted", name)
+		}
+	}
+	for name, value := range map[string]any{
+		"channel": make(chan int), "function": func() {}, "map": map[string]string{},
+		"pointer": new(int), "slice": []byte{}, "value": 1,
+	} {
+		if nilCapability(value) {
+			t.Fatalf("%s non-nil capability rejected", name)
+		}
+	}
+}
+
 func TestPF001AgentMemoryCommandDistinguishesSignalCancellationFromRunnerFailure(t *testing.T) {
 	t.Parallel()
 	transport, _ := mcp.NewInMemoryTransports()
@@ -244,15 +306,25 @@ type factoryStub struct {
 	host        agentconfig.AgentHost
 	calls       int
 	resumeCalls int
+	resumeCtx   context.Context
 	resumeToken string
 	resumeErr   error
 }
 
-func (f *factoryStub) ResumeInstallation(_ context.Context, token string) error {
+func (f *factoryStub) ResumeInstallation(ctx context.Context, token string) error {
 	f.resumeCalls++
+	f.resumeCtx = ctx
 	f.resumeToken = token
 	return f.resumeErr
 }
+
+type mcpOnlyFactory struct{}
+
+func (mcpOnlyFactory) BuildMCP(context.Context, agentconfig.AgentHost) (launcher.MCPRunner, error) {
+	return nil, nil
+}
+
+type contextKey struct{}
 
 func (f *factoryStub) BuildMCP(ctx context.Context, host agentconfig.AgentHost) (launcher.MCPRunner, error) {
 	f.calls++

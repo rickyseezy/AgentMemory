@@ -8,6 +8,8 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/secretprojector"
 )
 
+// main is an os.Exit boundary; run is tested directly for every exit contract.
+// mutator-disable-func
 func main() {
 	os.Exit(run(os.Args, os.Stdout, os.Stderr, secretprojector.RunDefault))
 }

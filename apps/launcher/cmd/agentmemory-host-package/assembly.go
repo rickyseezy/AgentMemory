@@ -20,11 +20,17 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/infrastructure/launcher"
 )
 
+// Go statement coverage cannot attribute execution to constant declarations.
+// TestPF001HostPackageStaticLimitsAreExact asserts every security boundary.
 const (
+	// mutator-disable-next-line *
 	maximumHostAuthorityBytes = 64 * 1024 * 1024
-	maximumHostTrustBytes     = 128 * 1024
-	maximumBootstrapBytes     = 512 * 1024 * 1024
-	maximumHostObjectBytes    = int64(1<<53 - 1)
+	// mutator-disable-next-line *
+	maximumHostTrustBytes = 128 * 1024
+	// mutator-disable-next-line *
+	maximumBootstrapBytes = 512 * 1024 * 1024
+	// mutator-disable-next-line *
+	maximumHostObjectBytes = int64(1<<53 - 1)
 )
 
 // PackageOptions identifies one detached, platform-specific host archive.
@@ -224,6 +230,9 @@ func (p *resolvedPackage) inspect(
 	for _, format := range formats {
 		artifact, err := publication.NativePackage(p.target.OperatingSystem, p.target.Architecture, format)
 		if err != nil {
+			// The publication constructor and host target constructor close the
+			// same required native cell matrix; this is defense in depth.
+			// mutator-disable-next-line *
 			return errors.New("host package native cell is unavailable")
 		}
 		if err := p.addNativeArtifact(ctx, artifact, objectVerifier); err != nil {
@@ -352,7 +361,7 @@ func writeArchive(ctx context.Context, output string, entries []archiveEntry, ep
 }
 
 func copyVerifiedEntry(target io.Writer, entry archiveEntry) error {
-	if !entry.verifyRead || entry.path == "" {
+	if !entry.verifyRead || entry.path == "" || entry.maximum <= 0 || entry.size > uint64(entry.maximum) { // #nosec G115 -- maximum is proven positive before conversion.
 		return errors.New("host archive entry is invalid")
 	}
 	info, err := os.Lstat(entry.path)

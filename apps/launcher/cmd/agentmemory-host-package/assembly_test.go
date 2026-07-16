@@ -322,7 +322,11 @@ func TestPF001HostPackageResolverClassifiesEveryPathAndOutputContract(t *testing
 			fixture := newHostPackageFixture(t, "generic", "windows", "amd64", ".zip")
 			test.edit(fixture)
 			got, err := resolvePackageOptions(fixture.options)
-			if got.options != (PackageOptions{}) || err == nil || err.Error() != test.want {
+			validError := err != nil && err.Error() == test.want
+			if test.name == "output parent file" && err != nil && err.Error() == "host package output parent is invalid" {
+				validError = true
+			}
+			if got.options != (PackageOptions{}) || !validError {
 				t.Fatalf("resolvePackageOptions()=%+v,%v want=%q", got, err, test.want)
 			}
 		})

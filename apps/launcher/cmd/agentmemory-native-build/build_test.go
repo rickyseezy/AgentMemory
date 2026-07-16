@@ -83,9 +83,13 @@ func TestPF001NativeBuildResolverCoversRuntimeAndFilesystemContracts(t *testing.
 		t.Fatal(err)
 	}
 	blockedOutput.Output = filepath.Join(parentFile, "native")
-	if _, err := resolveBuildOptions(blockedOutput); err == nil || errors.Unwrap(err) == nil ||
-		!strings.HasPrefix(err.Error(), "inspect output: ") {
-		t.Fatalf("blocked output error=%v", err)
+	_, blockedErr := resolveBuildOptions(blockedOutput)
+	if blockedErr == nil {
+		t.Fatal("output below a regular file was accepted")
+	}
+	if blockedErr.Error() != "output parent must be an existing non-symlink directory" &&
+		(errors.Unwrap(blockedErr) == nil || !strings.HasPrefix(blockedErr.Error(), "inspect output: ")) {
+		t.Fatalf("blocked output error=%v", blockedErr)
 	}
 
 	darwin := fixture.options

@@ -18,12 +18,13 @@ func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
 	verified nativeVerifiedRuntimeExecution,
 ) (installphase.RuntimeEnsurer, error) {
 	if f == nil || f.composition == nil || f.release == nil || f.artifacts == nil || ctx == nil ||
+		nilAny(f.linuxBindings) || f.linuxCodec == nil ||
 		verified.runtime.Platform() != runtimeinstall.PlatformLinux ||
 		verified.authority.BindingDigest().IsZero() || !verified.signedCatalog.Valid() {
 		return nil, errNativeInstallerIntegrity
 	}
 	authorityResolver, err := runtimeprovision.NewCatalogLinuxAuthorityResolver(
-		verified.catalog, runtimeprovision.NewNativeLinuxHostBindingProvider(),
+		verified.catalog, f.linuxBindings,
 	)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
@@ -74,7 +75,7 @@ func (f *nativePlatformRuntimeFactory) buildLinuxRuntimeApplication(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	codec, helper, err := buildNativeLinuxPrivilegeCodec(ctx, f.release, verified, authority, artifactStager)
+	codec, helper, err := f.linuxCodec(ctx, f.release, verified, authority, artifactStager)
 	if err != nil || codec == nil || !helper.ValidFor(authority) {
 		return nil, errNativeInstallerIntegrity
 	}

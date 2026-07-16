@@ -77,6 +77,8 @@ import (
 
 const maximumNativeProxyRouteBytes = 2048
 
+type linuxGIOProxyRawLookup func(context.Context, string) ([]byte, error)
+
 var (
 	linuxGIOLoadOnce sync.Once
 	linuxGIOReady    bool
@@ -110,7 +112,19 @@ func nativeCredentialsForProxy(
 	target string,
 	proxy string,
 ) ([]byte, []byte, error) {
-	value, err := linuxGIOProxyRaw(ctx, target)
+	return nativeCredentialsForProxyUsing(ctx, target, proxy, linuxGIOProxyRaw)
+}
+
+func nativeCredentialsForProxyUsing(
+	ctx context.Context,
+	target string,
+	proxy string,
+	lookup linuxGIOProxyRawLookup,
+) ([]byte, []byte, error) {
+	if lookup == nil {
+		return nil, nil, ErrUnavailable
+	}
+	value, err := lookup(ctx, target)
 	if err != nil {
 		return nil, nil, err
 	}

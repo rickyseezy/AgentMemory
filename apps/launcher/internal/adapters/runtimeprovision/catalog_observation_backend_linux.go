@@ -22,6 +22,17 @@ type nativeCatalogObservationBackend struct {
 	runtime func(context.Context, CatalogObservationInput, uint32, uint32, string) (runtimeinstall.RuntimeDiscovery, bool, error)
 }
 
+type linuxCatalogHostObservations struct {
+	osRelease     func() (string, string, error)
+	kernel        func() (string, runtimeinstall.Architecture, error)
+	resources     func() (uint16, uint64, uint64, error)
+	filesystem    func(string) (uint64, bool, error)
+	namespaces    func() (bool, error)
+	selinux       func() (bool, error)
+	currentUser   func() (*user.User, error)
+	validateOwner func(string, uint32, bool) error
+}
+
 func newNativeCatalogObservationBackend() catalogObservationBackend {
 	return nativeCatalogObservationBackend{host: observeLinuxCatalogHost, runtime: observeLinuxCatalogRuntime}
 }
@@ -80,21 +91,39 @@ func observeLinuxCatalogHost(
 	input CatalogObservationInput,
 	uid uint32,
 ) (runtimeinstall.HostCapabilities, string, error) {
+	return observeLinuxCatalogHostUsing(input, uid, linuxCatalogHostObservations{
+		osRelease: linuxOSRelease, kernel: linuxKernelArchitecture, resources: linuxResources,
+		filesystem: linuxHomeFilesystem, namespaces: linuxUserNamespaces, selinux: linuxSELinuxEnforcing,
+		currentUser: user.Current, validateOwner: validateOwnerDirectory,
+	})
+}
+
+func observeLinuxCatalogHostUsing(
+	input CatalogObservationInput,
+	uid uint32,
+	observations linuxCatalogHostObservations,
+) (runtimeinstall.HostCapabilities, string, error) {
+	if observations.osRelease == nil || observations.kernel == nil || observations.resources == nil ||
+		observations.filesystem == nil || observations.namespaces == nil || observations.selinux == nil ||
+		observations.currentUser == nil || observations.validateOwner == nil {
+		return runtimeinstall.HostCapabilities{}, "", ErrProbeFailed
+	}
 	manifest := input.Catalog.Manifest()
 	execution, present := manifest.LinuxExecution()
-	distribution, version, releaseError := linuxOSRelease()
-	kernel, architecture, kernelError := linuxKernelArchitecture()
-	cpus, total, available, resourceError := linuxResources()
-	freeDisk, local, diskError := linuxHomeFilesystem(input.HostStorageTarget)
-	namespaces, namespaceError := linuxUserNamespaces()
-	selinux, selinuxError := linuxSELinuxEnforcing()
-	current, identityError := user.Current()
+	distribution, version, releaseError := observations.osRelease()
+	kernel, architecture, kernelError := observations.kernel()
+	cpus, total, available, resourceError := observations.resources()
+	freeDisk, local, diskError := observations.filesystem(input.HostStorageTarget)
+	namespaces, namespaceError := observations.namespaces()
+	selinux, selinuxError := observations.selinux()
+	current, identityError := observations.currentUser()
 	if !present || releaseError != nil || kernelError != nil || resourceError != nil || diskError != nil ||
-		namespaceError != nil || selinuxError != nil || identityError != nil || distribution != manifest.Platform().Distribution() ||
+		namespaceError != nil || selinuxError != nil || identityError != nil || current == nil ||
+		distribution != manifest.Platform().Distribution() ||
 		compareKernel(kernel, execution.MinimumKernel()) < 0 || !local || !namespaces ||
 		available < execution.MinimumAvailableMemory() || selinux && !execution.SELinuxEnforcingSupported() ||
 		current.Uid != strconv.FormatUint(uint64(uid), 10) || current.Gid != strconv.Itoa(os.Getegid()) ||
-		validateOwnerDirectory(input.HostStorageTarget, uid, false) != nil {
+		observations.validateOwner(input.HostStorageTarget, uid, false) != nil {
 		return runtimeinstall.HostCapabilities{}, "", ErrUnsupportedHost
 	}
 	expectedArchitecture, err := linuxCatalogArchitecture(manifest.Platform().Architecture())

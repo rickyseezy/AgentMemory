@@ -16,6 +16,7 @@ import (
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimecataloganchor"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/setuphost"
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/installapp"
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/runtimecatalogapp"
 )
@@ -24,6 +25,20 @@ const (
 	nativePrivilegeHelperStateRoot   = "/var/lib/agentmemory/runtime-helper"
 	nativePrivilegeRequestInputLimit = 64 * 1024 * 1024
 )
+
+type nativePrivilegeHelperLockFactory func(string) (installapp.InstallationLockPort, error)
+
+type nativePrivilegeHelperRequestExecutor interface {
+	ExecutePrivilegeRequest(context.Context, []byte) ([]byte, error)
+}
+
+type nativePrivilegeHelperRelease interface {
+	Close(context.Context) error
+}
+
+type nativePrivilegeHelperApplicationFactory func(
+	context.Context,
+) (nativePrivilegeHelperRequestExecutor, nativePrivilegeHelperRelease, error)
 
 // RunNativeLinuxPrivilegeHelper is the installed helper's complete command
 // boundary. It accepts no paths, commands, identities, or configuration from
@@ -34,8 +49,31 @@ func RunNativeLinuxPrivilegeHelper(
 	input io.Reader,
 	output io.Writer,
 ) error {
+	return runNativeLinuxPrivilegeHelperUsing(
+		ctx, arguments, input, output, os.Geteuid,
+		func(path string) (installapp.InstallationLockPort, error) { return hostlock.New(path) },
+		func(ctx context.Context) (
+			nativePrivilegeHelperRequestExecutor,
+			nativePrivilegeHelperRelease,
+			error,
+		) {
+			return newNativeLinuxPrivilegeHelperApplication(ctx)
+		},
+	)
+}
+
+func runNativeLinuxPrivilegeHelperUsing(
+	ctx context.Context,
+	arguments []string,
+	input io.Reader,
+	output io.Writer,
+	effectiveUserID func() int,
+	lockFactory nativePrivilegeHelperLockFactory,
+	applicationFactory nativePrivilegeHelperApplicationFactory,
+) error {
 	if ctx == nil || !slices.Equal(arguments, []string{"--request-stdin"}) ||
-		nilAny(input) || nilAny(output) || os.Geteuid() != 0 {
+		nilAny(input) || nilAny(output) || effectiveUserID == nil || effectiveUserID() != 0 ||
+		lockFactory == nil || applicationFactory == nil {
 		return runtimeport.ErrPrivilegeIntegrity
 	}
 	if err := ctx.Err(); err != nil {
@@ -45,18 +83,18 @@ func RunNativeLinuxPrivilegeHelper(
 	if err != nil || len(raw) == 0 || len(raw) > nativePrivilegeRequestInputLimit {
 		return runtimeport.ErrPrivilegeIntegrity
 	}
-	lockPort, err := hostlock.New(nativePrivilegeHelperStateRoot + "/execution.lock")
-	if err != nil {
+	lockPort, err := lockFactory(nativePrivilegeHelperStateRoot + "/execution.lock")
+	if err != nil || nilAny(lockPort) {
 		clear(raw)
 		return runtimeport.ErrPrivilegeIntegrity
 	}
 	lock, err := lockPort.Acquire(ctx)
-	if err != nil {
+	if err != nil || nilAny(lock) {
 		clear(raw)
 		return privilegeHelperCommandContextOrIntegrity(ctx)
 	}
-	application, release, err := newNativeLinuxPrivilegeHelperApplication(ctx)
-	if err != nil {
+	application, release, err := applicationFactory(ctx)
+	if err != nil || nilAny(application) || nilAny(release) {
 		_ = lock.Release(context.WithoutCancel(ctx))
 		clear(raw)
 		return runtimeport.ErrPrivilegeIntegrity

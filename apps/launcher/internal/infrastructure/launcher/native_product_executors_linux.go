@@ -24,9 +24,12 @@ func (f *nativePlatformRuntimeFactory) buildLinuxProductExecutors(
 	ctx context.Context,
 	verified nativeVerifiedRuntimeExecution,
 ) (dockercli.Executors, error) {
+	if f == nil || nilAny(f.linuxBindings) {
+		return dockercli.Executors{}, errNativeInstallerIntegrity
+	}
 	authorityResolver, err := runtimeprovision.NewCatalogLinuxAuthorityResolver(
 		verified.catalog,
-		runtimeprovision.NewNativeLinuxHostBindingProvider(),
+		f.linuxBindings,
 	)
 	if err != nil {
 		return dockercli.Executors{}, errNativeInstallerIntegrity

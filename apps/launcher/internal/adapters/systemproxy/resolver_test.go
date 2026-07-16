@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/artifacthttp"
 )
 
 func TestPF001SystemProxyResolverDelegatesOnlyExactHTTPSDestinations(t *testing.T) {
@@ -103,6 +105,120 @@ func TestPF001SystemProxyStripsNativeCredentialsUntilExactChallenge(t *testing.T
 		if route, username, password, err := splitNativeProxyRoute(value); err == nil || route != "" ||
 			username != nil || password != nil {
 			t.Fatalf("unsafe native route %q accepted as %q/%q/%q", value, route, username, password)
+		}
+	}
+}
+
+func TestPF001SystemProxyCredentialsFailClosedAtEveryChallengeBoundary(t *testing.T) {
+	t.Parallel()
+	target := "https://downloads.example/artifact.bin"
+	proxy := "http://proxy.example:8080"
+
+	resolver, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return proxy, nil },
+		func(context.Context, string, string) ([]byte, []byte, error) {
+			return []byte("owner"), []byte("secret"), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential, err := resolver.CredentialsForProxy(
+		t.Context(), artifacthttp.ProxyCredentialChallenge{},
+	); credential != nil || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("zero challenge credential=%T error=%v", credential, err)
+	}
+	if candidate, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return proxy, nil }, nil,
+	); candidate != nil || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("nil credential authority resolver=%T error=%v", candidate, err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if credential, err := resolver.credentialsForProxy(cancelled, target, proxy, true); credential != nil ||
+		!errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-cancelled credential=%T error=%v", credential, err)
+	}
+
+	nativeFailure, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return proxy, nil },
+		func(context.Context, string, string) ([]byte, []byte, error) {
+			return []byte("private-owner"), []byte("private-secret"), errors.New("private native diagnostic")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential, err := nativeFailure.credentialsForProxy(t.Context(), target, proxy, true); credential != nil ||
+		!errors.Is(err, ErrUnavailable) || strings.Contains(err.Error(), "private") {
+		t.Fatalf("native failure credential=%T error=%v", credential, err)
+	}
+
+	cancelDuring, cancelDuringLookup := context.WithCancel(context.Background())
+	cancelling, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return proxy, nil },
+		func(context.Context, string, string) ([]byte, []byte, error) {
+			cancelDuringLookup()
+			return []byte("owner"), []byte("secret"), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential, err := cancelling.credentialsForProxy(cancelDuring, target, proxy, true); credential != nil ||
+		!errors.Is(err, context.Canceled) {
+		t.Fatalf("mid-lookup cancellation credential=%T error=%v", credential, err)
+	}
+
+	invalidNativeCredential, err := newResolverWithCredentials(
+		func(context.Context, string) (string, error) { return proxy, nil },
+		func(context.Context, string, string) ([]byte, []byte, error) {
+			return nil, []byte("secret"), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential, err := invalidNativeCredential.credentialsForProxy(t.Context(), target, proxy, true); credential != nil ||
+		!errors.Is(err, ErrUnavailable) {
+		t.Fatalf("invalid native credential=%T error=%v", credential, err)
+	}
+}
+
+func TestPF001SystemProxyRouteParserRejectsAmbiguousNativeAuthorityForms(t *testing.T) {
+	t.Parallel()
+	tooLong := "http://" + strings.Repeat("a", 2048)
+	tooLongUsername := "http://" + strings.Repeat("a", 1025) + "@proxy.example"
+	tooLongPassword := "http://owner:" + strings.Repeat("a", 1025) + "@proxy.example"
+	for _, value := range []string{
+		"", tooLong, "http://proxy.example\t", "proxy.example:8080", "ftp://proxy.example",
+		"http://", "http://@proxy.example", "http://owner@@proxy.example", "http://owner%@proxy.example",
+		tooLongUsername, tooLongPassword, "http://owner%ff@proxy.example", "http://owner%3a@proxy.example",
+		"http://owner:secret%0d@proxy.example", "http://?query", "http://proxy.example/path",
+		"http://proxy.example?query", "http://proxy.example#fragment", "http://proxy.example:0",
+		"http://proxy.example:65536",
+	} {
+		route, username, password, err := splitNativeProxyRoute(value)
+		clear(username)
+		clear(password)
+		if err == nil || route != "" {
+			t.Fatalf("ambiguous native route %q accepted as %q", value, route)
+		}
+	}
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "direct://", want: "direct://"},
+		{value: "https://Proxy.Example:8443", want: "https://proxy.example:8443"},
+		{value: "socks5://[2001:db8::1]", want: "socks5://[2001:db8::1]"},
+	} {
+		route, username, password, err := splitNativeProxyRoute(test.value)
+		clear(username)
+		clear(password)
+		if err != nil || route != test.want {
+			t.Fatalf("native route %q=(%q,%v), want %q", test.value, route, err, test.want)
 		}
 	}
 }

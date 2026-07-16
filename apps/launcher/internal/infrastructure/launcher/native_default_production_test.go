@@ -11,6 +11,11 @@ import (
 
 func TestPF001DefaultNativeProductionRequiresCompleteLocalComposition(t *testing.T) {
 	t.Parallel()
+	installed := newInstalledNativeFactory()
+	if installed == nil || installed.roots == nil || installed.journals == nil ||
+		nilCapability(installed.ready) || installed.production == nil {
+		t.Fatalf("installed native factory=%+v", installed)
+	}
 	if production, err := composeDefaultNativeProduction(t.Context(), nil); !errors.Is(err, errNativeInstallerIntegrity) ||
 		production.Factory != nil || production.Supervisor != nil || production.Release != nil {
 		t.Fatalf("nil composition=%+v error=%v", production, err)
@@ -23,6 +28,10 @@ func TestPF001DefaultNativeProductionRequiresCompleteLocalComposition(t *testing
 	if production, err := composeDefaultNativeProduction(nil, &nativeComposition{}); !errors.Is(err, errNativeInstallerIntegrity) || //nolint:staticcheck // Security regression fixture; owner=security expiry=2027-07-14.
 		production.Factory != nil || production.Supervisor != nil || production.Release != nil {
 		t.Fatalf("nil context production=%+v error=%v", production, err)
+	}
+	if production, err := composeInstalledNativeProduction(t.Context(), nil); !errors.Is(err, errNativeInstallerIntegrity) ||
+		production.Factory != nil || production.Supervisor != nil || production.Release != nil {
+		t.Fatalf("nil installed composition=%+v error=%v", production, err)
 	}
 }
 

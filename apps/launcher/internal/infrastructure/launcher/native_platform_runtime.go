@@ -45,10 +45,20 @@ type nativeDesktopHelperBuilder func(
 	nativeVerifiedRuntimeExecution,
 ) (nativeDesktopHelperSet, error)
 
+type nativeLinuxPrivilegeCodecBuilder func(
+	context.Context,
+	*nativeReleaseAuthority,
+	nativeVerifiedRuntimeExecution,
+	runtimeport.LinuxAuthority,
+	runtimeprovisionadapter.PrivilegeArtifactStager,
+) (*runtimeprovisionadapter.CanonicalPrivilegeTransportCodec, nativeLinuxHelperAuthority, error)
+
 type nativePlatformRuntimeFactory struct {
 	composition      *nativeComposition
 	release          *nativeReleaseAuthority
 	artifacts        *artifactapp.Application
+	linuxBindings    runtimeprovisionadapter.LinuxHostBindingProvider
+	linuxCodec       nativeLinuxPrivilegeCodecBuilder
 	desktopAuthority nativeDesktopAuthorityBuilder
 	desktopArtifacts nativeDesktopArtifactBuilder
 	desktopHelpers   nativeDesktopHelperBuilder
@@ -67,6 +77,8 @@ func newNativePlatformRuntimeFactory(
 	}
 	return &nativePlatformRuntimeFactory{
 		composition: composition, release: release, artifacts: artifacts,
+		linuxBindings:    runtimeprovisionadapter.NewNativeLinuxHostBindingProvider(),
+		linuxCodec:       buildNativeLinuxPrivilegeCodec,
 		desktopAuthority: buildNativeDesktopAuthority,
 		desktopArtifacts: buildNativeDesktopArtifacts,
 		desktopHelpers:   buildNativeDesktopHelpers,

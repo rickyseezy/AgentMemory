@@ -19,12 +19,27 @@ func newNativePlatformManagedRuntimeRemoval(
 	release *nativeReleaseAuthority,
 	verified nativeVerifiedRuntimeExecution,
 ) (managedRuntimeRemovalController, error) {
+	return newNativePlatformManagedRuntimeRemovalWithBindings(
+		ctx, composition, release, verified, runtimeprovision.NewNativeLinuxHostBindingProvider(),
+		buildNativeLinuxPrivilegeCodec,
+	)
+}
+
+func newNativePlatformManagedRuntimeRemovalWithBindings(
+	ctx context.Context,
+	composition *nativeComposition,
+	release *nativeReleaseAuthority,
+	verified nativeVerifiedRuntimeExecution,
+	bindings runtimeprovision.LinuxHostBindingProvider,
+	codecBuilder nativeLinuxPrivilegeCodecBuilder,
+) (managedRuntimeRemovalController, error) {
 	if ctx == nil || composition == nil || release == nil ||
-		verified.runtime.Platform() != runtimeinstall.PlatformLinux || !verified.signedCatalog.Valid() {
+		nilAny(bindings) || codecBuilder == nil || verified.runtime.Platform() != runtimeinstall.PlatformLinux ||
+		!verified.signedCatalog.Valid() {
 		return nil, errNativeInstallerIntegrity
 	}
 	authorityResolver, err := runtimeprovision.NewCatalogLinuxAuthorityResolver(
-		verified.catalog, runtimeprovision.NewNativeLinuxHostBindingProvider(),
+		verified.catalog, bindings,
 	)
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
@@ -67,7 +82,7 @@ func newNativePlatformManagedRuntimeRemoval(
 	if err != nil {
 		return nil, errNativeInstallerIntegrity
 	}
-	codec, helper, err := buildNativeLinuxPrivilegeCodec(
+	codec, helper, err := codecBuilder(
 		ctx, release, verified, authority, artifactStager,
 	)
 	if err != nil || codec == nil || !helper.ValidFor(authority) {

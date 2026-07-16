@@ -309,12 +309,13 @@ func TestPF001NativeStageResolverRevisionAndLayoutPoliciesAreExact(t *testing.T)
 	}
 	symlinkedParent := newPackageStageFixture(t, "darwin", "arm64")
 	link := filepath.Join(filepath.Dir(symlinkedParent.output), "output-link")
-	if err := os.Symlink(t.TempDir(), link); err != nil {
+	if err := os.Symlink(t.TempDir(), link); err == nil {
+		symlinkedParent.options.Output = filepath.Join(link, "stage")
+		if _, err := resolveStageOptions(symlinkedParent.options); err == nil || err.Error() != "output parent must be an existing non-symlink directory" {
+			t.Fatalf("symlink output parent error=%v", err)
+		}
+	} else if runtime.GOOS != "windows" {
 		t.Fatal(err)
-	}
-	symlinkedParent.options.Output = filepath.Join(link, "stage")
-	if _, err := resolveStageOptions(symlinkedParent.options); err == nil || err.Error() != "output parent must be an existing non-symlink directory" {
-		t.Fatalf("symlink output parent error=%v", err)
 	}
 
 	for _, test := range []struct {

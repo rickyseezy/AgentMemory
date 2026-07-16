@@ -15,6 +15,8 @@ type nativeDesktopHelperExchange interface {
 	PrincipalID() string
 }
 
+// RunNativeDesktopMutationHelper fails closed on platforms that do not install
+// the signed macOS/Windows privileged helper.
 func RunNativeDesktopMutationHelper(context.Context, []string) error {
 	return runtimeport.ErrDesktopMutationIntegrity
 }

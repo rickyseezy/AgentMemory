@@ -226,7 +226,7 @@ func TestPF006LinuxPrivilegeArtifactTransactionCopiesOnlyExactOwnedBytes(t *test
 	if err := copyPrivilegeArtifact(t.Context(), root, uid, gid, artifact); err != nil {
 		t.Fatal(err)
 	}
-	published, err := os.ReadFile(target)
+	published, err := os.ReadFile(target) // #nosec G304 -- target is constructed beneath the test-owned temporary root.
 	if err != nil || string(published) != string(contents) {
 		t.Fatalf("published bytes=%q error=%v", published, err)
 	}

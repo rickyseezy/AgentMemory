@@ -118,12 +118,14 @@ func TestPF001NativeDesktopHelperTrustFailsClosedAtEveryBoundary(t *testing.T) {
 	if _, err := resolver.ResolveDesktopHelperAuthority(cancelled, launcherDesktopAuthority(t, runtimeinstall.PlatformDarwin)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled resolver error=%v", err)
 	}
-	if _, _, err := newNativeDesktopHelperTrust(nil, releaseinventory.SignedManifest{}); err == nil {
-		t.Fatal("nil release trust accepted")
+	authority, publisher, err := newNativeDesktopHelperTrust(nil, releaseinventory.SignedManifest{})
+	if authority != nil || publisher != nil || err == nil {
+		t.Fatalf("nil release trust authority=%v publisher=%v error=%v", authority, publisher, err)
 	}
 	incompleteRelease := &nativeReleaseAuthority{stack: nativeReleaseStack{application: &appreleaseverify.Application{}}}
-	if _, _, err := newNativeDesktopHelperTrust(incompleteRelease, releaseinventory.SignedManifest{}); err == nil {
-		t.Fatal("incomplete signed helper inventory accepted")
+	authority, publisher, err = newNativeDesktopHelperTrust(incompleteRelease, releaseinventory.SignedManifest{})
+	if authority != nil || publisher != nil || err == nil {
+		t.Fatalf("incomplete signed helper inventory authority=%v publisher=%v error=%v", authority, publisher, err)
 	}
 	if canonical, exchange, err := nativeDesktopHelperPaths(runtimeport.DesktopAuthority{}); err == nil ||
 		canonical != "" || exchange != "" {

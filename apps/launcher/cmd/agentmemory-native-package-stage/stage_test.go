@@ -201,9 +201,13 @@ func TestPF001NativeStageResolverCoversFilesystemContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	blockedOutput.Output = filepath.Join(parentFile, "stage")
-	if _, err := resolveStageOptions(blockedOutput); err == nil || errors.Unwrap(err) == nil ||
-		!strings.HasPrefix(err.Error(), "inspect output: ") {
-		t.Fatalf("blocked output error=%v", err)
+	_, blockedErr := resolveStageOptions(blockedOutput)
+	if blockedErr == nil {
+		t.Fatal("output below a regular file was accepted")
+	}
+	if blockedErr.Error() != "output parent must be an existing non-symlink directory" &&
+		(errors.Unwrap(blockedErr) == nil || !strings.HasPrefix(blockedErr.Error(), "inspect output: ")) {
+		t.Fatalf("blocked output error=%v", blockedErr)
 	}
 
 	relative := fixture.options

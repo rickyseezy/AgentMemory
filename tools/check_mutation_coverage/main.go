@@ -123,6 +123,9 @@ func evaluate(
 	if err := validateMatrix(matrix); err != nil {
 		return aggregateEvidence{}, err
 	}
+	if err := validateEvidenceSet(directory, matrix, prefix); err != nil {
+		return aggregateEvidence{}, err
+	}
 	byOwner := make(map[string]*ownerEvidence)
 	for _, cell := range matrix.Include {
 		path := filepath.Join(directory, "mutago-summary-"+prefix+cell.Name+".json")
@@ -182,6 +185,37 @@ func evaluate(
 		SchemaVersion: 1, Passed: len(gateFailures) == 0, Failures: failureMessages, Owners: owners,
 	}
 	return evidence, errors.Join(gateFailures...)
+}
+
+func validateEvidenceSet(directory string, matrix githubMatrix, prefix string) error {
+	expected := make(map[string]struct{}, len(matrix.Include))
+	for _, cell := range matrix.Include {
+		expected["mutago-summary-"+prefix+cell.Name+".json"] = struct{}{}
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("read mutation evidence directory: %w", err)
+	}
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if _, present := expected[entry.Name()]; !present {
+			return fmt.Errorf("unexpected mutation evidence %q", entry.Name())
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect mutation evidence %q: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("mutation evidence %q is not a regular file", entry.Name())
+		}
+		seen[entry.Name()] = struct{}{}
+	}
+	for name := range expected {
+		if _, present := seen[name]; !present {
+			return fmt.Errorf("required mutation evidence %q is missing", name)
+		}
+	}
+	return nil
 }
 
 func validateMatrix(matrix githubMatrix) error {

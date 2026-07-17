@@ -99,6 +99,13 @@ func TestPF001MutationCoverageRejectsIncompleteOrInvalidEvidence(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*testing.T, string){
 		"missing": func(*testing.T, string) {},
+		"unexpected": func(t *testing.T, directory string) {
+			t.Helper()
+			writeMutationSummary(t, directory, "linux-amd64-cgo-00", mutationSummary{})
+			if err := os.WriteFile(filepath.Join(directory, "foreign.json"), []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"malformed": func(t *testing.T, directory string) {
 			t.Helper()
 			if err := os.WriteFile(filepath.Join(directory, "mutago-summary-adapter-linux-amd64-cgo-00.json"), []byte("{"), 0o600); err != nil {
@@ -163,7 +170,7 @@ func TestPF001MutationCoverageRejectsInvalidArgumentsAndMatrix(t *testing.T) {
 func mutationCoverageFixture(t *testing.T, matrix githubMatrix) (string, string) {
 	t.Helper()
 	directory := t.TempDir()
-	path := filepath.Join(directory, "matrix.json")
+	path := filepath.Join(t.TempDir(), "matrix.json")
 	encoded, err := json.Marshal(matrix)
 	if err != nil {
 		t.Fatal(err)

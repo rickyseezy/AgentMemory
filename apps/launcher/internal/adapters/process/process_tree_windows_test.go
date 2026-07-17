@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -207,6 +208,162 @@ func TestPF001WindowsJobBrokerClosesNativeHandlesAcrossRepeatedRuns(t *testing.T
 	}
 	if afterGoroutines := runtime.NumGoroutine(); afterGoroutines > goroutinesBefore+2 {
 		t.Fatalf("goroutines grew from %d to %d across repeated runs", goroutinesBefore, afterGoroutines)
+	}
+}
+
+func TestPF001WindowsBrokerPipeCloseReleasesEveryOwnedResource(t *testing.T) {
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdinReader.Close()
+		_ = stdinWriter.Close()
+		t.Fatal(err)
+	}
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdinReader.Close()
+		_ = stdinWriter.Close()
+		_ = stdoutReader.Close()
+		_ = stdoutWriter.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdinReader.Close()
+		_ = stdoutWriter.Close()
+		_ = stderrWriter.Close()
+	})
+
+	pipes := &windowsBrokerPipes{
+		stdinWriter: stdinWriter, stdoutReader: stdoutReader, stderrReader: stderrReader,
+	}
+	if err := pipes.close(); err != nil {
+		t.Fatal(err)
+	}
+	if pipes.stdinWriter != nil || pipes.stdoutReader != nil || pipes.stderrReader != nil {
+		t.Fatalf("closed pipe ownership = %#v", pipes)
+	}
+	for _, file := range []*os.File{stdinWriter, stdoutReader, stderrReader} {
+		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("owned pipe %q remains open: %v", file.Name(), err)
+		}
+	}
+	if err := pipes.close(); err != nil {
+		t.Fatalf("idempotent close: %v", err)
+	}
+	if err := (*windowsBrokerPipes)(nil).close(); err != nil {
+		t.Fatalf("nil close: %v", err)
+	}
+}
+
+func TestPF001WindowsBrokerChildHandleCloseZerosOnlyReleasedHandles(t *testing.T) {
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipes := &windowsBrokerPipes{childHandles: []windows.Handle{0, windows.InvalidHandle, event}}
+	if err := pipes.closeChildHandles(); err != nil {
+		t.Fatal(err)
+	}
+	if pipes.childHandles[0] != 0 || pipes.childHandles[1] != windows.InvalidHandle || pipes.childHandles[2] != 0 {
+		t.Fatalf("closed child handles = %#v", pipes.childHandles)
+	}
+	if _, err := windows.WaitForSingleObject(event, 0); !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+		t.Fatalf("released event wait error = %v, want ERROR_INVALID_HANDLE", err)
+	}
+	if err := pipes.closeChildHandles(); err != nil {
+		t.Fatalf("idempotent child handle close: %v", err)
+	}
+	if err := (*windowsBrokerPipes)(nil).closeChildHandles(); err != nil {
+		t.Fatalf("nil child handle close: %v", err)
+	}
+}
+
+func TestPF001WindowsBrokerCopyCollectionPreservesEveryFailure(t *testing.T) {
+	first := errors.New("first copy")
+	third := errors.New("third copy")
+	results := make(chan error, 3)
+	results <- first
+	results <- nil
+	results <- third
+	result := collectWindowsBrokerCopies(results)
+	if !errors.Is(result, first) || !errors.Is(result, third) {
+		t.Fatalf("copy collection error = %v", result)
+	}
+}
+
+func TestPF001WindowsBrokerRecognizesOnlyBenignPipeClosures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", want: true},
+		{name: "broken pipe", err: windows.ERROR_BROKEN_PIPE, want: true},
+		{name: "no data", err: windows.ERROR_NO_DATA, want: true},
+		{name: "operation aborted", err: windows.ERROR_OPERATION_ABORTED, want: true},
+		{name: "closed file", err: os.ErrClosed, want: true},
+		{name: "wrapped closure", err: fmt.Errorf("copy: %w", windows.ERROR_BROKEN_PIPE), want: true},
+		{name: "unrelated failure", err: errors.New("disk failure")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := benignWindowsPipeClosure(test.err); got != test.want {
+				t.Fatalf("benignWindowsPipeClosure(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPF001WindowsEnvironmentIsCanonicalBoundedAndNonMutating(t *testing.T) {
+	values := []string{"z=last", "A=first", "m=middle"}
+	original := append([]string(nil), values...)
+	got, err := prepareWindowsEnvironment(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []uint16
+	for _, entry := range []string{"A=first", "m=middle", "z=last"} {
+		encoded, encodeErr := windows.UTF16FromString(entry)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		want = append(want, encoded...)
+	}
+	want = append(want, 0)
+	if !slices.Equal(got, want) {
+		t.Fatalf("environment block = %#v, want %#v", got, want)
+	}
+	if !slices.Equal(values, original) {
+		t.Fatalf("caller environment mutated from %#v to %#v", original, values)
+	}
+
+	empty, err := prepareWindowsEnvironment(nil)
+	if err != nil || !slices.Equal(empty, []uint16{0, 0}) {
+		t.Fatalf("empty environment = %#v, %v", empty, err)
+	}
+	for _, invalid := range [][]string{
+		{"missing-separator"},
+		{"=missing-key"},
+		{"A=first", "a=duplicate"},
+		{"A=value\x00suffix"},
+	} {
+		if value, err := prepareWindowsEnvironment(invalid); !errors.Is(err, os.ErrInvalid) || value != nil {
+			t.Fatalf("prepareWindowsEnvironment(%q) = %#v, %v", invalid, value, err)
+		}
+	}
+}
+
+func TestPF001WindowsNilInterfaceDetectionRejectsTypedNilValues(t *testing.T) {
+	var nilBuffer *bytes.Buffer
+	if !nilInterfaceValue(nil) || !nilInterfaceValue(nilBuffer) {
+		t.Fatal("nil interface values were accepted")
+	}
+	if nilInterfaceValue(&bytes.Buffer{}) || nilInterfaceValue(1) {
+		t.Fatal("non-nil interface values were rejected")
 	}
 }
 

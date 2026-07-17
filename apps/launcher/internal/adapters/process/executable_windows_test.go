@@ -4,6 +4,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,4 +52,40 @@ func TestPF001WindowsExecutableDACLRejectsObjectAndCallbackAllowACEForms(t *test
 			t.Fatalf("unparsed ACE type %#x was accepted", aceType)
 		}
 	}
+}
+
+func TestPF001WindowsExecutableLeaseCloseReleasesEveryRetainedHandle(t *testing.T) {
+	primary, err := os.CreateTemp(t.TempDir(), "primary-*.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAncestor, err := os.CreateTemp(t.TempDir(), "ancestor-one-*")
+	if err != nil {
+		_ = primary.Close()
+		t.Fatal(err)
+	}
+	secondAncestor, err := os.CreateTemp(t.TempDir(), "ancestor-two-*")
+	if err != nil {
+		_ = primary.Close()
+		_ = firstAncestor.Close()
+		t.Fatal(err)
+	}
+	lease := &executableLease{
+		file: primary,
+		ancestors: []windowsExecutableAncestor{
+			{file: firstAncestor},
+			{file: secondAncestor},
+		},
+	}
+	lease.close()
+	if lease.file != nil || lease.ancestors[0].file != nil || lease.ancestors[1].file != nil {
+		t.Fatalf("closed lease retains handles: %#v", lease)
+	}
+	for _, file := range []*os.File{primary, firstAncestor, secondAncestor} {
+		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("retained file %q remains open: %v", file.Name(), err)
+		}
+	}
+	lease.close()
+	(*executableLease)(nil).close()
 }

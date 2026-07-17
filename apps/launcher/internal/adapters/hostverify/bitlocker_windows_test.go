@@ -60,6 +60,89 @@ func TestPF001OLEBitLockerValuesRejectAutomationTypeDrift(t *testing.T) {
 	}
 }
 
+func TestPF001WindowsBitLockerBackendWiresNativeEvidenceProviders(t *testing.T) {
+	t.Parallel()
+	backend := newWindowsBitLockerBackend()
+	if backend == nil {
+		t.Fatal("native Windows BitLocker backend is nil")
+	}
+	resolver, resolverOK := backend.resolver.(windowsVolumeResolver)
+	if !resolverOK || resolver.api == nil {
+		t.Fatalf("resolver = %#v, want native Windows volume resolver", backend.resolver)
+	}
+	if _, factoryOK := backend.factory.(oleBitLockerSessionFactory); !factoryOK {
+		t.Fatalf("factory = %#v, want OLE BitLocker session factory", backend.factory)
+	}
+	if backend.session != nil {
+		t.Fatalf("new backend unexpectedly owns session %#v", backend.session)
+	}
+}
+
+func TestPF001OLEOwnedDispatchRejectsInvalidVariantsAndClearsOwnership(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		variant func() *ole.VARIANT
+		err     error
+	}{
+		{name: "reported automation error", variant: func() *ole.VARIANT {
+			value := ole.NewVariant(ole.VT_I4, 7)
+			return &value
+		}, err: errors.New("automation")},
+		{name: "nil variant", variant: func() *ole.VARIANT { return nil }},
+		{name: "wrong variant type", variant: func() *ole.VARIANT {
+			value := ole.NewVariant(ole.VT_I4, 7)
+			return &value
+		}},
+		{name: "nil dispatch", variant: func() *ole.VARIANT {
+			value := ole.NewVariant(ole.VT_DISPATCH, 0)
+			return &value
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if owned, err := newOLEOwnedDispatch(test.variant(), test.err); owned != nil ||
+				!errors.Is(err, errBitLockerEvidence) {
+				t.Fatalf("newOLEOwnedDispatch() = %#v, %v", owned, err)
+			}
+		})
+	}
+
+	value := ole.NewVariant(ole.VT_I4, 11)
+	owned := &oleOwnedDispatch{variant: &value, dispatch: new(ole.IDispatch)}
+	owned.close()
+	if owned.variant != nil || owned.dispatch != nil || value.VT != ole.VT_EMPTY {
+		t.Fatalf("closed ownership = %#v, variant type=%d", owned, value.VT)
+	}
+	owned.close()
+	(*oleOwnedDispatch)(nil).close()
+}
+
+func TestPF001OLEBitLockerQueryServiceCloseClearsNestedOwnership(t *testing.T) {
+	t.Parallel()
+	value := ole.NewVariant(ole.VT_I4, 19)
+	service := &oleBitLockerQueryService{
+		service: &oleOwnedDispatch{variant: &value, dispatch: new(ole.IDispatch)},
+	}
+	service.close()
+	if service.service != nil || value.VT != ole.VT_EMPTY {
+		t.Fatalf("closed service = %#v, variant type=%d", service.service, value.VT)
+	}
+	service.close()
+	(*oleBitLockerQueryService)(nil).close()
+}
+
+func TestPF001ClearOLEVariantIsNilSafeAndReleasesTheVariant(t *testing.T) {
+	t.Parallel()
+	clearOLEVariant(nil)
+	value := ole.NewVariant(ole.VT_I4, 23)
+	clearOLEVariant(&value)
+	if value.VT != ole.VT_EMPTY {
+		t.Fatalf("cleared variant type = %d, want VT_EMPTY", value.VT)
+	}
+}
+
 type fakeWindowsVolumeAPI struct {
 	path         string
 	mountRequest string

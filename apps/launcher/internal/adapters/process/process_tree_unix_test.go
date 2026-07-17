@@ -32,7 +32,7 @@ func TestPF001UnixProcessTreeRejectsInvalidCommand(t *testing.T) {
 	unusedCommand := exec.CommandContext(context.Background(), "/not-used")
 	//lint:ignore SA1012 Deliberate nil-context attack proves process supervision fails closed.
 	//nolint:staticcheck // SA1012: deliberate nil-context attack; owner=security expiry=2027-07-14.
-	nilContextError := runCommandInProcessTree(nil, unusedCommand)
+	nilContextError := RunCommandInProcessTree(nil, unusedCommand)
 	if !errors.Is(nilContextError, os.ErrInvalid) {
 		t.Fatalf("nil context error = %v", nilContextError)
 	}

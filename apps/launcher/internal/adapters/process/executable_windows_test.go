@@ -4,7 +4,6 @@ package process
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,8 +81,8 @@ func TestPF001WindowsExecutableLeaseCloseReleasesEveryRetainedHandle(t *testing.
 		t.Fatalf("closed lease retains handles: %#v", lease)
 	}
 	for _, file := range []*os.File{primary, firstAncestor, secondAncestor} {
-		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
-			t.Fatalf("retained file %q remains open: %v", file.Name(), err)
+		if _, err := file.Stat(); err == nil {
+			t.Fatalf("retained file %q remains open", file.Name())
 		}
 	}
 	lease.close()

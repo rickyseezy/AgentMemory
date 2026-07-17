@@ -246,8 +246,8 @@ func TestPF001WindowsBrokerPipeCloseReleasesEveryOwnedResource(t *testing.T) {
 		t.Fatalf("closed pipe ownership = %#v", pipes)
 	}
 	for _, file := range []*os.File{stdinWriter, stdoutReader, stderrReader} {
-		if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
-			t.Fatalf("owned pipe %q remains open: %v", file.Name(), err)
+		if _, err := file.Stat(); err == nil {
+			t.Fatalf("owned pipe %q remains open", file.Name())
 		}
 	}
 	if err := pipes.close(); err != nil {

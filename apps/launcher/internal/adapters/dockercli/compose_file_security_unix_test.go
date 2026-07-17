@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build linux || (darwin && cgo)
 
 package dockercli
 

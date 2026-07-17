@@ -379,7 +379,7 @@ jobs:
           cache: true
           cache-dependency-path: go.mod
 
-      - name: Enforce changed native adapter mutation score
+      - name: Execute changed native adapter mutation shard
         shell: bash
         run: |
           base="origin/main"
@@ -411,8 +411,8 @@ jobs:
             --git-diff-lines \
             --git-diff-base "$base" \
             --ignore-msi-with-no-mutations \
-            --min-msi 80 \
-            --min-covered-msi 80 \
+            --min-msi 0 \
+            --min-covered-msi 0 \
             --exec-timeout 120 \
             --timeout-coefficient 5 \
             --workers 4 \
@@ -432,6 +432,56 @@ jobs:
         with:
           name: changed-mutation-adapter-${{ matrix.name }}
           path: mutago-summary-adapter-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  mutation-changed-adapters-aggregate:
+    name: Changed native adapter mutation aggregate gate
+    if: github.event_name != 'schedule'
+    needs:
+      - mutation-adapter-plan
+      - mutation-changed-adapters
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Download every changed native mutation summary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: changed-mutation-adapter-*
+          path: build/native-mutation-summaries
+          merge-multiple: true
+
+      - name: Enforce weighted native build-owner mutation scores
+        shell: bash
+        env:
+          NATIVE_MUTATION_MATRIX: ${{ needs.mutation-adapter-plan.outputs.matrix }}
+        run: |
+          printf '%s\n' "$NATIVE_MUTATION_MATRIX" > build/native-mutation-matrix.json
+          go run ./tools/check_mutation_coverage \
+            -directory build/native-mutation-summaries \
+            -matrix build/native-mutation-matrix.json \
+            -prefix adapter- \
+            -min-msi 80 \
+            -min-covered-msi 80 \
+            -output build/native-mutation-aggregate.json
+
+      - name: Preserve aggregate native mutation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: changed-mutation-adapter-aggregate
+          path: build/native-mutation-aggregate.json
           if-no-files-found: error
           retention-days: 30
 
@@ -486,7 +536,7 @@ jobs:
           cache: true
           cache-dependency-path: go.mod
 
-      - name: Enforce full critical-package mutation score
+      - name: Execute full native launcher mutation shard
         shell: bash
         run: |
           targets=()
@@ -509,8 +559,8 @@ jobs:
             --noop \
             --coverage \
             --per-test \
-            --min-msi 80 \
-            --min-covered-msi 80 \
+            --min-msi 0 \
+            --min-covered-msi 0 \
             --exec-timeout 120 \
             --timeout-coefficient 5 \
             --workers 4 \
@@ -530,5 +580,55 @@ jobs:
         with:
           name: full-mutation-${{ matrix.name }}
           path: mutago-summary-nightly-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  mutation-nightly-aggregate:
+    name: Full native launcher mutation aggregate gate
+    if: github.event_name == 'schedule'
+    needs:
+      - mutation-nightly-plan
+      - mutation-nightly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Download every full native mutation summary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: full-mutation-*
+          path: build/native-mutation-summaries
+          merge-multiple: true
+
+      - name: Enforce weighted full native build-owner mutation scores
+        shell: bash
+        env:
+          NATIVE_MUTATION_MATRIX: ${{ needs.mutation-nightly-plan.outputs.matrix }}
+        run: |
+          printf '%s\n' "$NATIVE_MUTATION_MATRIX" > build/native-mutation-matrix.json
+          go run ./tools/check_mutation_coverage \
+            -directory build/native-mutation-summaries \
+            -matrix build/native-mutation-matrix.json \
+            -prefix nightly- \
+            -min-msi 80 \
+            -min-covered-msi 80 \
+            -output build/native-mutation-aggregate.json
+
+      - name: Preserve aggregate full mutation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-mutation-aggregate
+          path: build/native-mutation-aggregate.json
           if-no-files-found: error
           retention-days: 30

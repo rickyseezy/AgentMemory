@@ -1,3 +1,5 @@
+//go:build !darwin || cgo
+
 package process
 
 import (
@@ -8,26 +10,6 @@ import (
 
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/argvprocess"
 )
-
-type packageReceiptStub struct{}
-
-func (packageReceiptStub) VerifyLinuxPackageReceipt(
-	context.Context,
-	argvprocess.ExecutableAuthority,
-	ExecutableEvidence,
-) error {
-	return nil
-}
-
-type windowsSignerStub struct{}
-
-func (windowsSignerStub) VerifyWindowsSignerIdentity(
-	context.Context,
-	argvprocess.ExecutableAuthority,
-	ExecutableEvidence,
-) error {
-	return nil
-}
 
 func TestPF001NativePublisherVerifierFailsClosedOnPolicySubstitution(t *testing.T) {
 	t.Parallel()

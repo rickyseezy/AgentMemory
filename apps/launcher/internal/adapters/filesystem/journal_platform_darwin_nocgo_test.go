@@ -16,6 +16,12 @@ import (
 
 func TestPF001DarwinFilesystemSecurityCompositionFailsClosedWithoutCGO(t *testing.T) {
 	t.Parallel()
+	if err := verifyPlatformDescriptor(context.Background(), nil); !errors.Is(err, errDarwinFilesystemProofUnavailable) {
+		t.Fatalf("no-cgo descriptor proof error=%v", err)
+	}
+	if err := platformDurableSync(nil); !errors.Is(err, errDarwinFilesystemProofUnavailable) {
+		t.Fatalf("no-cgo durable sync error=%v", err)
+	}
 	directory := filepath.Join(t.TempDir(), "operation")
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)

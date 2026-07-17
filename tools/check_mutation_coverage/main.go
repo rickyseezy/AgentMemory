@@ -76,6 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	directory := flags.String("directory", "", "directory containing Mutago summary JSON files")
 	matrixPath := flags.String("matrix", "", "native mutation matrix JSON file")
 	prefix := flags.String("prefix", "", "summary filename prefix after mutago-summary-")
+	policyPath := flags.String("policy", "", "optional closed native Mutago policy YAML file")
 	minimumMsi := flags.Float64("min-msi", 80, "minimum weighted MSI percentage")
 	minimumCovered := flags.Float64("min-covered-msi", 80, "minimum weighted covered-code MSI percentage")
 	output := flags.String("output", "", "optional aggregate evidence JSON path")
@@ -87,6 +88,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		!validPrefix(*prefix) {
 		_, _ = fmt.Fprintln(stderr, "mutation coverage arguments are invalid")
 		return 2
+	}
+	if *policyPath != "" {
+		if err := validateNativeMutationPolicy(*policyPath); err != nil {
+			_, _ = fmt.Fprintf(stderr, "mutation coverage policy is invalid: %v\n", err)
+			return 1
+		}
 	}
 	evidence, err := evaluate(*directory, *matrixPath, *prefix, *minimumMsi, *minimumCovered)
 	if *output != "" && evidence.SchemaVersion != 0 {

@@ -167,6 +167,92 @@ func TestPF001MutationCoverageRejectsInvalidArgumentsAndMatrix(t *testing.T) {
 	}
 }
 
+func TestPF001NativeMutationPolicyIsClosedAndSecurityFocused(t *testing.T) {
+	t.Parallel()
+	path := writeNativeMutationPolicy(t, `
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators:
+  - arithmetic/assign_invert
+  - arithmetic/assignment
+  - arithmetic/base
+  - arithmetic/bitwise
+  - arithmetic/negate
+  - branch/case
+  - branch/else
+  - branch/if
+  - composite/field-clear
+  - concurrency/goroutine-remove
+  - conditional/negated
+  - conditional/not
+  - expression/context-nil
+  - expression/error-guard
+  - expression/errorf-wrap
+  - expression/recover-clear
+  - loop/break
+  - loop/condition
+  - loop/range_break
+  - select/case-remove
+  - select/default-remove
+  - statement/defer-remove
+  - statement/remove
+  - statement/return
+`)
+	if err := validateNativeMutationPolicy(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPF001NativeMutationPolicyRejectsWeakeningAndAmbiguity(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"missing required mutator": `
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators: [branch/if]
+`,
+		"unknown mutator": `
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators: [branch/if, foreign/operator]
+`,
+		"duplicate mutator": `
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators: [branch/if, branch/if]
+`,
+		"source skipping": `
+skip_without_test: true
+skip_with_build_tags: false
+enable_mutators: [branch/if]
+`,
+		"unknown field": `
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators: [branch/if]
+disable_mutators: [statement/return]
+`,
+	}
+	for name, encoded := range tests {
+		name, encoded := name, encoded
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := validateNativeMutationPolicy(writeNativeMutationPolicy(t, encoded)); err == nil {
+				t.Fatal("unsafe native mutation policy was accepted")
+			}
+		})
+	}
+}
+
+func writeNativeMutationPolicy(t *testing.T, encoded string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "native-mutago.yml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(encoded)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func mutationCoverageFixture(t *testing.T, matrix githubMatrix) (string, string) {
 	t.Helper()
 	directory := t.TempDir()

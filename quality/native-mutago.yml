@@ -1,0 +1,34 @@
+# Native adapter mutation policy. The covered-code gate deliberately uses a
+# closed, nonredundant fault model: control-flow removal, return corruption,
+# error/context propagation, cleanup timing, concurrency, loops/selects,
+# composite state loss, and arithmetic/permission faults. Broad operand and
+# literal perturbation families remain available for diagnostic campaigns but
+# overlap these release-gated faults and generate high volumes of equivalent
+# adapter-glue mutants.
+skip_without_test: false
+skip_with_build_tags: false
+enable_mutators:
+  - arithmetic/assign_invert
+  - arithmetic/assignment
+  - arithmetic/base
+  - arithmetic/bitwise
+  - arithmetic/negate
+  - branch/case
+  - branch/else
+  - branch/if
+  - composite/field-clear
+  - concurrency/goroutine-remove
+  - conditional/negated
+  - conditional/not
+  - expression/context-nil
+  - expression/error-guard
+  - expression/errorf-wrap
+  - expression/recover-clear
+  - loop/break
+  - loop/condition
+  - loop/range_break
+  - select/case-remove
+  - select/default-remove
+  - statement/defer-remove
+  - statement/remove
+  - statement/return

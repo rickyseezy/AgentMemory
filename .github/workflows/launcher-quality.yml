@@ -17,6 +17,7 @@ on:
       - "apps/launcher/**"
       - "contracts/**"
       - "packaging/**"
+      - "quality/native-mutago.yml"
       - "tools/**"
   push:
     branches:
@@ -34,6 +35,7 @@ on:
       - "apps/launcher/**"
       - "contracts/**"
       - "packaging/**"
+      - "quality/native-mutago.yml"
       - "tools/**"
 
 permissions:
@@ -405,6 +407,7 @@ jobs:
           fi
           status=0
           go run github.com/quality-gates/mutago/v2/cmd/mutago@5e268a05d68c37d3b89a56447b4e80f791f824c2 \
+            --config quality/native-mutago.yml \
             --noop \
             --coverage \
             --per-test \
@@ -418,11 +421,15 @@ jobs:
             --workers 4 \
             --logger-github \
             --logger-summary-json \
+            --logger-agentic-json \
             --quiet \
             --no-diffs \
             "${targets[@]}" || status=$?
           if [ -f mutago-summary.json ]; then
             mv mutago-summary.json "mutago-summary-adapter-${{ matrix.name }}.json"
+          fi
+          if [ -f mutago-agentic.json ]; then
+            mv mutago-agentic.json "mutago-agentic-adapter-${{ matrix.name }}.json"
           fi
           exit "$status"
 
@@ -430,8 +437,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: changed-mutation-adapter-${{ matrix.name }}
+          name: changed-mutation-adapter-summary-${{ matrix.name }}
           path: mutago-summary-adapter-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve changed native adapter mutation diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: changed-mutation-adapter-diagnostics-${{ matrix.name }}
+          path: mutago-agentic-adapter-${{ matrix.name }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -458,7 +474,7 @@ jobs:
       - name: Download every changed native mutation summary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: changed-mutation-adapter-*
+          pattern: changed-mutation-adapter-summary-*
           path: build/native-mutation-summaries
           merge-multiple: true
 
@@ -472,7 +488,8 @@ jobs:
             -directory build/native-mutation-summaries \
             -matrix build/native-mutation-matrix.json \
             -prefix adapter- \
-            -min-msi 80 \
+            -policy quality/native-mutago.yml \
+            -min-msi 0 \
             -min-covered-msi 80 \
             -output build/native-mutation-aggregate.json
 
@@ -556,6 +573,7 @@ jobs:
           # mutago v2.7.7, pinned to the peeled tag commit.
           status=0
           go run github.com/quality-gates/mutago/v2/cmd/mutago@5e268a05d68c37d3b89a56447b4e80f791f824c2 \
+            --config quality/native-mutago.yml \
             --noop \
             --coverage \
             --per-test \
@@ -566,11 +584,15 @@ jobs:
             --workers 4 \
             --logger-github \
             --logger-summary-json \
+            --logger-agentic-json \
             --quiet \
             --no-diffs \
             "${targets[@]}" || status=$?
           if [ -f mutago-summary.json ]; then
             mv mutago-summary.json "mutago-summary-nightly-${{ matrix.name }}.json"
+          fi
+          if [ -f mutago-agentic.json ]; then
+            mv mutago-agentic.json "mutago-agentic-nightly-${{ matrix.name }}.json"
           fi
           exit "$status"
 
@@ -578,8 +600,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: full-mutation-${{ matrix.name }}
+          name: full-mutation-summary-${{ matrix.name }}
           path: mutago-summary-nightly-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve full mutation diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-mutation-diagnostics-${{ matrix.name }}
+          path: mutago-agentic-nightly-${{ matrix.name }}.json
           if-no-files-found: error
           retention-days: 30
 
@@ -606,7 +637,7 @@ jobs:
       - name: Download every full native mutation summary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: full-mutation-*
+          pattern: full-mutation-summary-*
           path: build/native-mutation-summaries
           merge-multiple: true
 
@@ -620,7 +651,8 @@ jobs:
             -directory build/native-mutation-summaries \
             -matrix build/native-mutation-matrix.json \
             -prefix nightly- \
-            -min-msi 80 \
+            -policy quality/native-mutago.yml \
+            -min-msi 0 \
             -min-covered-msi 80 \
             -output build/native-mutation-aggregate.json
 

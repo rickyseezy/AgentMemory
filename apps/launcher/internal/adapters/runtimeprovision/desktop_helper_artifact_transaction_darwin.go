@@ -18,23 +18,60 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type nativeDesktopMutationArtifactCopier struct{}
-
-func newNativeDesktopMutationArtifactCopier() desktopMutationArtifactCopier {
-	return nativeDesktopMutationArtifactCopier{}
+type nativeDesktopMutationArtifactCopier struct {
+	operations darwinDesktopMutationArtifactOperations
 }
 
-func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
+type darwinDesktopMutationArtifactOperations struct {
+	effectiveUID      func() int
+	ensureDirectory   func(string, os.FileMode) error
+	artifactMatches   func(string, uint32, runtimeinstall.Hash, uint64) bool
+	open              func(string, int, uint32) (int, error)
+	newFile           func(uintptr, string) *os.File
+	closeDescriptor   func(int) error
+	descriptorMatches func(int, uint32, uint64, uint32) bool
+	removeTemporary   func(string) error
+	remove            func(string) error
+	renameNoReplace   func(string, string) error
+	syncDirectory     func(string) error
+}
+
+func newNativeDesktopMutationArtifactCopier() desktopMutationArtifactCopier {
+	return nativeDesktopMutationArtifactCopier{operations: newDarwinDesktopMutationArtifactOperations()}
+}
+
+func newDarwinDesktopMutationArtifactOperations() darwinDesktopMutationArtifactOperations {
+	return darwinDesktopMutationArtifactOperations{
+		effectiveUID: os.Geteuid, ensureDirectory: ensureDarwinDesktopMutationDirectory,
+		artifactMatches: darwinDesktopMutationArtifactMatches, open: unix.Open, newFile: os.NewFile,
+		closeDescriptor: unix.Close, descriptorMatches: darwinDesktopMutationDescriptorMatches,
+		removeTemporary: removeDarwinDesktopMutationTemporary, remove: os.Remove,
+		renameNoReplace: func(source, target string) error {
+			return unix.RenameatxNp(unix.AT_FDCWD, source, unix.AT_FDCWD, target, unix.RENAME_EXCL)
+		},
+		syncDirectory: syncPrivilegeProtectedDirectory,
+	}
+}
+
+func (o darwinDesktopMutationArtifactOperations) valid() bool {
+	return o.effectiveUID != nil && o.ensureDirectory != nil && o.artifactMatches != nil && o.open != nil &&
+		o.newFile != nil && o.closeDescriptor != nil && o.descriptorMatches != nil && o.removeTemporary != nil &&
+		o.remove != nil && o.renameNoReplace != nil && o.syncDirectory != nil
+}
+
+func (c nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 	ctx context.Context,
 	request runtimeport.DesktopMutationRequest,
 	artifact DesktopMutationTransactionArtifact,
 ) error {
-	uid, ok := darwinDesktopMutationPrincipalUID(request.Authority().PrincipalID())
-	expected, targetError := desktopMutationArtifactTarget(runtimeinstall.PlatformDarwin, request.Digest())
-	if ctx == nil || os.Geteuid() != 0 || !ok || request.Authority().Platform() != runtimeinstall.PlatformDarwin ||
-		artifact.targetPath != expected || targetError != nil || artifact.sourcePath != request.Authority().ArtifactPath() ||
-		artifact.sha256 != request.ArtifactDigest() || artifact.size != request.Authority().ArtifactBytes() {
+	if !c.operations.valid() {
 		return runtimeport.ErrDesktopMutationIntegrity
+	}
+	uid, validationError := validateDarwinDesktopMutationArtifactCopy(
+		ctx, c.operations.effectiveUID(), request, artifact,
+	)
+	if validationError != nil {
+		return validationError
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -49,47 +86,49 @@ func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 		{path: darwinDesktopMutationTransactionRoot, mode: 0o700},
 		{path: requestRoot, mode: 0o700},
 	} {
-		if err := ensureDarwinDesktopMutationDirectory(directory.path, directory.mode); err != nil {
+		if err := c.operations.ensureDirectory(directory.path, directory.mode); err != nil {
 			return runtimeport.ErrDesktopMutationIntegrity
 		}
 	}
-	if darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
+	if c.operations.artifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 		return nil
 	}
-	sourceDescriptor, err := unix.Open(artifact.sourcePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	sourceDescriptor, err := c.operations.open(
+		artifact.sourcePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0,
+	)
 	if err != nil {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
-	source := os.NewFile(uintptr(sourceDescriptor), "desktop-mutation-source")
+	source := c.operations.newFile(uintptr(sourceDescriptor), "desktop-mutation-source")
 	if source == nil {
-		_ = unix.Close(sourceDescriptor)
+		_ = c.operations.closeDescriptor(sourceDescriptor)
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	defer func() { _ = source.Close() }()
-	if !darwinDesktopMutationDescriptorMatches(sourceDescriptor, uid, artifact.size, 0o600) {
+	if !c.operations.descriptorMatches(sourceDescriptor, uid, artifact.size, 0o600) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	temporary := filepath.Join(requestRoot, ".installer."+artifact.sha256.String()+".partial")
-	if err := removeDarwinDesktopMutationTemporary(temporary); err != nil {
+	if err := c.operations.removeTemporary(temporary); err != nil {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
-	targetDescriptor, err := unix.Open(
+	targetDescriptor, err := c.operations.open(
 		temporary, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600,
 	)
 	if err != nil {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
-	target := os.NewFile(uintptr(targetDescriptor), "desktop-mutation-target")
+	target := c.operations.newFile(uintptr(targetDescriptor), "desktop-mutation-target")
 	if target == nil {
-		_ = unix.Close(targetDescriptor)
-		_ = os.Remove(temporary)
+		_ = c.operations.closeDescriptor(targetDescriptor)
+		_ = c.operations.remove(temporary)
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	committed := false
 	defer func() {
 		_ = target.Close()
 		if !committed {
-			_ = os.Remove(temporary)
+			_ = c.operations.remove(temporary)
 		}
 	}()
 	hasher := sha256.New()
@@ -103,27 +142,45 @@ func (nativeDesktopMutationArtifactCopier) CopyDesktopMutationArtifact(
 		target.Close() != nil {
 		return desktopMutationHelperContextOrIntegrity(ctx)
 	}
-	if err := unix.RenameatxNp(
-		unix.AT_FDCWD, temporary, unix.AT_FDCWD, artifact.targetPath, unix.RENAME_EXCL,
-	); err != nil {
+	if err := c.operations.renameNoReplace(temporary, artifact.targetPath); err != nil {
 		if errors.Is(err, unix.EEXIST) &&
-			darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
+			c.operations.artifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 			return nil
 		}
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	committed = true
-	if err := syncPrivilegeProtectedDirectory(requestRoot); err != nil ||
-		!darwinDesktopMutationArtifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
+	if err := c.operations.syncDirectory(requestRoot); err != nil ||
+		!c.operations.artifactMatches(artifact.targetPath, 0, artifact.sha256, artifact.size) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	return nil
 }
 
+func validateDarwinDesktopMutationArtifactCopy(
+	ctx context.Context,
+	effectiveUID int,
+	request runtimeport.DesktopMutationRequest,
+	artifact DesktopMutationTransactionArtifact,
+) (uint32, error) {
+	uid, principalValid := darwinDesktopMutationPrincipalUID(request.Authority().PrincipalID())
+	expected, targetError := desktopMutationArtifactTarget(runtimeinstall.PlatformDarwin, request.Digest())
+	if ctx == nil || effectiveUID != 0 || !principalValid ||
+		request.Authority().Platform() != runtimeinstall.PlatformDarwin || targetError != nil ||
+		artifact.targetPath != expected || artifact.sourcePath != request.Authority().ArtifactPath() ||
+		artifact.sha256 != request.ArtifactDigest() || artifact.size != request.Authority().ArtifactBytes() {
+		return 0, runtimeport.ErrDesktopMutationIntegrity
+	}
+	return uid, nil
+}
+
 func darwinDesktopMutationPrincipalUID(principal string) (uint32, bool) {
 	value := strings.TrimPrefix(principal, "uid:")
 	parsed, err := strconv.ParseUint(value, 10, 32)
-	return uint32(parsed), err == nil && value != principal && parsed > 0
+	if err != nil || value == principal || parsed == 0 {
+		return 0, false
+	}
+	return uint32(parsed), true
 }
 
 func ensureDarwinDesktopMutationDirectory(path string, mode os.FileMode) error {
@@ -132,11 +189,20 @@ func ensureDarwinDesktopMutationDirectory(path string, mode os.FileMode) error {
 	}
 	info, err := os.Lstat(path)
 	status, ok := infoSyscallStat(info)
-	if err != nil || !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != mode ||
-		status.Uid != 0 || status.Gid != 0 {
+	if err != nil || !darwinDesktopMutationDirectorySafe(info, status, ok, mode) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	return nil
+}
+
+func darwinDesktopMutationDirectorySafe(
+	info os.FileInfo,
+	status *syscall.Stat_t,
+	statusValid bool,
+	mode os.FileMode,
+) bool {
+	return info != nil && statusValid && status != nil && info.IsDir() &&
+		info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == mode && status.Uid == 0 && status.Gid == 0
 }
 
 func infoSyscallStat(info os.FileInfo) (*syscall.Stat_t, bool) {
@@ -186,11 +252,20 @@ func removeDarwinDesktopMutationTemporary(path string) error {
 		return nil
 	}
 	status, ok := infoSyscallStat(info)
-	if err != nil || !ok || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
-		info.Mode().Perm() != 0o600 || status.Uid != 0 || status.Gid != 0 || status.Nlink != 1 {
+	if err != nil || !darwinDesktopMutationTemporarySafe(info, status, ok) {
 		return runtimeport.ErrDesktopMutationIntegrity
 	}
 	return os.Remove(path)
+}
+
+func darwinDesktopMutationTemporarySafe(
+	info os.FileInfo,
+	status *syscall.Stat_t,
+	statusValid bool,
+) bool {
+	return info != nil && statusValid && status != nil && info.Mode().IsRegular() &&
+		info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o600 && status.Uid == 0 &&
+		status.Gid == 0 && status.Nlink == 1
 }
 
 var _ desktopMutationArtifactCopier = nativeDesktopMutationArtifactCopier{}

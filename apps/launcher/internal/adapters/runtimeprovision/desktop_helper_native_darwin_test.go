@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	runtimeport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/runtimeprovision"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/domain/releaseinventory"
@@ -185,16 +188,56 @@ func TestPF001DarwinDesktopHelperArtifactPrimitivesRejectOwnerAndModeSubstitutio
 	if !darwinDesktopMutationDescriptorMatches(descriptor, uid, uint64(len(contents)), 0o600) {
 		t.Fatal("exact descriptor did not match")
 	}
+	for name, candidate := range map[string]struct {
+		uid  uint32
+		size uint64
+		mode uint32
+	}{
+		"owner": {uid: uid + 1, size: uint64(len(contents)), mode: 0o600},
+		"size":  {uid: uid, size: uint64(len(contents)) + 1, mode: 0o600},
+		"mode":  {uid: uid, size: uint64(len(contents)), mode: 0o644},
+	} {
+		if darwinDesktopMutationDescriptorMatches(descriptor, candidate.uid, candidate.size, candidate.mode) {
+			t.Fatalf("descriptor with wrong %s was accepted", name)
+		}
+	}
 	_ = unix.Close(descriptor)
 	if !darwinDesktopMutationArtifactMatches(path, uid, digest, uint64(len(contents))) ||
-		darwinDesktopMutationArtifactMatches(path, uid, runtimeinstall.Sum([]byte("foreign")), uint64(len(contents))) {
+		darwinDesktopMutationArtifactMatches(path, uid, runtimeinstall.Sum([]byte("foreign")), uint64(len(contents))) ||
+		darwinDesktopMutationArtifactMatches(path, uid, digest, uint64(len(contents))+1) {
 		t.Fatal("artifact byte binding failed")
 	}
+	empty := filepath.Join(t.TempDir(), "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	emptyDescriptor, err := unix.Open(empty, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !darwinDesktopMutationDescriptorMatches(emptyDescriptor, uid, 0, 0o600) ||
+		!darwinDesktopMutationArtifactMatches(empty, uid, runtimeinstall.Sum(nil), 0) {
+		t.Fatal("zero-byte native boundary was rejected")
+	}
+	_ = unix.Close(emptyDescriptor)
 	if parsed, ok := darwinDesktopMutationPrincipalUID("uid:501"); !ok || parsed != 501 {
 		t.Fatalf("principal parsed=%d ok=%t", parsed, ok)
 	}
-	if _, ok := darwinDesktopMutationPrincipalUID("root"); ok {
-		t.Fatal("foreign principal accepted")
+	for principal, expected := range map[string]struct {
+		uid   uint32
+		valid bool
+	}{
+		"uid:1":          {uid: 1, valid: true},
+		"uid:4294967295": {uid: ^uint32(0), valid: true},
+		"uid:0":          {},
+		"uid:4294967296": {},
+		"uid:not-a-uid":  {},
+		"root":           {},
+	} {
+		uid, valid := darwinDesktopMutationPrincipalUID(principal)
+		if uid != expected.uid || valid != expected.valid {
+			t.Fatalf("principal=%q uid=%d valid=%t", principal, uid, valid)
+		}
 	}
 	if status, ok := infoSyscallStat(nil); ok || status != nil {
 		t.Fatalf("nil stat=%+v ok=%t", status, ok)
@@ -207,6 +250,333 @@ func TestPF001DarwinDesktopHelperArtifactPrimitivesRejectOwnerAndModeSubstitutio
 		t.Fatalf("unprivileged temporary error=%v", err)
 	}
 }
+
+func TestPF001DarwinDesktopHelperArtifactCopyValidationBindsEveryInput(t *testing.T) {
+	t.Parallel()
+	_, authority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	target, err := desktopMutationArtifactTarget(runtimeinstall.PlatformDarwin, request.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := DesktopMutationTransactionArtifact{
+		sourcePath: authority.ArtifactPath(), targetPath: target,
+		sha256: request.ArtifactDigest(), size: authority.ArtifactBytes(),
+	}
+	uid, err := validateDarwinDesktopMutationArtifactCopy(t.Context(), 0, request, valid)
+	if err != nil || uid != 501 {
+		t.Fatalf("validated uid=%d error=%v", uid, err)
+	}
+
+	foreignSource := valid
+	foreignSource.sourcePath += ".foreign"
+	foreignTarget := valid
+	foreignTarget.targetPath += ".foreign"
+	foreignDigest := valid
+	foreignDigest.sha256 = runtimeinstall.Sum([]byte("foreign"))
+	foreignSize := valid
+	foreignSize.size++
+	_, _, windowsRequest := desktopMutationCodecFixture(t, runtimeport.DesktopMutationInstallRuntime)
+	for name, candidate := range map[string]struct {
+		ctx      context.Context
+		euid     int
+		request  runtimeport.DesktopMutationRequest
+		artifact DesktopMutationTransactionArtifact
+	}{
+		"nil context":    {ctx: nil, euid: 0, request: request, artifact: valid},
+		"not root":       {ctx: t.Context(), euid: 1, request: request, artifact: valid},
+		"zero request":   {ctx: t.Context(), euid: 0, artifact: valid},
+		"wrong platform": {ctx: t.Context(), euid: 0, request: windowsRequest, artifact: valid},
+		"source":         {ctx: t.Context(), euid: 0, request: request, artifact: foreignSource},
+		"target":         {ctx: t.Context(), euid: 0, request: request, artifact: foreignTarget},
+		"digest":         {ctx: t.Context(), euid: 0, request: request, artifact: foreignDigest},
+		"size":           {ctx: t.Context(), euid: 0, request: request, artifact: foreignSize},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gotUID, validationError := validateDarwinDesktopMutationArtifactCopy(
+				candidate.ctx, candidate.euid, candidate.request, candidate.artifact,
+			)
+			if gotUID != 0 || !errors.Is(validationError, runtimeport.ErrDesktopMutationIntegrity) {
+				t.Fatalf("validated uid=%d error=%v", gotUID, validationError)
+			}
+		})
+	}
+}
+
+func TestPF001DarwinDesktopHelperArtifactCopyExecutesExactProtectedTransaction(t *testing.T) {
+	t.Parallel()
+	contents := []byte("signed installer payload")
+	_, authority := desktopAdapterAuthorityWithArtifact(
+		t, runtimeinstall.PlatformDarwin, runtimeinstall.Sum(contents), uint64(len(contents)),
+	)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	target, err := desktopMutationArtifactTarget(runtimeinstall.PlatformDarwin, request.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := DesktopMutationTransactionArtifact{
+		sourcePath: authority.ArtifactPath(), targetPath: target,
+		sha256: request.ArtifactDigest(), size: authority.ArtifactBytes(),
+	}
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source")
+	targetPath := filepath.Join(root, "target")
+	if err := os.WriteFile(sourcePath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var ensured []struct {
+		path string
+		mode os.FileMode
+	}
+	matchCalls := 0
+	renameCalls := 0
+	syncCalls := 0
+	operations := newDarwinDesktopMutationArtifactOperations()
+	operations.effectiveUID = func() int { return 0 }
+	operations.ensureDirectory = func(path string, mode os.FileMode) error {
+		ensured = append(ensured, struct {
+			path string
+			mode os.FileMode
+		}{path: path, mode: mode})
+		return nil
+	}
+	operations.artifactMatches = func(
+		path string,
+		uid uint32,
+		digest runtimeinstall.Hash,
+		size uint64,
+	) bool {
+		matchCalls++
+		if path != artifact.targetPath || uid != 0 || digest != artifact.sha256 || size != artifact.size {
+			t.Fatalf("artifact match path=%q uid=%d digest=%s size=%d", path, uid, digest, size)
+		}
+		return matchCalls == 2
+	}
+	operations.open = func(path string, flags int, mode uint32) (int, error) {
+		switch path {
+		case artifact.sourcePath:
+			if flags != unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW || mode != 0 {
+				t.Fatalf("source flags=%d mode=%o", flags, mode)
+			}
+			return unix.Open(sourcePath, flags, mode)
+		default:
+			if !strings.HasSuffix(path, ".partial") ||
+				flags != unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW || mode != 0o600 {
+				t.Fatalf("target path=%q flags=%d mode=%o", path, flags, mode)
+			}
+			return unix.Open(targetPath, flags, mode)
+		}
+	}
+	operations.descriptorMatches = func(descriptor int, uid uint32, size uint64, mode uint32) bool {
+		if descriptor < 0 || uid != 501 || size != uint64(len(contents)) || mode != 0o600 {
+			t.Fatalf("descriptor=%d uid=%d size=%d mode=%o", descriptor, uid, size, mode)
+		}
+		return true
+	}
+	operations.removeTemporary = func(path string) error {
+		if !strings.HasSuffix(path, ".partial") {
+			t.Fatalf("temporary path=%q", path)
+		}
+		return nil
+	}
+	operations.remove = func(path string) error {
+		t.Fatalf("committed transaction removed %q", path)
+		return nil
+	}
+	operations.renameNoReplace = func(source, destination string) error {
+		renameCalls++
+		if !strings.HasSuffix(source, ".partial") || destination != artifact.targetPath {
+			t.Fatalf("rename source=%q destination=%q", source, destination)
+		}
+		return nil
+	}
+	operations.syncDirectory = func(path string) error {
+		syncCalls++
+		if path != filepath.Dir(artifact.targetPath) {
+			t.Fatalf("synced directory=%q", path)
+		}
+		return nil
+	}
+	copier := nativeDesktopMutationArtifactCopier{operations: operations}
+	if err := copier.CopyDesktopMutationArtifact(t.Context(), request, artifact); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(targetPath) // #nosec G304 -- private test path.
+	if err != nil || !bytes.Equal(written, contents) {
+		t.Fatalf("written=%q error=%v", written, err)
+	}
+	wantDirectories := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: "/Library/Application Support/AgentMemory", mode: 0o755},
+		{path: "/Library/Application Support/AgentMemory/runtime-helper", mode: 0o755},
+		{path: darwinDesktopMutationTransactionRoot, mode: 0o700},
+		{path: filepath.Dir(artifact.targetPath), mode: 0o700},
+	}
+	if !slices.Equal(ensured, wantDirectories) || matchCalls != 2 || renameCalls != 1 || syncCalls != 1 {
+		t.Fatalf("ensured=%v matches=%d renames=%d syncs=%d", ensured, matchCalls, renameCalls, syncCalls)
+	}
+}
+
+func TestPF001DarwinDesktopHelperArtifactCopyFailsBeforeUnauthorizedMutation(t *testing.T) {
+	t.Parallel()
+	contents := []byte("installer")
+	_, authority := desktopAdapterAuthorityWithArtifact(
+		t, runtimeinstall.PlatformDarwin, runtimeinstall.Sum(contents), uint64(len(contents)),
+	)
+	request := desktopArtifactRequest(t, authority, runtimeport.DesktopMutationInstallRuntime)
+	target, err := desktopMutationArtifactTarget(runtimeinstall.PlatformDarwin, request.Digest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := DesktopMutationTransactionArtifact{
+		sourcePath: authority.ArtifactPath(), targetPath: target,
+		sha256: request.ArtifactDigest(), size: authority.ArtifactBytes(),
+	}
+
+	operations := newDarwinDesktopMutationArtifactOperations()
+	ensureCalls := 0
+	operations.ensureDirectory = func(string, os.FileMode) error {
+		ensureCalls++
+		return nil
+	}
+	operations.effectiveUID = func() int { return 1 }
+	if err := (nativeDesktopMutationArtifactCopier{operations: operations}).CopyDesktopMutationArtifact(
+		t.Context(), request, artifact,
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) || ensureCalls != 0 {
+		t.Fatalf("unelevated error=%v ensure calls=%d", err, ensureCalls)
+	}
+
+	operations.effectiveUID = func() int { return 0 }
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := (nativeDesktopMutationArtifactCopier{operations: operations}).CopyDesktopMutationArtifact(
+		cancelled, request, artifact,
+	); !errors.Is(err, context.Canceled) || ensureCalls != 0 {
+		t.Fatalf("cancelled error=%v ensure calls=%d", err, ensureCalls)
+	}
+
+	openFailure := errors.New("native source open failed")
+	operations.artifactMatches = func(string, uint32, runtimeinstall.Hash, uint64) bool { return false }
+	operations.open = func(string, int, uint32) (int, error) { return -1, openFailure }
+	if err := (nativeDesktopMutationArtifactCopier{operations: operations}).CopyDesktopMutationArtifact(
+		t.Context(), request, artifact,
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) || errors.Is(err, openFailure) || ensureCalls != 4 {
+		t.Fatalf("open error=%v ensure calls=%d", err, ensureCalls)
+	}
+}
+
+func TestPF001DarwinDesktopHelperArtifactOperationsRequireEveryNativeCapability(t *testing.T) {
+	t.Parallel()
+	operations := newDarwinDesktopMutationArtifactOperations()
+	if !operations.valid() {
+		t.Fatal("complete native operation set was rejected")
+	}
+	missing := []func(*darwinDesktopMutationArtifactOperations){
+		func(o *darwinDesktopMutationArtifactOperations) { o.effectiveUID = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.ensureDirectory = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.artifactMatches = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.open = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.newFile = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.closeDescriptor = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.descriptorMatches = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.removeTemporary = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.remove = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.renameNoReplace = nil },
+		func(o *darwinDesktopMutationArtifactOperations) { o.syncDirectory = nil },
+	}
+	for index, remove := range missing {
+		candidate := operations
+		remove(&candidate)
+		if candidate.valid() {
+			t.Fatalf("missing native capability %d was accepted", index)
+		}
+	}
+	if err := (nativeDesktopMutationArtifactCopier{}).CopyDesktopMutationArtifact(
+		t.Context(), runtimeport.DesktopMutationRequest{}, DesktopMutationTransactionArtifact{},
+	); !errors.Is(err, runtimeport.ErrDesktopMutationIntegrity) {
+		t.Fatalf("zero copier error=%v", err)
+	}
+	production, ok := newNativeDesktopMutationArtifactCopier().(nativeDesktopMutationArtifactCopier)
+	if !ok || !production.operations.valid() {
+		t.Fatalf("production copier=%+v valid=%t", production, ok)
+	}
+}
+
+func TestPF001DarwinDesktopHelperFilesystemPoliciesRejectEachWeakenedAttribute(t *testing.T) {
+	t.Parallel()
+	rootStatus := &syscall.Stat_t{Uid: 0, Gid: 0, Nlink: 1}
+	directory := darwinMutationFileInfo{mode: os.ModeDir | 0o700, directory: true, native: rootStatus}
+	if !darwinDesktopMutationDirectorySafe(directory, rootStatus, true, 0o700) {
+		t.Fatal("exact protected directory was rejected")
+	}
+	for name, candidate := range map[string]struct {
+		info        os.FileInfo
+		status      *syscall.Stat_t
+		statusValid bool
+		mode        os.FileMode
+	}{
+		"nil info":     {status: rootStatus, statusValid: true, mode: 0o700},
+		"nil stat":     {info: directory, statusValid: true, mode: 0o700},
+		"foreign stat": {info: directory, status: rootStatus, mode: 0o700},
+		"regular": {info: darwinMutationFileInfo{mode: 0o700, native: rootStatus},
+			status: rootStatus, statusValid: true, mode: 0o700},
+		"symlink": {info: darwinMutationFileInfo{
+			mode: os.ModeDir | os.ModeSymlink | 0o700, directory: true, native: rootStatus,
+		}, status: rootStatus, statusValid: true, mode: 0o700},
+		"mode":  {info: directory, status: rootStatus, statusValid: true, mode: 0o755},
+		"owner": {info: directory, status: &syscall.Stat_t{Uid: 1}, statusValid: true, mode: 0o700},
+		"group": {info: directory, status: &syscall.Stat_t{Gid: 1}, statusValid: true, mode: 0o700},
+	} {
+		t.Run("directory "+name, func(t *testing.T) {
+			if darwinDesktopMutationDirectorySafe(candidate.info, candidate.status, candidate.statusValid, candidate.mode) {
+				t.Fatal("unsafe directory was accepted")
+			}
+		})
+	}
+
+	regular := darwinMutationFileInfo{mode: 0o600, native: rootStatus}
+	if !darwinDesktopMutationTemporarySafe(regular, rootStatus, true) {
+		t.Fatal("exact protected temporary was rejected")
+	}
+	for name, candidate := range map[string]struct {
+		info        os.FileInfo
+		status      *syscall.Stat_t
+		statusValid bool
+	}{
+		"nil info":     {status: rootStatus, statusValid: true},
+		"nil stat":     {info: regular, statusValid: true},
+		"foreign stat": {info: regular, status: rootStatus},
+		"directory":    {info: directory, status: rootStatus, statusValid: true},
+		"symlink": {info: darwinMutationFileInfo{
+			mode: os.ModeSymlink | 0o600, native: rootStatus,
+		}, status: rootStatus, statusValid: true},
+		"mode":  {info: darwinMutationFileInfo{mode: 0o644, native: rootStatus}, status: rootStatus, statusValid: true},
+		"owner": {info: regular, status: &syscall.Stat_t{Uid: 1, Nlink: 1}, statusValid: true},
+		"group": {info: regular, status: &syscall.Stat_t{Gid: 1, Nlink: 1}, statusValid: true},
+		"links": {info: regular, status: &syscall.Stat_t{Nlink: 2}, statusValid: true},
+	} {
+		t.Run("temporary "+name, func(t *testing.T) {
+			if darwinDesktopMutationTemporarySafe(candidate.info, candidate.status, candidate.statusValid) {
+				t.Fatal("unsafe temporary was accepted")
+			}
+		})
+	}
+}
+
+type darwinMutationFileInfo struct {
+	mode      os.FileMode
+	directory bool
+	native    any
+}
+
+func (darwinMutationFileInfo) Name() string        { return "native" }
+func (darwinMutationFileInfo) Size() int64         { return 0 }
+func (i darwinMutationFileInfo) Mode() os.FileMode { return i.mode }
+func (darwinMutationFileInfo) ModTime() time.Time  { return time.Time{} }
+func (i darwinMutationFileInfo) IsDir() bool       { return i.directory }
+func (i darwinMutationFileInfo) Sys() any          { return i.native }
 
 func TestPF001DarwinDesktopHelperProductionConstructorsFailClosedWithoutElevationOrAuthority(t *testing.T) {
 	t.Parallel()

@@ -683,6 +683,17 @@ func (f *desktopCapabilitiesFake) VerifyDesktopCapabilities(
 }
 
 func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (runtimeinstall.Plan, runtimeport.DesktopAuthority) {
+	return desktopAdapterAuthorityWithArtifact(
+		t, platform, runtimeinstall.Sum([]byte("docker-desktop-artifact")), 500<<20,
+	)
+}
+
+func desktopAdapterAuthorityWithArtifact(
+	t testing.TB,
+	platform runtimeinstall.Platform,
+	artifactDigest runtimeinstall.Hash,
+	artifactBytes uint64,
+) (runtimeinstall.Plan, runtimeport.DesktopAuthority) {
 	t.Helper()
 	architecture := runtimeinstall.ArchitectureARM64
 	if platform == runtimeinstall.PlatformWindows {
@@ -697,7 +708,7 @@ func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (ru
 	catalog, err := runtimeinstall.NewCertifiedRuntime(
 		platform, architecture, "docker_desktop", "4.70.0", "stable", 7,
 		runtimeinstall.Sum([]byte("desktop-catalog-"+platform.String())), desktopTerms(runtimeinstall.Sum([]byte("docker-terms"))),
-		500<<20, 2<<30,
+		artifactBytes, 2<<30,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -714,7 +725,7 @@ func desktopAdapterAuthority(t testing.TB, platform runtimeinstall.Platform) (ru
 		MinimumAvailableMemory: 12 << 30, MinimumFreeDisk: 30 << 30, RuntimeVersion: "4.70.0",
 		EngineVersion: "29.6.1", ComposeVersion: "5.1.4", Endpoint: "unix:///Users/agentmemory/.docker/run/docker.sock",
 		ArtifactPath:   "/Users/agentmemory/Library/Caches/AgentMemory/runtime/Docker.dmg",
-		ArtifactSHA256: runtimeinstall.Sum([]byte("docker-desktop-artifact")), ArtifactBytes: 500 << 20,
+		ArtifactSHA256: artifactDigest, ArtifactBytes: artifactBytes,
 		ArtifactSourceURL: "https://desktop.docker.com/mac/main/arm64/Docker.dmg",
 		Publisher: runtimeport.DesktopPublisherInput{
 			Kind: runtimeport.DesktopPublisherAppleNotarized, Identity: "developer-id-application-docker-inc-9bnsxjn65r",

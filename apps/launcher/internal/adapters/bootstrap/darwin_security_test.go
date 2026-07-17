@@ -5,6 +5,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"sync"
 	"testing"
@@ -111,8 +112,8 @@ func TestPF001DarwinKeychainOperationKeySourceBindsAndClearsKeyMaterial(t *testi
 	var callbackBytes []byte
 	err = source.UseHMACKey(context.Background(), keyRef, operationID, owner, func(key []byte) error {
 		callbackBytes = key
-		if len(key) != 32 {
-			t.Fatalf("key length = %d", len(key))
+		if !bytes.Equal(key, bytes.Repeat([]byte{0x42}, sha256.Size)) {
+			t.Fatalf("key bytes = %x", key)
 		}
 		return nil
 	})

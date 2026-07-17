@@ -5,7 +5,9 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"io"
 	"testing"
 
 	bootstrapport "github.com/rickyseezy/AgentMemory/apps/launcher/internal/application/ports/installbootstrap"
@@ -72,6 +74,96 @@ func TestPF001DarwinKeychainEnsureRejectsInvalidInputAndCorruptExistingRecord(t 
 	}
 }
 
+func TestPF001DarwinKeychainSourceRequiresEachIndependentCapability(t *testing.T) {
+	t.Parallel()
+	owner, _ := install.BindOwner("darwin-machine", "darwin-user")
+	owners := bootstrapport.OwnerBindingSource(darwinOwnerSourceStub{owner: owner})
+	keychain := darwinKeychainCapability(scriptedDarwinKeychainCapability{
+		get: func(context.Context, string) ([]byte, error) { return nil, errDarwinKeychainNotFound },
+	})
+	entropy := io.Reader(bytes.NewReader(bytes.Repeat([]byte{0x41}, 32)))
+	for name, candidate := range map[string]struct {
+		owners   bootstrapport.OwnerBindingSource
+		keychain darwinKeychainCapability
+		entropy  io.Reader
+	}{
+		"owner":    {keychain: keychain, entropy: entropy},
+		"keychain": {owners: owners, entropy: entropy},
+		"entropy":  {owners: owners, keychain: keychain},
+	} {
+		t.Run(name, func(t *testing.T) {
+			source, err := newDarwinKeychainOperationKeySource(
+				candidate.owners, candidate.keychain, candidate.entropy,
+			)
+			if source != nil || err == nil {
+				t.Fatalf("missing %s source=%+v error=%v", name, source, err)
+			}
+		})
+	}
+}
+
+func TestPF001DarwinKeychainSourcePropagatesContextAndClearsEveryReadBuffer(t *testing.T) {
+	t.Parallel()
+	owner, _ := install.BindOwner("darwin-machine", "darwin-user")
+	operationID, _ := install.NewOperationID("darwin-context-binding")
+	type contextKey struct{}
+	token := &struct{}{}
+	ctx := context.WithValue(context.Background(), contextKey{}, token)
+	assertContext := func(got context.Context) {
+		t.Helper()
+		if got == nil || got.Value(contextKey{}) != token {
+			t.Fatalf("context token was not propagated: %+v", got)
+		}
+	}
+	var stored, lastRead []byte
+	keychain := scriptedDarwinKeychainCapability{
+		get: func(got context.Context, _ string) ([]byte, error) {
+			assertContext(got)
+			if stored == nil {
+				return nil, errDarwinKeychainNotFound
+			}
+			lastRead = append([]byte(nil), stored...)
+			return lastRead, nil
+		},
+		add: func(got context.Context, _ string, record []byte) error {
+			assertContext(got)
+			stored = append([]byte(nil), record...)
+			return nil
+		},
+	}
+	owners := darwinOwnerContextSource{
+		current: func(got context.Context) (install.OwnerBinding, error) {
+			assertContext(got)
+			return owner, nil
+		},
+	}
+	source, err := newDarwinKeychainOperationKeySource(
+		owners, keychain, bytes.NewReader(bytes.Repeat([]byte{0x7a}, 32)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyRef, err := source.Ensure(ctx, operationID, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.Ensure(ctx, operationID, owner); err != nil {
+		t.Fatal(err)
+	}
+	assertClearedDarwinBytes(t, lastRead, "idempotent Ensure record")
+	consumerFailure := errors.New("consumer rejected key")
+	err = source.UseHMACKey(ctx, keyRef, operationID, owner, func(key []byte) error {
+		if !bytes.Equal(key, bytes.Repeat([]byte{0x7a}, sha256.Size)) {
+			t.Fatalf("consumer key=%x", key)
+		}
+		return consumerFailure
+	})
+	if !errors.Is(err, consumerFailure) {
+		t.Fatalf("consumer error=%v", err)
+	}
+	assertClearedDarwinBytes(t, lastRead, "UseHMACKey record")
+}
+
 func TestPF001DarwinKeychainEnsureReconcilesDuplicatePublicationFailures(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -81,15 +173,23 @@ func TestPF001DarwinKeychainEnsureReconcilesDuplicatePublicationFailures(t *test
 
 	t.Run("accept exact winner", func(t *testing.T) {
 		getCalls := 0
+		var winnerRead []byte
 		keychain := scriptedDarwinKeychainCapability{
-			get: func(context.Context, string) ([]byte, error) {
+			get: func(got context.Context, _ string) ([]byte, error) {
+				if got != ctx {
+					t.Fatalf("winner Get context=%+v", got)
+				}
 				getCalls++
 				if getCalls == 1 {
 					return nil, errDarwinKeychainNotFound
 				}
-				return append([]byte(nil), winnerRecord...), nil
+				winnerRead = append([]byte(nil), winnerRecord...)
+				return winnerRead, nil
 			},
-			add: func(context.Context, string, []byte) error {
+			add: func(got context.Context, _ string, _ []byte) error {
+				if got != ctx {
+					t.Fatalf("winner Add context=%+v", got)
+				}
 				return errDarwinKeychainDuplicate
 			},
 		}
@@ -102,6 +202,7 @@ func TestPF001DarwinKeychainEnsureReconcilesDuplicatePublicationFailures(t *test
 		if err != nil || !ref.Equal(winnerRef) {
 			t.Fatalf("duplicate publication winner = %q, %v", ref.String(), err)
 		}
+		assertClearedDarwinBytes(t, winnerRead, "duplicate winner")
 	})
 
 	t.Run("reject unreadable winner", func(t *testing.T) {
@@ -194,6 +295,15 @@ func TestPF001DarwinKeychainUseFailsClosedAtEveryLookupBoundary(t *testing.T) {
 	)
 	if err := missingSource.UseHMACKey(ctx, install.BootstrapKeyRef{}, operationID, owner, consumer); !errors.Is(err, bootstrapport.ErrIntegrity) {
 		t.Fatalf("zero key reference UseHMACKey() error = %v", err)
+	}
+	if err := missingSource.UseHMACKey(ctx, keyRef, install.OperationID{}, owner, consumer); !errors.Is(err, bootstrapport.ErrIntegrity) {
+		t.Fatalf("zero operation UseHMACKey() error = %v", err)
+	}
+	if err := missingSource.UseHMACKey(ctx, keyRef, operationID, install.OwnerBinding{}, consumer); !errors.Is(err, bootstrapport.ErrIntegrity) {
+		t.Fatalf("zero owner UseHMACKey() error = %v", err)
+	}
+	if err := missingSource.UseHMACKey(ctx, keyRef, operationID, owner, nil); !errors.Is(err, bootstrapport.ErrIntegrity) {
+		t.Fatalf("nil consumer UseHMACKey() error = %v", err)
 	}
 	if err := missingSource.UseHMACKey(ctx, keyRef, operationID, owner, consumer); !errors.Is(err, bootstrapport.ErrNotFound) {
 		t.Fatalf("missing Keychain record error = %v", err)
@@ -294,6 +404,26 @@ type scriptedDarwinKeychainCapability struct {
 
 type cancellingDarwinIdentity struct {
 	cancel context.CancelFunc
+}
+
+type darwinOwnerContextSource struct {
+	current func(context.Context) (install.OwnerBinding, error)
+}
+
+func (s darwinOwnerContextSource) Current(ctx context.Context) (install.OwnerBinding, error) {
+	return s.current(ctx)
+}
+
+func assertClearedDarwinBytes(t testing.TB, contents []byte, label string) {
+	t.Helper()
+	if len(contents) == 0 {
+		t.Fatalf("%s was not observed", label)
+	}
+	for _, value := range contents {
+		if value != 0 {
+			t.Fatalf("%s retained key material", label)
+		}
+	}
 }
 
 func (c cancellingDarwinIdentity) PlatformUUID(context.Context) (string, error) {

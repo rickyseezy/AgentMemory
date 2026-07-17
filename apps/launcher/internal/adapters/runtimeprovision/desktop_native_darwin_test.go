@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -344,7 +345,270 @@ func TestDarwinDesktopProbeWorkspaceRequiresOwnerOnlyExpectedContent(t *testing.
 	if err := workspace.cleanup(); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Lstat(workspace.directory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace cleanup left directory behind: %v", err)
+	}
 }
+
+func TestPF001DarwinDesktopProbePoliciesBindEveryAuthorityAndFilesystemAttribute(t *testing.T) {
+	t.Parallel()
+	effectiveUID := os.Geteuid()
+	_, darwinAuthority := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)
+	if err := validateDarwinDesktopProbeAuthority(darwinAuthority, effectiveUID); err != nil {
+		t.Fatalf("exact authority error=%v", err)
+	}
+	_, windowsAuthority := desktopAdapterAuthority(t, runtimeinstall.PlatformWindows)
+	for name, candidate := range map[string]struct {
+		authority runtimeport.DesktopAuthority
+		uid       int
+	}{
+		"zero authority":  {uid: effectiveUID},
+		"wrong platform":  {authority: windowsAuthority, uid: effectiveUID},
+		"nonpositive uid": {authority: darwinAuthority},
+		"wrong principal": {authority: darwinAuthority, uid: effectiveUID + 1},
+	} {
+		t.Run("authority "+name, func(t *testing.T) {
+			if err := validateDarwinDesktopProbeAuthority(candidate.authority, candidate.uid); !errors.Is(err, ErrProvisionIntegrity) {
+				t.Fatalf("authority error=%v", err)
+			}
+		})
+	}
+
+	status := &syscall.Stat_t{Uid: uint32(effectiveUID), Nlink: 1} // #nosec G115 -- native UID fixture.
+	directory := darwinMutationFileInfo{mode: os.ModeDir | 0o700, directory: true, native: status}
+	if !darwinDesktopProbeDirectorySafe(directory, status, true, effectiveUID) {
+		t.Fatal("exact probe directory was rejected")
+	}
+	boundaryStatus := &syscall.Stat_t{Uid: 1, Nlink: 1}
+	boundaryDirectory := darwinMutationFileInfo{mode: os.ModeDir | 0o700, directory: true, native: boundaryStatus}
+	if !darwinDesktopProbeDirectorySafe(boundaryDirectory, boundaryStatus, true, 1) {
+		t.Fatal("minimum non-root UID directory was rejected")
+	}
+	rootStatus := &syscall.Stat_t{Uid: 0, Nlink: 1}
+	rootDirectory := darwinMutationFileInfo{mode: os.ModeDir | 0o700, directory: true, native: rootStatus}
+	if darwinDesktopProbeDirectorySafe(rootDirectory, rootStatus, true, 0) {
+		t.Fatal("root-owned directory was accepted for the desktop user probe")
+	}
+	for name, candidate := range map[string]struct {
+		info        os.FileInfo
+		status      *syscall.Stat_t
+		statusValid bool
+		uid         int
+	}{
+		"nil info":        {status: status, statusValid: true, uid: effectiveUID},
+		"nil stat":        {info: directory, statusValid: true, uid: effectiveUID},
+		"foreign stat":    {info: directory, status: status, uid: effectiveUID},
+		"nonpositive uid": {info: directory, status: status, statusValid: true},
+		"regular": {info: darwinMutationFileInfo{mode: 0o700, native: status},
+			status: status, statusValid: true, uid: effectiveUID},
+		"symlink": {info: darwinMutationFileInfo{
+			mode: os.ModeDir | os.ModeSymlink | 0o700, directory: true, native: status,
+		}, status: status, statusValid: true, uid: effectiveUID},
+		"mode": {info: darwinMutationFileInfo{
+			mode: os.ModeDir | 0o755, directory: true, native: status,
+		}, status: status, statusValid: true, uid: effectiveUID},
+		"owner": {info: directory, status: &syscall.Stat_t{Uid: uint32(effectiveUID + 1)}, // #nosec G115 -- native UID fixture.
+			statusValid: true, uid: effectiveUID},
+	} {
+		t.Run("directory "+name, func(t *testing.T) {
+			if darwinDesktopProbeDirectorySafe(candidate.info, candidate.status, candidate.statusValid, candidate.uid) {
+				t.Fatal("unsafe directory was accepted")
+			}
+		})
+	}
+
+	if !darwinDesktopProbeEntriesSafe(nil) ||
+		!darwinDesktopProbeEntriesSafe([]os.DirEntry{darwinProbeDirEntry("input.bin")}) ||
+		darwinDesktopProbeEntriesSafe([]os.DirEntry{darwinProbeDirEntry("foreign")}) ||
+		darwinDesktopProbeEntriesSafe([]os.DirEntry{darwinProbeDirEntry("input.bin"), darwinProbeDirEntry("foreign")}) {
+		t.Fatal("probe entry allowlist is not exact")
+	}
+
+	content := []byte("probe")
+	digest := runtimeinstall.Sum(content)
+	regular := darwinMutationFileInfo{mode: 0o600, native: status}
+	if !darwinDesktopProbeInputSafe(regular, status, true, effectiveUID, content, digest, nil, nil) {
+		t.Fatal("exact probe input was rejected")
+	}
+	boundaryInput := darwinMutationFileInfo{mode: 0o600, native: boundaryStatus}
+	if !darwinDesktopProbeInputSafe(boundaryInput, boundaryStatus, true, 1, content, digest, nil, nil) {
+		t.Fatal("minimum non-root UID input was rejected")
+	}
+	rootInput := darwinMutationFileInfo{mode: 0o600, native: rootStatus}
+	if darwinDesktopProbeInputSafe(rootInput, rootStatus, true, 0, content, digest, nil, nil) {
+		t.Fatal("root-owned input was accepted for the desktop user probe")
+	}
+	sentinel := errors.New("native I/O failure")
+	for name, candidate := range map[string]struct {
+		info        os.FileInfo
+		status      *syscall.Stat_t
+		statusValid bool
+		uid         int
+		content     []byte
+		digest      runtimeinstall.Hash
+		readError   error
+		closeError  error
+	}{
+		"nil info":        {status: status, statusValid: true, uid: effectiveUID, content: content, digest: digest},
+		"nil stat":        {info: regular, statusValid: true, uid: effectiveUID, content: content, digest: digest},
+		"foreign stat":    {info: regular, status: status, uid: effectiveUID, content: content, digest: digest},
+		"nonpositive uid": {info: regular, status: status, statusValid: true, content: content, digest: digest},
+		"directory": {info: directory, status: status, statusValid: true,
+			uid: effectiveUID, content: content, digest: digest},
+		"mode": {info: darwinMutationFileInfo{mode: 0o644, native: status}, status: status, statusValid: true,
+			uid: effectiveUID, content: content, digest: digest},
+		"owner": {info: regular, status: &syscall.Stat_t{Uid: uint32(effectiveUID + 1), Nlink: 1}, // #nosec G115 -- native UID fixture.
+			statusValid: true, uid: effectiveUID, content: content, digest: digest},
+		"links": {info: regular, status: &syscall.Stat_t{Uid: uint32(effectiveUID), Nlink: 2}, // #nosec G115 -- native UID fixture.
+			statusValid: true, uid: effectiveUID, content: content, digest: digest},
+		"read": {info: regular, status: status, statusValid: true, uid: effectiveUID,
+			content: content, digest: digest, readError: sentinel},
+		"close": {info: regular, status: status, statusValid: true, uid: effectiveUID,
+			content: content, digest: digest, closeError: sentinel},
+		"digest": {info: regular, status: status, statusValid: true, uid: effectiveUID,
+			content: content, digest: runtimeinstall.Sum([]byte("foreign"))},
+	} {
+		t.Run("input "+name, func(t *testing.T) {
+			if darwinDesktopProbeInputSafe(
+				candidate.info, candidate.status, candidate.statusValid, candidate.uid,
+				candidate.content, candidate.digest, candidate.readError, candidate.closeError,
+			) {
+				t.Fatal("unsafe probe input was accepted")
+			}
+		})
+	}
+}
+
+func TestPF001DarwinDesktopProbeFilesystemFailuresRemainClassified(t *testing.T) {
+	t.Parallel()
+
+	t.Run("base parent must exist and be a real directory", func(t *testing.T) {
+		missingParent := filepath.Join(t.TempDir(), "missing", "AgentMemory")
+		if err := ensureDarwinDesktopProbeBase(missingParent); !errors.Is(err, ErrProvisionIntegrity) {
+			t.Fatalf("missing parent error=%v", err)
+		}
+
+		regularParent := filepath.Join(t.TempDir(), "regular-parent")
+		if err := os.WriteFile(regularParent, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureDarwinDesktopProbeBase(filepath.Join(regularParent, "AgentMemory")); !errors.Is(err, ErrProvisionIntegrity) {
+			t.Fatalf("regular parent error=%v", err)
+		}
+
+		target := t.TempDir()
+		symlinkParent := filepath.Join(t.TempDir(), "linked-parent")
+		if err := os.Symlink(target, symlinkParent); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureDarwinDesktopProbeBase(filepath.Join(symlinkParent, "AgentMemory")); !errors.Is(err, ErrProvisionIntegrity) {
+			t.Fatalf("symlink parent error=%v", err)
+		}
+	})
+
+	t.Run("existing base must retain the owner-only directory contract", func(t *testing.T) {
+		base := filepath.Join(t.TempDir(), "AgentMemory")
+		if err := os.Mkdir(base, 0o755); err != nil { // #nosec G301 -- deliberately unsafe fixture.
+			t.Fatal(err)
+		}
+		if err := ensureDarwinDesktopProbeBase(base); !errors.Is(err, ErrRuntimeConflict) {
+			t.Fatalf("unsafe existing base error=%v", err)
+		}
+
+		regularBase := filepath.Join(t.TempDir(), "AgentMemory")
+		if err := os.WriteFile(regularBase, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureDarwinDesktopProbeBase(regularBase); !errors.Is(err, ErrRuntimeConflict) {
+			t.Fatalf("regular existing base error=%v", err)
+		}
+	})
+
+	t.Run("cleanup rejects an unsafe directory before mutation", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "runtime-probe-unsafe")
+		if err := os.Mkdir(directory, 0o755); err != nil { // #nosec G301 -- deliberately unsafe fixture.
+			t.Fatal(err)
+		}
+		if err := removeDarwinDesktopProbeWorkspace(
+			directory, filepath.Join(directory, "input.bin"), runtimeinstall.Sum([]byte("expected")),
+		); !errors.Is(err, ErrRuntimeConflict) {
+			t.Fatalf("unsafe cleanup error=%v", err)
+		}
+	})
+
+	t.Run("cleanup rejects every foreign entry", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "runtime-probe-foreign")
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"foreign-a", "foreign-b"} {
+			if err := os.WriteFile(filepath.Join(directory, name), []byte(name), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := removeDarwinDesktopProbeWorkspace(
+			directory, filepath.Join(directory, "input.bin"), runtimeinstall.Sum([]byte("expected")),
+		)
+		if !errors.Is(err, ErrRuntimeConflict) {
+			t.Fatalf("foreign entry error=%v", err)
+		}
+	})
+
+	t.Run("cleanup refuses a symlinked input", func(t *testing.T) {
+		directory := filepath.Join(t.TempDir(), "runtime-probe-symlink")
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "target")
+		if err := os.WriteFile(target, []byte("expected"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		inputPath := filepath.Join(directory, "input.bin")
+		if err := os.Symlink(target, inputPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeDarwinDesktopProbeWorkspace(
+			directory, inputPath, runtimeinstall.Sum([]byte("expected")),
+		); !errors.Is(err, ErrRuntimeConflict) {
+			t.Fatalf("symlink input error=%v", err)
+		}
+	})
+
+	for _, size := range []int{4097, 4098} {
+		size := size
+		t.Run("bounded input "+strconv.Itoa(size), func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "runtime-probe-bounded")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			content := bytes.Repeat([]byte{'a'}, size)
+			inputPath := filepath.Join(directory, "input.bin")
+			if err := os.WriteFile(inputPath, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := removeDarwinDesktopProbeWorkspace(directory, inputPath, runtimeinstall.Sum(content))
+			if size == 4097 {
+				if err != nil {
+					t.Fatalf("maximum bounded input error=%v", err)
+				}
+				if _, err := os.Lstat(directory); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("maximum bounded input was not removed: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrRuntimeConflict) {
+				t.Fatalf("oversized bounded input error=%v", err)
+			}
+		})
+	}
+}
+
+type darwinProbeDirEntry string
+
+func (e darwinProbeDirEntry) Name() string             { return string(e) }
+func (darwinProbeDirEntry) IsDir() bool                { return false }
+func (darwinProbeDirEntry) Type() os.FileMode          { return 0 }
+func (darwinProbeDirEntry) Info() (os.FileInfo, error) { return nil, errors.New("unused") }
 
 func TestDarwinDesktopMutationExchangeIsOwnerOnlyCanonicalAndCleaned(t *testing.T) {
 	_, desktop := desktopAdapterAuthority(t, runtimeinstall.PlatformDarwin)

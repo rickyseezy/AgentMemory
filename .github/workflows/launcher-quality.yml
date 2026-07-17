@@ -332,6 +332,7 @@ jobs:
             --ignore-msi-with-no-mutations \
             --min-msi 80 \
             --min-covered-msi 80 \
+            --exec-timeout 120 \
             --timeout-coefficient 5 \
             --workers 4 \
             --logger-github \
@@ -412,6 +413,7 @@ jobs:
             --ignore-msi-with-no-mutations \
             --min-msi 80 \
             --min-covered-msi 80 \
+            --exec-timeout 120 \
             --timeout-coefficient 5 \
             --workers 4 \
             --logger-github \
@@ -509,6 +511,7 @@ jobs:
             --per-test \
             --min-msi 80 \
             --min-covered-msi 80 \
+            --exec-timeout 120 \
             --timeout-coefficient 5 \
             --workers 4 \
             --logger-github \

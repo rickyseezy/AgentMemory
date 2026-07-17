@@ -26,8 +26,7 @@ func prepareNativeDesktopProbeWorkspace(
 	if err := ctx.Err(); err != nil {
 		return probeWorkspace{}, err
 	}
-	if !authority.Valid() || authority.Platform() != runtimeinstall.PlatformDarwin || os.Geteuid() <= 0 ||
-		authority.PrincipalID() != "uid:"+strconv.Itoa(os.Geteuid()) {
+	if err := validateDarwinDesktopProbeAuthority(authority, os.Geteuid()); err != nil {
 		return probeWorkspace{}, ErrProvisionIntegrity
 	}
 	base := filepath.Join(authority.HomeDirectory(), "Library", "Caches", "AgentMemory")
@@ -72,6 +71,14 @@ func prepareNativeDesktopProbeWorkspace(
 	}, nil
 }
 
+func validateDarwinDesktopProbeAuthority(authority runtimeport.DesktopAuthority, effectiveUID int) error {
+	if !authority.Valid() || authority.Platform() != runtimeinstall.PlatformDarwin ||
+		authority.PrincipalID() != "uid:"+strconv.Itoa(effectiveUID) {
+		return ErrProvisionIntegrity
+	}
+	return nil
+}
+
 func ensureDarwinDesktopProbeBase(base string) error {
 	parent := filepath.Dir(base)
 	parentInfo, err := os.Lstat(parent)
@@ -86,15 +93,22 @@ func ensureDarwinDesktopProbeBase(base string) error {
 
 func validateDarwinDesktopProbeDirectory(path string) error {
 	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
-		return ErrRuntimeConflict
-	}
-	status, ok := info.Sys().(*syscall.Stat_t)
-	uid := os.Geteuid()
-	if !ok || uid <= 0 || status.Uid != uint32(uid) { // #nosec G115 -- positive Darwin UID.
+	status, statusValid := infoSyscallStat(info)
+	if err != nil || !darwinDesktopProbeDirectorySafe(info, status, statusValid, os.Geteuid()) {
 		return ErrRuntimeConflict
 	}
 	return nil
+}
+
+func darwinDesktopProbeDirectorySafe(
+	info os.FileInfo,
+	status *syscall.Stat_t,
+	statusValid bool,
+	effectiveUID int,
+) bool {
+	return info != nil && statusValid && status != nil && effectiveUID > 0 && info.IsDir() &&
+		info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o700 &&
+		status.Uid == uint32(effectiveUID) // #nosec G115 -- positive Darwin UID.
 }
 
 func removeDarwinDesktopProbeWorkspace(
@@ -110,7 +124,7 @@ func removeDarwinDesktopProbeWorkspace(
 		return ErrRuntimeConflict
 	}
 	entries, err := os.ReadDir(directory)
-	if err != nil || len(entries) > 1 || len(entries) == 1 && entries[0].Name() != "input.bin" {
+	if err != nil || !darwinDesktopProbeEntriesSafe(entries) {
 		return ErrRuntimeConflict
 	}
 	if len(entries) == 1 {
@@ -127,13 +141,10 @@ func removeDarwinDesktopProbeWorkspace(
 		content, readError := io.ReadAll(io.LimitReader(file, 4097))
 		closeError := file.Close()
 		uid := os.Geteuid()
-		if statError != nil || opened == nil || uid <= 0 {
-			return ErrRuntimeConflict
-		}
-		status, ok := opened.Sys().(*syscall.Stat_t)
-		if !ok || !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 ||
-			status.Uid != uint32(uid) || status.Nlink != 1 || readError != nil || closeError != nil || // #nosec G115 -- positive UID.
-			runtimeinstall.Sum(content) != expected {
+		status, statusValid := infoSyscallStat(opened)
+		if statError != nil || !darwinDesktopProbeInputSafe(
+			opened, status, statusValid, uid, content, expected, readError, closeError,
+		) {
 			return ErrRuntimeConflict
 		}
 		if err := os.Remove(inputPath); err != nil {
@@ -141,4 +152,23 @@ func removeDarwinDesktopProbeWorkspace(
 		}
 	}
 	return os.Remove(directory)
+}
+
+func darwinDesktopProbeEntriesSafe(entries []os.DirEntry) bool {
+	return len(entries) == 0 || len(entries) == 1 && entries[0].Name() == "input.bin"
+}
+
+func darwinDesktopProbeInputSafe(
+	info os.FileInfo,
+	status *syscall.Stat_t,
+	statusValid bool,
+	effectiveUID int,
+	content []byte,
+	expected runtimeinstall.Hash,
+	readError error,
+	closeError error,
+) bool {
+	return info != nil && statusValid && status != nil && effectiveUID > 0 && info.Mode().IsRegular() &&
+		info.Mode().Perm() == 0o600 && status.Uid == uint32(effectiveUID) && status.Nlink == 1 && // #nosec G115 -- positive Darwin UID.
+		readError == nil && closeError == nil && runtimeinstall.Sum(content) == expected
 }

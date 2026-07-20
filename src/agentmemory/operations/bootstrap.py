@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -21,6 +22,10 @@ from agentmemory.operations.adapters.outbound.local_provider import (
     LocalRerankingHttpAdapter,
 )
 from agentmemory.operations.adapters.outbound.neo4j_graph import Neo4jGraphAdapter
+from agentmemory.operations.adapters.outbound.neo4j_projection_rebuild import (
+    Neo4jProjectionGenerationAdapter,
+    ProjectionGenerationRouter,
+)
 from agentmemory.operations.adapters.outbound.probes import FunctionalReadinessProbe
 from agentmemory.operations.adapters.outbound.protected_file import read_protected_file, zero_secret
 from agentmemory.operations.adapters.outbound.provider_checks import (
@@ -34,6 +39,9 @@ from agentmemory.operations.adapters.outbound.sqlite_checks import (
     SqliteReadinessChecks,
     SqliteSemanticSmokeStore,
 )
+from agentmemory.operations.adapters.outbound.sqlite_projection_rebuild import (
+    SqliteProjectionRebuildAdapter,
+)
 from agentmemory.operations.adapters.outbound.sqlite_store import (
     SqliteCoreStore,
     SqliteRuntimePolicy,
@@ -45,7 +53,12 @@ from agentmemory.operations.application.commands.active_release import (
 from agentmemory.operations.application.commands.bootstrap_local_brain import (
     BootstrapLocalBrainHandler,
 )
+from agentmemory.operations.application.commands.projection_rebuild import (
+    ProjectionRebuilder,
+    StartProjectionRebuildHandler,
+)
 from agentmemory.operations.application.commands.verify_readiness import VerifyReadinessHandler
+from agentmemory.operations.application.projection_worker import ProjectionRebuildWorker
 from agentmemory.operations.application.runtime_readiness import RuntimeReadinessCoordinator
 from agentmemory.operations.domain.readiness import ReadinessProbe
 from agentmemory.operations.infrastructure.configuration import CoreSettings
@@ -171,6 +184,20 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
     )
     unit_of_work = SqliteUnitOfWorkFactory(store, clock)
     readiness = VerifyReadinessHandler(probes, unit_of_work, clock)
+    projection_adapter = SqliteProjectionRebuildAdapter(store, clock)
+    projection_generations = ProjectionGenerationRouter(
+        projection_adapter,
+        Neo4jProjectionGenerationAdapter(neo4j_driver, resolved.neo4j_database),
+    )
+    projection_worker = ProjectionRebuildWorker(
+        projection_adapter,
+        ProjectionRebuilder(
+            projection_adapter,
+            projection_adapter,
+            projection_generations,
+            projection_adapter,
+        ),
+    )
     runtime_probes = (
         FunctionalReadinessProbe(
             ReadinessProbe.SQLITE_INTEGRITY,
@@ -207,6 +234,12 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
         active_release=ActiveReleaseTransactionHandler(unit_of_work),
         runtime_readiness=RuntimeReadinessCoordinator(readiness, runtime_probes, clock),
         status_query=SqliteReadinessStatusQuery(store),
+        projection_rebuild=StartProjectionRebuildHandler(
+            projection_adapter,
+            projection_adapter,
+            projection_adapter,
+        ),
+        projection_rebuild_query=projection_adapter,
         allowed_hosts=frozenset(resolved.allowed_hosts),
     )
     container = CoreContainer(store, neo4j_driver, provider_client)
@@ -214,10 +247,16 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         del application
+        stop = asyncio.Event()
+        task: asyncio.Task[None] | None = None
         try:
             await store.observe_and_enforce_policy()
+            task = asyncio.create_task(projection_worker.run(stop))
             yield
         finally:
+            stop.set()
+            if task is not None:
+                await task
             await container.close()
 
     return create_app(dependencies, lifespan)

@@ -21,6 +21,12 @@ from agentmemory.operations.domain.errors import (
     ErrorCode,
     OperationError,
 )
+from agentmemory.operations.domain.projection_rebuild import (
+    ProjectionRebuild,
+    ProjectionType,
+    RebuildManifest,
+    StartProjectionRebuildCommand,
+)
 from agentmemory.operations.domain.readiness import ReadinessBinding
 from agentmemory.operations.domain.value_objects import (
     OperationId,
@@ -229,6 +235,75 @@ class ActiveReleaseMatchesResponseModel(_StrictRequest):
     matches: bool
 
 
+class RebuildManifestModel(_StrictRequest):
+    """Complete immutable implementation/provider pin set for PF-002 replay."""
+
+    application_build: str = Field(min_length=1, max_length=256)
+    relational_schema: str = Field(min_length=1, max_length=256)
+    graph_schema: str = Field(min_length=1, max_length=256)
+    parser_version: str = Field(min_length=1, max_length=256)
+    extractor_version: str = Field(min_length=1, max_length=256)
+    provider_versions: list[str] = Field(min_length=1, max_length=32)
+    embedding_space: str = Field(min_length=1, max_length=256)
+    implementation_fingerprint: str
+
+    def to_domain(self) -> RebuildManifest:
+        """Translate strict boundary values into the reproducibility manifest."""
+        return RebuildManifest(
+            application_build=self.application_build,
+            relational_schema=self.relational_schema,
+            graph_schema=self.graph_schema,
+            parser_version=self.parser_version,
+            extractor_version=self.extractor_version,
+            provider_versions=tuple(self.provider_versions),
+            embedding_space=self.embedding_space,
+            implementation_fingerprint=Sha256Digest(self.implementation_fingerprint),
+        )
+
+
+class StartProjectionRebuildRequestModel(_StrictRequest):
+    """Start one projection family at an optional committed watermark."""
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    brain_id: str
+    actor_id: str
+    grant_id: str
+    projection_type: Literal["graph", "memory", "search", "code", "vector"]
+    requested_watermark: int | None = Field(default=None, ge=0)
+    manifest: RebuildManifestModel
+
+    def to_domain(self) -> StartProjectionRebuildCommand:
+        """Create a framework-independent rebuild command."""
+        return StartProjectionRebuildCommand(
+            operation_id=self.operation_id,
+            brain_id=Uuid7Id(self.brain_id),
+            actor_id=Uuid7Id(self.actor_id),
+            grant_id=Uuid7Id(self.grant_id),
+            projection_type=ProjectionType(self.projection_type),
+            manifest=self.manifest.to_domain(),
+            requested_watermark=self.requested_watermark,
+        )
+
+
+class ProjectionRebuildResponseModel(_StrictRequest):
+    """Content-free operation state with deterministic replay evidence."""
+
+    operation_id: str
+    brain_id: str
+    projection_type: str
+    source_watermark: int
+    cursor: int
+    generation_id: str
+    manifest_digest: str
+    state: str
+    record_count: int
+    skipped_tombstones: int
+    generation_digest: str | None
+    partial_reason: str | None
+    created_at: str
+    updated_at: str
+
+
 class AuthenticatorPort(Protocol):
     """Authenticate one launcher request."""
 
@@ -275,6 +350,22 @@ class ActiveReleaseHandlerPort(Protocol):
 
     async def matches(self, pointer: ActiveReleasePointer) -> bool:
         """Reconcile the exact durable pointer mirror."""
+        ...
+
+
+class ProjectionRebuildHandlerPort(Protocol):
+    """Start one durable shadow-generation rebuild."""
+
+    async def execute(self, command: StartProjectionRebuildCommand) -> ProjectionRebuild:
+        """Persist and return the exact queued or idempotent operation."""
+        ...
+
+
+class ProjectionRebuildQueryPort(Protocol):
+    """Read durable projection operation metadata."""
+
+    async def get(self, operation_id: str) -> ProjectionRebuild | None:
+        """Return the operation without projected content."""
         ...
 
 
@@ -325,6 +416,20 @@ class _ContractActiveReleaseHandler:
         raise RuntimeError(msg)
 
 
+class _ContractProjectionRebuildHandler:
+    async def execute(self, command: StartProjectionRebuildCommand) -> ProjectionRebuild:
+        del command
+        msg = "contract-only dependency cannot start a projection rebuild"
+        raise RuntimeError(msg)
+
+
+class _ContractProjectionRebuildQuery:
+    async def get(self, operation_id: str) -> ProjectionRebuild | None:
+        del operation_id
+        msg = "contract-only dependency cannot query a projection rebuild"
+        raise RuntimeError(msg)
+
+
 class _ContractStatusQuery:
     async def latest(self) -> ReadinessReceipt | None:
         msg = "contract-only dependency cannot query status"
@@ -348,6 +453,8 @@ class ApiDependencies:
     active_release: ActiveReleaseHandlerPort
     runtime_readiness: RuntimeReadinessPort
     status_query: ReadinessStatusPort
+    projection_rebuild: ProjectionRebuildHandlerPort
+    projection_rebuild_query: ProjectionRebuildQueryPort
     allowed_hosts: frozenset[str]
 
 
@@ -432,6 +539,8 @@ def export_openapi_schema() -> dict[str, object]:
             active_release=_ContractActiveReleaseHandler(),
             runtime_readiness=_ContractRuntimeReadiness(),
             status_query=_ContractStatusQuery(),
+            projection_rebuild=_ContractProjectionRebuildHandler(),
+            projection_rebuild_query=_ContractProjectionRebuildQuery(),
             allowed_hosts=frozenset({"127.0.0.1:9411"}),
         )
     )
@@ -635,12 +744,41 @@ def _register_command_routes(
             matches=await dependencies.active_release.matches(pointer)
         )
 
+    @application.post(
+        "/operations/rebuilds",
+        dependencies=[Depends(authenticate)],
+        response_model=ProjectionRebuildResponseModel,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def start_projection_rebuild(
+        request: StartProjectionRebuildRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> ProjectionRebuildResponseModel:
+        """Queue a generation-isolated rebuild at one immutable source watermark."""
+        _validate_idempotency(idempotency_key, request.operation_id)
+        result = await dependencies.projection_rebuild.execute(request.to_domain())
+        return _projection_rebuild_response(result)
+
+    @application.get(
+        "/operations/rebuilds/{operation_id}",
+        dependencies=[Depends(authenticate)],
+        response_model=ProjectionRebuildResponseModel,
+    )
+    async def projection_rebuild_status(operation_id: str) -> ProjectionRebuildResponseModel:
+        """Return progress, partial reason, and validation digest without memory content."""
+        result = await dependencies.projection_rebuild_query.get(operation_id)
+        if result is None:
+            raise OperationError(ErrorCode.VALIDATION, "projection rebuild was not found")
+        return _projection_rebuild_response(result)
+
     _registered_routes = (
         bootstrap_local_brain,
         verify_readiness,
         stage_active_release,
         commit_active_release,
         active_release_matches,
+        start_projection_rebuild,
+        projection_rebuild_status,
     )
     del _registered_routes
 
@@ -706,6 +844,27 @@ def _receipt_response(receipt: ReadinessReceipt) -> ReadinessReceiptResponseMode
             for result in receipt.results
         ),
         receipt_digest=receipt.digest.value,
+    )
+
+
+def _projection_rebuild_response(value: ProjectionRebuild) -> ProjectionRebuildResponseModel:
+    return ProjectionRebuildResponseModel(
+        operation_id=value.operation_id,
+        brain_id=value.brain_id.value,
+        projection_type=value.projection_type.value,
+        source_watermark=value.source_watermark,
+        cursor=value.cursor,
+        generation_id=value.generation_id.value,
+        manifest_digest=value.manifest.digest.value,
+        state=value.state.value,
+        record_count=value.record_count,
+        skipped_tombstones=value.skipped_tombstones,
+        generation_digest=(
+            None if value.generation_digest is None else value.generation_digest.value
+        ),
+        partial_reason=value.partial_reason,
+        created_at=format_rfc3339_microseconds(value.created_at),
+        updated_at=format_rfc3339_microseconds(value.updated_at),
     )
 
 

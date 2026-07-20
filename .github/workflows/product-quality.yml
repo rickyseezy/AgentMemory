@@ -122,6 +122,12 @@ jobs:
             --branch 80 \
             --changed 80
 
+      - name: Enforce PF-002 critical-domain mutation score
+        run: |
+          rm -rf mutants
+          uv run mutmut run
+          uv run python tools/check_python_mutation.py mutants --minimum 80
+
       - name: Prove deterministic public OpenAPI
         run: |
           mkdir -p build

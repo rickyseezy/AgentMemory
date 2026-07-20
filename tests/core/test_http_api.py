@@ -31,13 +31,20 @@ from agentmemory.operations.domain.active_release import (
 )
 from agentmemory.operations.domain.bootstrap import BootstrapDisposition, BootstrapRequest
 from agentmemory.operations.domain.errors import ErrorCode, OperationError
+from agentmemory.operations.domain.projection_rebuild import (
+    ProjectionRebuild,
+    RebuildState,
+    StartProjectionRebuildCommand,
+    derive_generation_id,
+    derive_rebuild_key,
+)
 from agentmemory.operations.domain.readiness import (
     ReadinessBinding,
     ReadinessProbe,
     ReadinessReceipt,
 )
 from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest
-from tests.core.support import active_pointer, binding, bootstrap_request, receipt
+from tests.core.support import NOW, active_pointer, binding, bootstrap_request, receipt
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -131,6 +138,45 @@ class _RuntimeReadiness:
         return anchor if self.ready else None
 
 
+@dataclass(slots=True)
+class _ProjectionRebuilds:
+    value: ProjectionRebuild | None = None
+
+    async def execute(self, command: StartProjectionRebuildCommand) -> ProjectionRebuild:
+        key = derive_rebuild_key(
+            command.projection_type,
+            command.brain_id,
+            0,
+            command.manifest.implementation_fingerprint,
+        )
+        self.value = ProjectionRebuild(
+            command.operation_id,
+            command.brain_id,
+            command.actor_id,
+            command.grant_id,
+            command.projection_type,
+            0,
+            0,
+            key,
+            derive_generation_id(key, command.manifest.digest),
+            command.manifest,
+            RebuildState.QUEUED,
+            None,
+            0,
+            0,
+            None,
+            None,
+            NOW,
+            NOW,
+        )
+        return self.value
+
+    async def get(self, operation_id: str) -> ProjectionRebuild | None:
+        if self.value is None or self.value.operation_id != operation_id:
+            return None
+        return self.value
+
+
 def _dependencies(
     *,
     stored_receipt: ReadinessReceipt | None = None,
@@ -140,6 +186,7 @@ def _dependencies(
     authenticator = _Authenticator()
     readiness = _ReadinessHandler(execute_ready=execute_ready)
     runtime_readiness = _RuntimeReadiness(ready=live_ready)
+    rebuilds = _ProjectionRebuilds()
     return (
         ApiDependencies(
             authenticator=authenticator,
@@ -148,6 +195,8 @@ def _dependencies(
             active_release=_ActiveReleaseHandler(),
             runtime_readiness=runtime_readiness,
             status_query=_Status(stored_receipt),
+            projection_rebuild=rebuilds,
+            projection_rebuild_query=rebuilds,
             allowed_hosts=frozenset({"127.0.0.1:9411"}),
         ),
         authenticator,
@@ -180,6 +229,50 @@ def _readiness_json() -> dict[str, str]:
         "manifest_digest": value.manifest_digest.value,
         "compose_digest": value.compose_digest.value,
     }
+
+
+def _rebuild_json() -> dict[str, object]:
+    request = bootstrap_request()
+    return {
+        "operation_id": "projection-rebuild-1",
+        "brain_id": request.brain_id.value,
+        "actor_id": request.owner_principal_id.value,
+        "grant_id": request.owner_grant_id.value,
+        "projection_type": "graph",
+        "manifest": {
+            "application_build": "1.0.0+abc",
+            "relational_schema": "0002_pf002_projection_rebuild",
+            "graph_schema": "0002_pf002_projection_schema",
+            "parser_version": "parser@1",
+            "extractor_version": "extractor@1",
+            "provider_versions": ["provider@1"],
+            "embedding_space": "embedding@1",
+            "implementation_fingerprint": Sha256Digest.from_bytes(b"implementation").value,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_projection_rebuild_contract_queues_and_returns_content_free_status() -> None:
+    dependencies, _, _ = _dependencies()
+    headers = {
+        "Authorization": "Bearer valid",
+        "Idempotency-Key": "projection-rebuild-1",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(dependencies)),
+        base_url="http://127.0.0.1:9411",
+    ) as client:
+        started = await client.post("/operations/rebuilds", headers=headers, json=_rebuild_json())
+        queried = await client.get(
+            "/operations/rebuilds/projection-rebuild-1",
+            headers={"Authorization": "Bearer valid"},
+        )
+    assert started.status_code == 202
+    assert started.json()["state"] == "queued"
+    assert queried.status_code == 200
+    assert queried.json() == started.json()
+    assert "payload" not in started.text
 
 
 @pytest.mark.asyncio
@@ -429,6 +522,8 @@ def test_openapi_export_is_deterministic_closed_and_serializable() -> None:
     paths: object = first["paths"]
     assert isinstance(paths, dict)
     assert set(cast("dict[str, object]", paths)) == {
+        "/operations/rebuilds",
+        "/operations/rebuilds/{operation_id}",
         "/v1/status",
         "/v1/bootstrap",
         "/v1/readiness:verify",

@@ -36,6 +36,7 @@ dev = [
   "coverage==7.15.1",
   "hypothesis==6.156.6",
   "import-linter==2.9",
+  "mutmut==3.6.0",
   "mypy==2.2.0",
   "pip-audit==2.10.1",
   "pyright==1.1.408",
@@ -128,6 +129,7 @@ addopts = ["--strict-config", "--strict-markers", "-ra"]
 asyncio_mode = "strict"
 xfail_strict = true
 filterwarnings = ["error"]
+norecursedirs = ["mutants"]
 markers = [
   "contract: public/repository contract suite",
   "integration: real supported infrastructure",
@@ -157,3 +159,13 @@ exclude_also = ["if TYPE_CHECKING:"]
 exclude_dirs = ["tests", "migrations"]
 targets = ["src", "apps"]
 skips = []
+
+[tool.mutmut]
+source_paths = ["src/agentmemory"]
+only_mutate = ["*operations/domain/projection_rebuild.py"]
+pytest_add_cli_args_test_selection = [
+  "tests/core/test_projection_rebuild_domain.py",
+  "tests/core/test_projection_rebuild_application.py",
+]
+mutate_only_covered_lines = true
+use_setproctitle = false

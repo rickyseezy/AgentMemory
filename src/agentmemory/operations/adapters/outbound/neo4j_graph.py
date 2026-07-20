@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.dependency_ports import ActiveBrainPort, EmbeddingVector
     from agentmemory.operations.domain.readiness import ReadinessBinding
 
-NEO4J_SCHEMA_HEAD = "0001_pf001_core_schema"
+NEO4J_SCHEMA_HEAD = "0002_pf002_projection_schema"
 VECTOR_INDEX_NAME = "am_pf001_vectors"
 MINIMUM_NEO4J_VERSION = (2026, 6, 0)
 EXPECTED_DRIVER_VERSION = "6.2.0"

@@ -9,13 +9,22 @@ if TYPE_CHECKING:
 
     from agentmemory.operations.domain.active_release import ActiveReleasePointer
     from agentmemory.operations.domain.bootstrap import BootstrapDisposition, BootstrapRequest
+    from agentmemory.operations.domain.projection_rebuild import (
+        ProjectionRebuild,
+        ProjectionType,
+        ProjectionValidation,
+        RebuildManifest,
+        SourcePage,
+        SourceRecord,
+        StartProjectionRebuildCommand,
+    )
     from agentmemory.operations.domain.readiness import (
         ProbeEvidence,
         ReadinessBinding,
         ReadinessProbe,
         ReadinessReceipt,
     )
-    from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest
+    from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest, Uuid7Id
 
 
 class ReadinessProbePort(Protocol):
@@ -179,4 +188,130 @@ class CoreUnitOfWorkFactory(Protocol):
 
     def __call__(self) -> CoreUnitOfWork:
         """Return an unopened Unit of Work."""
+        ...
+
+
+class CanonicalProjectionSourcePort(Protocol):
+    """Read immutable pages from canonical SQL events and authorized artifacts."""
+
+    async def latest_watermark(self, brain_id: Uuid7Id) -> int:
+        """Capture the last committed source sequence for one Brain."""
+        ...
+
+    async def read_page(
+        self,
+        brain_id: Uuid7Id,
+        projection_type: ProjectionType,
+        after_cursor: int,
+        watermark: int,
+        limit: int,
+    ) -> SourcePage:
+        """Read only records at or below the fixed rebuild watermark."""
+        ...
+
+
+class ProjectionAccessPolicyPort(Protocol):
+    """Re-evaluate authorization and deletion state during every replay page."""
+
+    async def authorize(self, brain_id: Uuid7Id, actor_id: Uuid7Id, grant_id: Uuid7Id) -> None:
+        """Reject absent, expired, revoked, or wrong-Brain grants."""
+        ...
+
+    async def is_tombstoned(self, brain_id: Uuid7Id, source: SourceRecord) -> bool:
+        """Return true when authoritative SQL forbids materialization."""
+        ...
+
+
+class ProjectionGenerationPort(Protocol):
+    """Write and validate isolated derived records without changing query visibility."""
+
+    async def prepare(
+        self,
+        brain_id: Uuid7Id,
+        projection_type: ProjectionType,
+        generation_id: Sha256Digest,
+        manifest: RebuildManifest,
+    ) -> None:
+        """Create or verify one exact immutable shadow generation."""
+        ...
+
+    async def put(
+        self,
+        brain_id: Uuid7Id,
+        projection_type: ProjectionType,
+        generation_id: Sha256Digest,
+        record: SourceRecord,
+        manifest: RebuildManifest,
+    ) -> bool:
+        """Insert once, accept an exact replay, and reject divergent duplicates."""
+        ...
+
+    async def validate(
+        self,
+        brain_id: Uuid7Id,
+        projection_type: ProjectionType,
+        generation_id: Sha256Digest,
+        manifest: RebuildManifest,
+    ) -> ProjectionValidation:
+        """Run counts, lineage, integrity, policy, tombstone, and golden-query gates."""
+        ...
+
+
+class ProjectionRebuildRepository(Protocol):
+    """Persist durable rebuild jobs and the sole canonical activation pointers."""
+
+    async def create(
+        self,
+        command: StartProjectionRebuildCommand,
+        source_watermark: int,
+        rebuild_key: Sha256Digest,
+        generation_id: Sha256Digest,
+    ) -> ProjectionRebuild:
+        """Create or return the exact idempotent rebuild operation."""
+        ...
+
+    async def get(self, operation_id: str) -> ProjectionRebuild | None:
+        """Return one rebuild without exposing projected content."""
+        ...
+
+    async def next_runnable(self) -> str | None:
+        """Return the oldest queued/partial or expired-lease operation without claiming it."""
+        ...
+
+    async def claim(self, operation_id: str) -> ProjectionRebuild:
+        """Claim queued or partial work and move it to building."""
+        ...
+
+    async def checkpoint(
+        self,
+        operation_id: str,
+        cursor: int,
+        inserted: int,
+        skipped_tombstones: int,
+    ) -> ProjectionRebuild:
+        """Persist monotonic replay progress after idempotent projection writes."""
+        ...
+
+    async def mark_partial(self, operation_id: str, reason: str) -> ProjectionRebuild:
+        """Pause at the last committed cursor with a typed safe reason."""
+        ...
+
+    async def begin_validation(self, operation_id: str) -> ProjectionRebuild:
+        """Close replay and enter the non-visible validation stage."""
+        ...
+
+    async def mark_ready(
+        self,
+        operation_id: str,
+        validation: ProjectionValidation,
+    ) -> ProjectionRebuild:
+        """Persist passing validation evidence before activation."""
+        ...
+
+    async def activate(self, operation_id: str) -> ProjectionRebuild:
+        """Atomically compare-and-swap the active generation pointer."""
+        ...
+
+    async def fail(self, operation_id: str, reason: str) -> ProjectionRebuild:
+        """Quarantine failed work without changing the active pointer."""
         ...

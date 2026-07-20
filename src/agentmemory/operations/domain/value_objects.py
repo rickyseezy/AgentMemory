@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,6 +27,11 @@ class Sha256Digest:
         if _DIGEST_PATTERN.fullmatch(self.value) is None or set(self.value) == {"0"}:
             msg = "digest must be a non-zero lowercase SHA-256 value"
             raise DomainValidationError(msg)
+
+    @classmethod
+    def from_bytes(cls, value: bytes) -> Sha256Digest:
+        """Hash trusted bytes into one validated digest value."""
+        return cls(hashlib.sha256(value).hexdigest())
 
 
 @dataclass(frozen=True, slots=True)

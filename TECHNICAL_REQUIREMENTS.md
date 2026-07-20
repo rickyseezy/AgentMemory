@@ -1720,6 +1720,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PF-002 — Rebuild all derived state
 
+**Implementation record:** [`docs/implementation/PF-002.md`](docs/implementation/PF-002.md) and
+[`docs/runbooks/PF-002-PROJECTION-REBUILD.md`](docs/runbooks/PF-002-PROJECTION-REBUILD.md).
+
 **User story:** As an operator, I can rebuild graph, memory, search, code, and vector projections from canonical events and authorized artifacts.
 
 **Acceptance criteria**

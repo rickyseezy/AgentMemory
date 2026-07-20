@@ -103,7 +103,7 @@ def _vector(content_id: str = "canary", dimension: int = 1024) -> EmbeddingVecto
 async def test_graph_compatibility_checks_live_version_schema_and_filtered_index() -> None:
     driver = _Driver()
     proof = await _adapter(driver).verify(binding())
-    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0001_pf001_core_schema")
+    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0002_pf002_projection_schema")
     assert any("SHOW VECTOR INDEXES" in query for query, _ in driver.calls)
 
 
@@ -161,12 +161,12 @@ async def test_graph_migration_runs_closed_ordered_schema_and_awaits_index() -> 
     driver = _Driver()
     migration_directory = Path(__file__).parents[2] / "migrations" / "neo4j"
     await migrate_neo4j(cast("AsyncDriver", driver), "agentmemory", migration_directory)
-    assert len(driver.calls) == 5
+    assert len(driver.calls) == 9
     assert "CREATE CONSTRAINT" in driver.calls[0][0]
     assert "CREATE VECTOR INDEX" in driver.calls[2][0]
-    assert NEO4J_SCHEMA_HEAD in driver.calls[3][0]
-    assert "db.awaitIndex" in driver.calls[4][0]
-    assert driver.calls[4][1]["index_name"] == VECTOR_INDEX_NAME
+    assert NEO4J_SCHEMA_HEAD in driver.calls[7][0]
+    assert "db.awaitIndex" in driver.calls[8][0]
+    assert driver.calls[8][1]["index_name"] == VECTOR_INDEX_NAME
 
 
 @pytest.mark.asyncio
@@ -175,6 +175,10 @@ async def test_graph_migration_rejects_any_tampered_bundle(tmp_path: Path) -> No
     source = Path(__file__).parents[2] / "migrations" / "neo4j" / ("0001_pf001_core_schema.cypher")
     target = tmp_path / source.name
     target.write_bytes(source.read_bytes() + b"\n// tampered")
+    second = (
+        Path(__file__).parents[2] / "migrations" / "neo4j" / ("0002_pf002_projection_schema.cypher")
+    )
+    (tmp_path / second.name).write_bytes(second.read_bytes())
     with pytest.raises(RuntimeError, match="digest integrity"):
         await migrate_neo4j(cast("AsyncDriver", _Driver()), "agentmemory", tmp_path)
 

@@ -92,6 +92,10 @@ from agentmemory.ingestion.adapters.outbound.sqlite_ordered_replay import (
     SqliteOrderedReplayAccessPolicy,
     SqliteOrderedReplayRepository,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
+    SqliteCapturePolicyDecisionRepository,
+    SqliteCapturePolicyRepository,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     GetAdapterCapabilitiesHandler,
     ListAdapterCapabilitiesHandler,
@@ -117,6 +121,7 @@ from agentmemory.ingestion.application.ordered_replay import (
     OrderedReplayWorker,
     StartOrderedReplayHandler,
 )
+from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.backpressure import QueueLimits, RetryPolicy
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
@@ -615,6 +620,8 @@ def _include_ingestion_runtime_routers(  # noqa: PLR0913 -- Outer composition is
                 SqliteAdapterCapabilityRegistry(store.engine),
                 SqliteAgentEventScopeResolver(store.engine, clock),
                 InlineOnlyPayloadReader(),
+                CapturePolicyPipeline(SqliteCapturePolicyRepository(store)),
+                SqliteCapturePolicyDecisionRepository(store),
                 AppendAgentEventHandler(
                     CanonicalAgentEventEncoder(),
                     AesGcmAgentEventEncryptor(

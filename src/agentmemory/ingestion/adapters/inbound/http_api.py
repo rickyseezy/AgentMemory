@@ -251,6 +251,8 @@ async def _execute_batch_item(
         disposition = SpoolUploadDisposition.ACCEPTED
     elif receipt.disposition is AppendDisposition.DUPLICATE:
         disposition = SpoolUploadDisposition.DUPLICATE
+    elif receipt.disposition is AppendDisposition.IGNORED:
+        disposition = SpoolUploadDisposition.ACCEPTED
     else:
         return _batch_item(event.event_id, SpoolUploadDisposition.RETRYABLE)
     return _batch_item(

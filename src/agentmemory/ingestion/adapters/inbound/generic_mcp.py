@@ -217,6 +217,7 @@ def _tool_receipt(
     if receipt.disposition not in {
         AppendDisposition.ACCEPTED,
         AppendDisposition.DUPLICATE,
+        AppendDisposition.IGNORED,
     }:
         return _tool_failure(request_id)
     structured = {
@@ -226,7 +227,7 @@ def _tool_receipt(
     return _result(
         request_id,
         {
-            "content": [{"text": "Checkpoint persisted", "type": "text"}],
+            "content": [{"text": "Checkpoint processed by capture policy", "type": "text"}],
             "isError": False,
             "structuredContent": structured,
         },

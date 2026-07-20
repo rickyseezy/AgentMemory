@@ -137,6 +137,7 @@ class HttpGenericAgentAdapter:
         if event_id != event.event_id or disposition not in {
             AppendDisposition.ACCEPTED,
             AppendDisposition.DUPLICATE,
+            AppendDisposition.IGNORED,
         }:
             msg = "generic adapter received a conflicting capture receipt"
             raise IngestionDependencyError(msg)

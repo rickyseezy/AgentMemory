@@ -13,6 +13,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from agentmemory.ingestion.adapters.outbound.sqlite_capabilities import (
     SqliteAdapterCapabilityQueryRepository,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
+    SqliteTransactionPrivacyDecisionRepository,
+)
 from agentmemory.ingestion.domain.agent_event import (
     ResolvedAgentEventIdentity,
 )
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
         AgentEventRepository,
         AgentEventUnitOfWork,
         ArtifactRepository,
+        CapturePolicyDecisionRepository,
         IngestionAuditRepository,
         OutboxRepository,
     )
@@ -163,6 +167,7 @@ class SqliteAgentEventUnitOfWork:
         self.artifacts: ArtifactRepository
         self.outbox: OutboxRepository
         self.audit: IngestionAuditRepository
+        self.privacy: CapturePolicyDecisionRepository
 
     async def __aenter__(self) -> Self:
         """Acquire the sole writer and begin before exposing the repository."""
@@ -187,6 +192,7 @@ class SqliteAgentEventUnitOfWork:
         self.artifacts = SqliteArtifactRepository(connection)
         self.outbox = SqliteOutboxRepository(connection)
         self.audit = SqliteIngestionAuditRepository(connection)
+        self.privacy = SqliteTransactionPrivacyDecisionRepository(connection)
         return self
 
     async def __aexit__(

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0012_ing004_backpressure_dlq"
+EXPECTED_MIGRATION_HEAD = "0013_ing005_capture_privacy"
 
 
 class SqliteActiveBrainResolver:

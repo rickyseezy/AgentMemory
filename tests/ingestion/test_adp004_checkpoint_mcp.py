@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import io
 import json
-from typing import cast
+from typing import TYPE_CHECKING, cast, override
 
 import pytest
 
 from agentmemory.ingestion.adapters.generic_transcript import RegexSensitiveTextRedactor
 from agentmemory.ingestion.adapters.inbound.generic_mcp import GenericCheckpointMcpServer
 from agentmemory.ingestion.application.generic_adapter import CheckpointGenericTaskHandler
+from agentmemory.ingestion.domain.capture import AppendAgentEventResult, AppendDisposition
 from agentmemory.ingestion.infrastructure.generic_cli import create_generic_cli_parser
 from tests.ingestion.test_adp004_observers_and_wrapper import RecordingAdapter
 from tests.ingestion.test_adp004_transcript_and_application import context
+
+if TYPE_CHECKING:
+    from agentmemory.ingestion.domain.agent_event import AgentEvent
 
 
 def frame(document: dict[str, object]) -> bytes:
@@ -44,6 +48,15 @@ def server(adapter: RecordingAdapter) -> GenericCheckpointMcpServer:
         CheckpointGenericTaskHandler(RegexSensitiveTextRedactor(), adapter),
         context(),
     )
+
+
+class IgnoringAdapter(RecordingAdapter):
+    """Return a terminal policy exclusion after retaining the observed test event."""
+
+    @override
+    async def execute(self, event: AgentEvent) -> AppendAgentEventResult:
+        self.events.append(event)
+        return AppendAgentEventResult(event.event_id, AppendDisposition.IGNORED, 1)
 
 
 @pytest.mark.asyncio
@@ -89,10 +102,41 @@ async def test_stdio_mcp_initializes_lists_and_calls_checkpoint_with_stdout_puri
     assert call_result["isError"] is False
     structured = cast("dict[str, object]", call_result["structuredContent"])
     assert structured["status"] == "accepted"
+    assert call_result["content"] == [
+        {"text": "Checkpoint processed by capture policy", "type": "text"}
+    ]
     assert all(json.dumps(response, separators=(",", ":")).encode() for response in responses)
     assert len(adapter.events) == 1
     assert adapter.events[0].payload is not None
     assert b"private-value" not in adapter.events[0].payload.value
+
+
+@pytest.mark.asyncio
+async def test_mcp_reports_ignored_policy_decision_as_terminal_success() -> None:
+    mcp = server(IgnoringAdapter())
+    await mcp.handle_frame(initialize())
+    await mcp.handle_frame(initialized())
+    response = await mcp.handle_frame(
+        frame(
+            {
+                "id": 3,
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "arguments": {
+                        "checkpoint_id": "018f0000-0000-7000-8000-000000000224",
+                        "summary": "safe checkpoint",
+                    },
+                    "name": "agentmemory_checkpoint",
+                },
+            }
+        )
+    )
+    assert response is not None
+    result = _result_document(response)
+    assert result["isError"] is False
+    structured = cast("dict[str, object]", result["structuredContent"])
+    assert structured["status"] == "ignored"
 
 
 @pytest.mark.asyncio

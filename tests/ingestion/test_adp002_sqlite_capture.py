@@ -31,12 +31,17 @@ from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
+    SqliteCapturePolicyDecisionRepository,
+    SqliteCapturePolicyRepository,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     RegisterAgentAdapterCommand,
     RegisterAgentAdapterHandler,
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
+from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.capture import AppendDisposition
 from agentmemory.ingestion.domain.errors import IngestionConflictError, IngestionDependencyError
 from agentmemory.operations.adapters.outbound.sqlite_store import (
@@ -113,6 +118,8 @@ def _handler(store: SqliteCoreStore, key_file: Path) -> CaptureAgentEventHandler
         SqliteAdapterCapabilityRegistry(store.engine),
         SqliteAgentEventScopeResolver(store.engine, clock),
         InlineOnlyPayloadReader(),
+        CapturePolicyPipeline(SqliteCapturePolicyRepository(store)),
+        SqliteCapturePolicyDecisionRepository(store),
         AppendAgentEventHandler(
             CanonicalAgentEventEncoder(),
             AesGcmAgentEventEncryptor(SqliteWrappedBrainKeyProvider(store, key_file, clock)),

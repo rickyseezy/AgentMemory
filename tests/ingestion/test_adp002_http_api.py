@@ -79,6 +79,14 @@ async def test_endpoint_authenticates_and_returns_only_durable_capture_metadata(
 
 
 @pytest.mark.asyncio
+async def test_endpoint_returns_terminal_ignored_policy_decision_without_retry() -> None:
+    raw = AgentEventEnvelopeV1.from_domain(event()).to_canonical_json()
+    response = await _request(_Auth(), _Handler(AppendDisposition.IGNORED), raw)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_key_is_rejected_before_handler() -> None:
     auth = _Auth()
     handler = _Handler()

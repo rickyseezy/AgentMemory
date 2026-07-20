@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentmemory.ingestion.domain.capture import AppendDisposition
-from agentmemory.ingestion.domain.errors import IngestionConflictError
+from agentmemory.ingestion.domain.errors import IngestionConflictError, IngestionValidationError
 
 if TYPE_CHECKING:
     from agentmemory.ingestion.domain.capture import AdmittedAgentEvent, AppendAgentEventResult
@@ -35,6 +35,9 @@ class AppendAgentEventHandler:
     async def execute(self, command: AppendAgentEventCommand) -> AppendAgentEventResult:
         """Return accepted/duplicate only after a successful durable transaction."""
         admitted = command.admitted
+        if admitted.privacy is None:
+            field = "privacy"
+            raise IngestionValidationError.single(field, "not_evaluated")
         canonical = self.encoder.encode(admitted.event)
         encrypted = await self.encryptor.encrypt(
             event_id=admitted.event.event_id,
@@ -47,6 +50,13 @@ class AppendAgentEventHandler:
                 artifact_id = await unit_of_work.artifacts.ensure_reference(admitted, encrypted)
                 result = await unit_of_work.events.append(admitted, encrypted, artifact_id)
                 if result.disposition is AppendDisposition.ACCEPTED:
+                    await unit_of_work.privacy.record(
+                        admitted.event.event_id,
+                        admitted.identity.brain_id,
+                        admitted.identity.principal_id,
+                        admitted.privacy,
+                        result.ingested_at_microseconds,
+                    )
                     await unit_of_work.outbox.enqueue(admitted)
                     await unit_of_work.audit.append_agent_event(admitted, encrypted)
                     await unit_of_work.commit()

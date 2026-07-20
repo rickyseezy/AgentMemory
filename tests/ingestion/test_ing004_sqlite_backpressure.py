@@ -25,8 +25,13 @@ from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
+    SqliteCapturePolicyDecisionRepository,
+    SqliteCapturePolicyRepository,
+)
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
+from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.backpressure import (
     JobErrorCode,
     JobPriority,
@@ -304,6 +309,8 @@ async def test_capture_hard_disk_failure_is_atomic_and_acknowledged_retry_surviv
         SqliteAdapterCapabilityRegistry(store.engine),
         SqliteAgentEventScopeResolver(store.engine, clock),
         InlineOnlyPayloadReader(),
+        CapturePolicyPipeline(SqliteCapturePolicyRepository(store)),
+        SqliteCapturePolicyDecisionRepository(store),
         AppendAgentEventHandler(
             CanonicalAgentEventEncoder(),
             AesGcmAgentEventEncryptor(SqliteWrappedBrainKeyProvider(store, key_file, clock)),

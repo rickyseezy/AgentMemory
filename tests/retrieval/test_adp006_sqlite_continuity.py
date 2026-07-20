@@ -25,12 +25,17 @@ from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
+    SqliteCapturePolicyDecisionRepository,
+    SqliteCapturePolicyRepository,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     RegisterAgentAdapterCommand,
     RegisterAgentAdapterHandler,
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
+from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.adapter_capability import AdapterCapabilityManifest
 from agentmemory.ingestion.domain.agent_event import (
     AgentEvent,
@@ -206,6 +211,8 @@ async def _capture(store: object, key_file: Path) -> SqliteWrappedBrainKeyProvid
         SqliteAdapterCapabilityRegistry(store.engine),
         SqliteAgentEventScopeResolver(store.engine, clock),
         InlineOnlyPayloadReader(),
+        CapturePolicyPipeline(SqliteCapturePolicyRepository(store)),
+        SqliteCapturePolicyDecisionRepository(store),
         AppendAgentEventHandler(
             CanonicalAgentEventEncoder(),
             AesGcmAgentEventEncryptor(keys),

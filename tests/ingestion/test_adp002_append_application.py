@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Self
 
 import pytest
@@ -18,7 +18,7 @@ from agentmemory.ingestion.domain.capture import (
     AppendDisposition,
     EncryptedAgentEvent,
 )
-from agentmemory.ingestion.domain.errors import IngestionConflictError
+from agentmemory.ingestion.domain.errors import IngestionConflictError, IngestionValidationError
 from tests.ingestion.adp002_support import (
     BRAIN_ID,
     EVENT_ID,
@@ -27,6 +27,7 @@ from tests.ingestion.adp002_support import (
     PROJECT_ID,
     REPOSITORY_ID,
     event,
+    privacy_result,
 )
 
 if TYPE_CHECKING:
@@ -36,9 +37,11 @@ if TYPE_CHECKING:
         AgentEventRepository,
         AgentEventUnitOfWork,
         ArtifactRepository,
+        CapturePolicyDecisionRepository,
         IngestionAuditRepository,
         OutboxRepository,
     )
+    from agentmemory.ingestion.domain.privacy import CapturePolicyResult
 
 
 class _Encoder:
@@ -114,6 +117,22 @@ class _Audit:
         self.conflicts += 1
 
 
+class _Privacy:
+    def __init__(self) -> None:
+        self.recorded = 0
+
+    async def record(
+        self,
+        event_id: str,
+        brain_id: str,
+        principal_id: str,
+        result: CapturePolicyResult,
+        decided_at_microseconds: int,
+    ) -> None:
+        del event_id, brain_id, principal_id, result, decided_at_microseconds
+        self.recorded += 1
+
+
 class _UnitOfWork:
     def __init__(
         self,
@@ -126,6 +145,8 @@ class _UnitOfWork:
         self.outbox: OutboxRepository = self.outbox_fake
         self.audit_fake = _Audit()
         self.audit: IngestionAuditRepository = self.audit_fake
+        self.privacy_fake = _Privacy()
+        self.privacy: CapturePolicyDecisionRepository = self.privacy_fake
         self.commits = 0
         self.exit_errors: list[type[BaseException] | None] = []
 
@@ -168,6 +189,7 @@ def _admitted() -> AdmittedAgentEvent:
         ResolvedAgentEventIdentity(BRAIN_ID, PRINCIPAL_ID, PROJECT_ID, REPOSITORY_ID, None),
         NOW,
         0,
+        privacy_result(),
     )
 
 
@@ -187,6 +209,17 @@ async def test_ack_occurs_only_after_new_event_commit(
     assert uow.commits == commits
     assert uow.outbox_fake.enqueued == commits
     assert uow.audit_fake.appended == commits
+    assert uow.privacy_fake.recorded == commits
+
+
+@pytest.mark.asyncio
+async def test_append_rejects_event_without_prior_privacy_evaluation() -> None:
+    uow = _UnitOfWork(AppendDisposition.ACCEPTED)
+    handler = AppendAgentEventHandler(_Encoder(), _Encryptor(), _Factory(uow))
+    with pytest.raises(IngestionValidationError) as captured:
+        await handler.execute(AppendAgentEventCommand(replace(_admitted(), privacy=None)))
+    assert captured.value.code_for("privacy") == "not_evaluated"
+    assert uow.commits == 0
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from agentmemory.ingestion.domain.agent_event import AgentEvent, ResolvedAgentEventIdentity
+    from agentmemory.ingestion.domain.privacy import CapturePolicyResult
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _UUID7 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -26,6 +27,7 @@ class AppendDisposition(StrEnum):
     ACCEPTED = "accepted"
     DUPLICATE = "duplicate"
     DEFERRED = "deferred"
+    IGNORED = "ignored"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,7 @@ class AdmittedAgentEvent:
     identity: ResolvedAgentEventIdentity
     ingested_at: datetime
     clock_skew_microseconds: int
+    privacy: CapturePolicyResult | None
 
 
 @dataclass(frozen=True, slots=True)

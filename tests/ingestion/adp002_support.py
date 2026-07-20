@@ -16,6 +16,14 @@ from agentmemory.ingestion.domain.agent_event import (
     Classification,
     EventFamily,
 )
+from agentmemory.ingestion.domain.privacy import (
+    CaptureDisposition,
+    CapturePolicy,
+    CapturePolicyResult,
+    EgressDisposition,
+    PolicyStage,
+    StageEvidence,
+)
 from tests.ingestion.capability_support import complete_availability
 
 EVENT_ID = "018f0000-0000-7000-8000-000000000101"
@@ -87,4 +95,30 @@ def event(*, event_id: str = EVENT_ID, sequence: int = 1) -> AgentEvent:
         capture_capabilities=(CaptureCapability.SESSION_LIFECYCLE,),
         payload=AgentEventData(PAYLOAD, hashlib.sha256(PAYLOAD).hexdigest()),
         payload_reference=None,
+    )
+
+
+def privacy_result(
+    payload: bytes = PAYLOAD,
+    classification: Classification = Classification.INTERNAL,
+) -> CapturePolicyResult:
+    """Build exact no-finding policy evidence for lower-boundary tests."""
+    policy = CapturePolicy.secure_default(BRAIN_ID, REPOSITORY_ID)
+    digest = hashlib.sha256(payload).hexdigest()
+    return CapturePolicyResult(
+        CaptureDisposition.SANITIZED,
+        payload,
+        classification,
+        EgressDisposition.DENY,
+        "no_destination",
+        policy.policy_id,
+        policy.version,
+        policy.sha256,
+        digest,
+        digest,
+        (),
+        0,
+        tuple(
+            StageEvidence(stage, (f"ing005.{stage.value}.v1",), "clear") for stage in PolicyStage
+        ),
     )

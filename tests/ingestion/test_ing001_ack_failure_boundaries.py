@@ -7,7 +7,7 @@ import multiprocessing
 import sqlite3
 import threading
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast
 
@@ -20,11 +20,13 @@ from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
     SqliteWrappedBrainKeyProvider,
 )
 from agentmemory.ingestion.adapters.outbound.sqlite_capture import SqliteAgentEventUnitOfWork
+from agentmemory.ingestion.adapters.outbound.sqlite_privacy import SqliteCapturePolicyRepository
 from agentmemory.ingestion.application.append_agent_event import (
     AppendAgentEventCommand,
     AppendAgentEventHandler,
 )
-from agentmemory.ingestion.domain.agent_event import ResolvedAgentEventIdentity
+from agentmemory.ingestion.application.privacy import CapturePolicyCommand, CapturePolicyPipeline
+from agentmemory.ingestion.domain.agent_event import AgentEventData, ResolvedAgentEventIdentity
 from agentmemory.ingestion.domain.capture import (
     AdmittedAgentEvent,
     AppendAgentEventResult,
@@ -45,6 +47,7 @@ from tests.ingestion.adp002_support import (
     PROJECT_ID,
     REPOSITORY_ID,
     event,
+    privacy_result,
 )
 from tests.ingestion.test_adp002_sqlite_capture import capture_handler, seed_capture_authority
 
@@ -58,6 +61,7 @@ _ERR_ARTIFACT = "artifact unavailable"
 _ERR_WRITE = "write unavailable"
 _ERR_OUTBOX = "outbox unavailable"
 _ERR_AUDIT = "audit unavailable"
+_ERR_PRIVACY = "privacy receipt unavailable"
 _ERR_BEGIN = "begin unavailable"
 _ERR_COMMIT = "durable commit failed"
 
@@ -81,6 +85,31 @@ def _append_with_kill_boundary(
         )
         clock = FixedClock(NOW)
         source = admitted()
+        source_event = source.event
+        if source_event.payload is None:
+            raise AssertionError
+        privacy = await CapturePolicyPipeline(SqliteCapturePolicyRepository(store)).execute(
+            CapturePolicyCommand(
+                source.identity.brain_id,
+                source.identity.repository_id,
+                bytearray(source_event.payload.value),
+                source_event.datacontenttype,
+                None,
+                source_event.classification,
+            )
+        )
+        if privacy.payload is None or privacy.output_sha256 is None:
+            raise AssertionError
+        source = replace(
+            source,
+            event=replace(
+                source_event,
+                payload=AgentEventData(privacy.payload, privacy.output_sha256),
+                payload_reference=None,
+                classification=privacy.classification,
+            ),
+            privacy=privacy,
+        )
         canonical = CanonicalAgentEventEncoder().encode(source.event)
         encrypted = await AesGcmAgentEventEncryptor(
             SqliteWrappedBrainKeyProvider(store, Path(key_path), clock)
@@ -98,6 +127,15 @@ def _append_with_kill_boundary(
             await unit.events.append(source, encrypted, artifact_id)
             if phase == "write":
                 _pause_after(sender, phase)
+            if source.privacy is None:
+                raise AssertionError
+            await unit.privacy.record(
+                source.event.event_id,
+                source.identity.brain_id,
+                source.identity.principal_id,
+                source.privacy,
+                round(source.ingested_at.timestamp() * 1_000_000),
+            )
             await unit.outbox.enqueue(source)
             await unit.audit.append_agent_event(source, encrypted)
             if phase == "commit":
@@ -144,6 +182,7 @@ def admitted() -> AdmittedAgentEvent:
         ),
         NOW,
         0,
+        privacy_result(),
     )
 
 
@@ -184,6 +223,16 @@ class _Outbox:
 
 
 @dataclass
+class _Privacy:
+    fail: bool
+
+    async def record(self, *values: object) -> None:
+        del values
+        if self.fail:
+            raise IngestionDependencyError(_ERR_PRIVACY)
+
+
+@dataclass
 class _Audit:
     fail: bool
 
@@ -203,6 +252,7 @@ class _UnitOfWork:
         self.fail_at = fail_at
         self.artifacts = _Artifacts(fail_at == "artifact")
         self.events = _Events(fail_at == "event_write")
+        self.privacy = _Privacy(fail_at == "privacy_write")
         self.outbox = _Outbox(fail_at == "outbox_write")
         self.audit = _Audit(fail_at == "audit_write")
         self.committed = False
@@ -236,6 +286,7 @@ class _Factory:
         "begin",
         "artifact",
         "event_write",
+        "privacy_write",
         "outbox_write",
         "audit_write",
         "commit",

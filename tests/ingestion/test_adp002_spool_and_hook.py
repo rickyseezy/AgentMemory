@@ -173,6 +173,19 @@ async def test_timeout_returns_control_with_durable_deferred_status(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_ignored_policy_result_is_terminal_and_never_spooled(tmp_path: Path) -> None:
+    spool = _spool(tmp_path)
+    raw = AgentEventEnvelopeV1.from_domain(event()).to_canonical_json()
+    result = await AgentEventCaptureHook(
+        _PassRedactor(),
+        _Ipc(AppendDisposition.IGNORED),
+        spool,
+    ).capture(raw)
+    assert result == HookCaptureResult(EVENT_ID, CaptureStatus.IGNORED)
+    assert spool.pending() == ()
+
+
+@pytest.mark.asyncio
 @pytest.mark.load
 async def test_concurrent_hooks_share_capture_dependencies_without_reordering(
     tmp_path: Path,
@@ -223,6 +236,21 @@ async def test_http_ipc_reuses_client_and_validates_safe_response() -> None:
         assert await ipc.append(b"second") is AppendDisposition.ACCEPTED
     assert len(requests) == 2
     assert {request.headers["authorization"] for request in requests} == {f"Bearer {'a' * 64}"}
+
+
+@pytest.mark.asyncio
+async def test_http_ipc_accepts_terminal_ignored_policy_receipt() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(201, json={"status": "ignored"})
+        )
+    ) as client:
+        ipc = HttpAgentEventIpcClient(
+            client,
+            "http://127.0.0.1:9411/v1/agent-events:append",
+            "a" * 64,
+        )
+        assert await ipc.append(b"event") is AppendDisposition.IGNORED
 
 
 @pytest.mark.asyncio

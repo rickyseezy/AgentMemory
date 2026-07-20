@@ -45,7 +45,7 @@ class AgentEventAdmissionHandler:
             raise IngestionValidationError.single(msg, "future_clock_skew")
         identity = await self.scope_resolver.resolve(event.identity, event.provenance)
         skew = round((ingested_at - event.occurred_at).total_seconds() * 1_000_000)
-        return AdmittedAgentEvent(event, identity, ingested_at, skew)
+        return AdmittedAgentEvent(event, identity, ingested_at, skew, None)
 
     def _verify_capabilities(self, event: AgentEvent) -> None:
         provenance = event.provenance

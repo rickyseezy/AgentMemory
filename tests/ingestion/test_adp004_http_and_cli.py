@@ -145,6 +145,36 @@ async def test_http_adapter_registers_complete_manifest_and_appends_canonical_ev
     assert requests[1].headers["Content-Type"] == "application/json"
 
 
+@pytest.mark.asyncio
+async def test_http_adapter_accepts_terminal_ignored_policy_receipt() -> None:
+    source = GenericEventFactory(context()).session(
+        started=True,
+        occurred_at=NOW,
+        source_sha256=DIGEST,
+        completion=SourceCompletion.COMPLETE,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                201,
+                json={
+                    "event_id": source.event_id,
+                    "ingested_at_microseconds": 42,
+                    "clock_skew_microseconds": 0,
+                    "status": "ignored",
+                },
+            )
+        )
+    ) as client:
+        receipt = await HttpGenericAgentAdapter(
+            client,
+            "http://127.0.0.1:8765",
+            b"x" * 32,
+        ).execute(source)
+    assert receipt.disposition is AppendDisposition.IGNORED
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [

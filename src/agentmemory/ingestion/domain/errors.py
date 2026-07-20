@@ -69,6 +69,15 @@ class IngestionCapacityError(RuntimeError):
         super().__init__("Local AgentMemory capacity is unavailable")
 
 
+class IngestionEgressDeniedError(PermissionError):
+    """Deny provider invocation after deterministic pre-egress policy evaluation."""
+
+    def __init__(self, reason_code: str) -> None:
+        """Retain only a stable content-free decision reason."""
+        self.reason_code = reason_code
+        super().__init__("AgentMemory provider egress is denied")
+
+
 class ScheduledJobExecutionError(RuntimeError):
     """Carry a typed worker outcome without persisting an arbitrary exception."""
 

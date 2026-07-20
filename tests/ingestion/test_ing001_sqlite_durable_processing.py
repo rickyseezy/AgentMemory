@@ -50,6 +50,7 @@ from tests.ingestion.adp002_support import (
     PROJECT_ID,
     REPOSITORY_ID,
     event,
+    privacy_result,
 )
 from tests.ingestion.test_adp002_sqlite_capture import capture_handler, seed_capture_authority
 
@@ -276,6 +277,7 @@ async def test_artifact_reference_event_outbox_and_audit_commit_in_one_uow(tmp_p
             ),
             NOW,
             0,
+            privacy_result(PAYLOAD),
         )
         appender = AppendAgentEventHandler(
             CanonicalAgentEventEncoder(),

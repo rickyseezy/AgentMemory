@@ -28,7 +28,7 @@ from tests.ingestion.adp002_support import event
 if TYPE_CHECKING:
     from agentmemory.ingestion.domain.agent_event import AgentEvent
 
-EVENT_IDS = tuple(f"018f0000-0000-7000-8000-{value:012d}" for value in range(601, 607))
+EVENT_IDS = tuple(f"018f0000-0000-7000-8000-{value:012d}" for value in range(601, 608))
 
 
 class _Auth:
@@ -90,7 +90,8 @@ async def test_batch_returns_ordered_per_item_outcomes_and_time_evidence() -> No
         EVENT_IDS[2]: IngestionConflictError("conflict"),
         EVENT_IDS[3]: IngestionDependencyError("offline"),
         EVENT_IDS[4]: IngestionAuthorizationError("scope"),
-        EVENT_IDS[5]: AppendDisposition.DEFERRED,
+        EVENT_IDS[5]: AppendDisposition.IGNORED,
+        EVENT_IDS[6]: AppendDisposition.DEFERRED,
     }
     auth = _Auth()
     handler = _BatchHandler(outcomes)
@@ -120,7 +121,13 @@ async def test_batch_returns_ordered_per_item_outcomes_and_time_evidence() -> No
         {"event_id": EVENT_IDS[2], "status": "conflict"},
         {"event_id": EVENT_IDS[3], "status": "retryable"},
         {"event_id": EVENT_IDS[4], "status": "rejected"},
-        {"event_id": EVENT_IDS[5], "status": "retryable"},
+        {
+            "event_id": EVENT_IDS[5],
+            "status": "accepted",
+            "ingested_at_microseconds": 2_000_000,
+            "clock_skew_microseconds": -123,
+        },
+        {"event_id": EVENT_IDS[6], "status": "retryable"},
     ]
 
 

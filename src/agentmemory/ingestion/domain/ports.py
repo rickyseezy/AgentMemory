@@ -57,6 +57,11 @@ if TYPE_CHECKING:
         ReplaySourcePage,
         ReplaySourceRecord,
     )
+    from agentmemory.ingestion.domain.privacy import (
+        CapturePolicy,
+        CapturePolicyResult,
+        EgressDestination,
+    )
     from agentmemory.ingestion.domain.spool_reconciliation import (
         SpoolAcknowledgement,
         SpoolRecord,
@@ -403,6 +408,7 @@ class AgentEventUnitOfWork(Protocol):
     artifacts: ArtifactRepository
     outbox: OutboxRepository
     audit: IngestionAuditRepository
+    privacy: CapturePolicyDecisionRepository
 
     async def __aenter__(self) -> Self:
         """Open the transaction and bind its repositories."""
@@ -645,6 +651,47 @@ class LocalStorageCapacityProbe(Protocol):
 
     def free_bytes(self) -> int:
         """Return currently available bytes or raise a typed dependency error."""
+        ...
+
+
+class CapturePolicyRepository(Protocol):
+    """Resolve exact active or historical privacy-policy revisions."""
+
+    async def resolve(
+        self,
+        brain_id: str,
+        repository_id: str | None,
+        version: int | None,
+    ) -> CapturePolicy:
+        """Return the exact requested revision or the effective active revision."""
+        ...
+
+
+class CapturePolicyDecisionRepository(Protocol):
+    """Persist only content-free exclusion and pipeline decision evidence."""
+
+    async def record(
+        self,
+        event_id: str,
+        brain_id: str,
+        principal_id: str,
+        result: CapturePolicyResult,
+        decided_at_microseconds: int,
+    ) -> None:
+        """Idempotently retain one exact policy result without raw content."""
+        ...
+
+
+class ProviderEgressInvoker(Protocol):
+    """Acquire the provider boundary only after a positive exact egress decision."""
+
+    async def invoke(
+        self,
+        destination: EgressDestination,
+        sanitized_payload: bytes,
+        downstream_idempotency_key: str,
+    ) -> bytes:
+        """Invoke one exact destination with only the already-sanitized payload."""
         ...
 
 

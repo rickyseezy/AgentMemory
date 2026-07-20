@@ -12,6 +12,12 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 
+from agentmemory.ingestion.adapters.outbound.canonical_encoder import CanonicalAgentEventEncoder
+from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
+    AesGcmAgentEventEncryptor,
+    SqliteWrappedBrainKeyProvider,
+)
+from agentmemory.ingestion.adapters.outbound.sqlite_capture import SqliteAgentEventUnitOfWork
 from agentmemory.ingestion.adapters.outbound.sqlite_ordered_replay import (
     SqliteOrderedReplayAccessPolicy,
     SqliteOrderedReplayRepository,
@@ -40,6 +46,7 @@ from agentmemory.operations.adapters.outbound.sqlite_store import (
 from tests.core.support import GRANT_ID, FixedClock, migrated_store, write_secret
 from tests.ingestion.adp002_support import BRAIN_ID, EVENT_ID, NOW, PRINCIPAL_ID, event
 from tests.ingestion.test_adp002_sqlite_capture import capture_handler, seed_capture_authority
+from tests.ingestion.test_ing001_ack_failure_boundaries import admitted
 from tests.ingestion.test_ing001_sqlite_durable_processing import processor
 
 EVENT_ID_2 = "018f0000-0000-7000-8000-000000000102"
@@ -106,6 +113,28 @@ async def _seed_recorded_provider_evidence(store: SqliteCoreStore, now: int) -> 
                 "revision": "d" * 40,
             },
         )
+
+
+async def _capture_legacy_event(store: SqliteCoreStore, key_file: Path) -> None:
+    """Write one event exactly as the pre-ING-005 append transaction did."""
+    source = admitted()
+    clock = FixedClock(NOW)
+    canonical = CanonicalAgentEventEncoder().encode(source.event)
+    encrypted = await AesGcmAgentEventEncryptor(
+        SqliteWrappedBrainKeyProvider(store, key_file, clock)
+    ).encrypt(
+        event_id=source.event.event_id,
+        brain_id=source.identity.brain_id,
+        classification=source.event.classification.value,
+        plaintext=canonical,
+    )
+    unit = SqliteAgentEventUnitOfWork(store, clock)
+    async with unit:
+        artifact_id = await unit.artifacts.ensure_reference(source, encrypted)
+        await unit.events.append(source, encrypted, artifact_id)
+        await unit.outbox.enqueue(source)
+        await unit.audit.append_agent_event(source, encrypted)
+        await unit.commit()
 
 
 @pytest.mark.asyncio
@@ -267,7 +296,7 @@ async def test_event_captured_before_ing003_migration_replays_with_v1_reducer(
     key_file = tmp_path / "installation-key"
     write_secret(key_file, b"i" * 32)
     await seed_capture_authority(legacy)
-    await capture_handler(legacy, key_file).execute(event())
+    await _capture_legacy_event(legacy, key_file)
     await legacy.close()
 
     command.upgrade(configuration, "0011_ing003_ordered_replay")

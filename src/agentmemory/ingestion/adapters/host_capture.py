@@ -27,6 +27,7 @@ class CaptureStatus(StrEnum):
 
     ACCEPTED = "accepted"
     DUPLICATE = "duplicate"
+    IGNORED = "ignored"
     DEFERRED = "deferred"
     SPOOL_FULL = "spool_full"
     SPOOL_UNAVAILABLE = "spool_unavailable"
@@ -53,7 +54,7 @@ class LocalIpcClient(Protocol):
     """Append via a reused authenticated local connection pool."""
 
     async def append(self, canonical_event: bytes) -> AppendDisposition:
-        """Return accepted/duplicate or raise a retryable transport failure."""
+        """Return one terminal durable policy status or raise a transport failure."""
         ...
 
 
@@ -104,7 +105,11 @@ class HttpAgentEventIpcClient:
         except ValueError as error:
             msg = "AgentEvent IPC returned an invalid status"
             raise TypeError(msg) from error
-        if disposition not in {AppendDisposition.ACCEPTED, AppendDisposition.DUPLICATE}:
+        if disposition not in {
+            AppendDisposition.ACCEPTED,
+            AppendDisposition.DUPLICATE,
+            AppendDisposition.IGNORED,
+        }:
             msg = "AgentEvent IPC returned a non-durable status"
             raise TypeError(msg)
         return disposition

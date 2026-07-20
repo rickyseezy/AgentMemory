@@ -2155,6 +2155,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-005 — Sanitize before persistence or egress
 
+**Implementation record:** [`docs/implementation/ING-005.md`](docs/implementation/ING-005.md) and
+[`docs/runbooks/ING-005-CAPTURE-PRIVACY.md`](docs/runbooks/ING-005-CAPTURE-PRIVACY.md).
+
 **User story:** As a privacy administrator, excluded or secret content never enters durable storage or a provider request.
 
 **Acceptance criteria**

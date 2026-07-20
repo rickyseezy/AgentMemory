@@ -276,6 +276,17 @@ async def test_sqlite_identity_authorization_is_exact_and_revocation_is_immediat
             )
         async with store.engine.begin() as connection:
             await connection.execute(
+                text("UPDATE scope_grants SET valid_from = 9223372036854775807"),
+            )
+        with pytest.raises(IdentityAuthorizationError):
+            await policy.authorize_resolution(
+                StableId(BRAIN_ID),
+                StableId(OWNER_ID),
+                StableId(GRANT_ID),
+            )
+        async with store.engine.begin() as connection:
+            await connection.execute(text("UPDATE scope_grants SET valid_from = 0"))
+            await connection.execute(
                 text("UPDATE principals SET status = 'revoked' WHERE id = :actor"),
                 {"actor": OWNER_ID},
             )

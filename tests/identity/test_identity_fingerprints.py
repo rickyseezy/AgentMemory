@@ -121,6 +121,26 @@ def test_path_is_location_evidence_and_never_the_repository_fingerprint() -> Non
     assert repository not in {first_path, moved_path}
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (r"C:\\Users\\Ricky\\Project", r"c:\\users\\ricky\\project"),
+        (r"\\\\server\\share\\Project", r"/mnt/share/Project"),
+        (r"C:\\work\\Project", r"/mnt/c/work/Project"),
+    ],
+)
+def test_windows_wsl_and_case_variants_remain_distinct_location_observations(
+    first: str,
+    second: str,
+) -> None:
+    fingerprinter = IdentityFingerprinter(b"i" * 32)
+    assert fingerprinter.path(DEVICE_ID, "volume", first) != fingerprinter.path(
+        DEVICE_ID,
+        "volume",
+        second,
+    )
+
+
 def test_identity_index_key_must_have_256_bits() -> None:
     with pytest.raises(IdentityValidationError, match="256 bits"):
         IdentityFingerprinter(b"short")

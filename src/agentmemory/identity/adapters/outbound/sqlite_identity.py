@@ -70,7 +70,10 @@ WHERE c.brain_id = :brain_id
   AND p.status = 'active'
   AND (c.canonical_path_hash = :path_fingerprint
        OR (:checkout_fingerprint IS NOT NULL
-           AND c.checkout_fingerprint = :checkout_fingerprint))
+           AND c.checkout_fingerprint = :checkout_fingerprint)
+       OR (:file_fingerprint IS NOT NULL
+           AND c.file_fingerprint = :file_fingerprint
+           AND c.volume_fingerprint = :volume_fingerprint))
 ORDER BY p.id, c.repository_id, c.id
 """
 
@@ -114,6 +117,7 @@ class SqliteIdentityAuthorizationPolicy:
             "WHERE g.id = :grant_id AND g.principal_id = :actor_id "
             "AND g.brain_id = :brain_id AND g.role = 'owner' "
             "AND p.status = 'active' AND b.status = 'active' "
+            "AND g.valid_from <= CAST(strftime('%s','now') AS INTEGER) * 1000000 "
             "AND (g.valid_to IS NULL OR g.valid_to > "
             "CAST(strftime('%s','now') AS INTEGER) * 1000000)"
         )
@@ -266,6 +270,12 @@ class SqliteCheckoutRepository:
                     if checkout_fingerprint is None
                     else bytes.fromhex(checkout_fingerprint.value)
                 ),
+                "file_fingerprint": (
+                    None
+                    if device.file_fingerprint is None
+                    else bytes.fromhex(device.file_fingerprint.value)
+                ),
+                "volume_fingerprint": bytes.fromhex(device.volume_fingerprint.value),
             },
         )
 

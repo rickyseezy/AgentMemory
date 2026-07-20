@@ -14,12 +14,17 @@ from agentmemory.identity.adapters.inbound.http_api import (
     create_contract_identity_router,
     create_identity_router,
 )
+from agentmemory.identity.adapters.outbound.sqlite_checkout_observation import (
+    SqliteCheckoutObservationUnitOfWorkFactory,
+)
 from agentmemory.identity.adapters.outbound.sqlite_identity import (
     SqliteCheckoutRepository,
     SqliteIdentityAuthorizationPolicy,
     SqliteProjectRepository,
     SqliteRepositoryIdentityRepository,
 )
+from agentmemory.identity.adapters.outbound.uuid7_identity import SystemUuid7IdentityGenerator
+from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutHandler
 from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
@@ -289,6 +294,10 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
                     SqliteCheckoutRepository(store.engine),
                     SqliteRepositoryIdentityRepository(store.engine),
                 )
+            ),
+            ObserveCheckoutHandler(
+                SqliteCheckoutObservationUnitOfWorkFactory(store, clock),
+                SystemUuid7IdentityGenerator(),
             ),
         )
     )

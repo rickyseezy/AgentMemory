@@ -14,9 +14,11 @@ from agentmemory.identity.domain.value_objects import DeviceIdentity, StableId, 
 
 if TYPE_CHECKING:
     from agentmemory.identity.adapters.outbound.fingerprints import IdentityFingerprinter
+    from agentmemory.identity.domain.value_objects import Fingerprint
 
 _MAX_GIT_OUTPUT = 1024 * 1024
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_REMOTE_NAME = re.compile(r"^[^\x00\r\n]{1,1024}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +48,12 @@ class GitCliIdentityAdapter:
             msg = "Git root evidence is incomplete"
             raise IdentityValidationError(msg)
         remote = await self._git(path, "config", "--get", "remote.origin.url", required=False)
-        common_directory = await self._git(path, "rev-parse", "--git-common-dir")
-        worktree_directory = await self._git(path, "rev-parse", "--git-dir")
+        common_directory = await self._git(
+            path, "rev-parse", "--path-format=absolute", "--git-common-dir"
+        )
+        worktree_directory = await self._git(
+            path, "rev-parse", "--path-format=absolute", "--git-dir"
+        )
         if common_directory is None or worktree_directory is None:
             raise IdentityDependencyError
         stable_repository_id = await asyncio.to_thread(_read_repository_id, path)
@@ -58,10 +64,28 @@ class GitCliIdentityAdapter:
             stable_repository_id,
             remote,
         )
-        worktree = self.fingerprinter.opaque(
-            "GitWorktreeFingerprintV1",
-            f"{common_directory}\x00{worktree_directory}",
+        try:
+            common_identity, worktree_identity = await asyncio.to_thread(
+                _git_directory_identities,
+                common_directory,
+                worktree_directory,
+            )
+        except OSError as error:
+            raise IdentityDependencyError from error
+        common = self.fingerprinter.opaque("GitCommonDirectoryFingerprintV1", common_identity)
+        worktree = self.fingerprinter.opaque("GitWorktreeFingerprintV1", worktree_identity)
+        branch = await self._git(path, "symbolic-ref", "--quiet", "--short", "HEAD", required=False)
+        head_commit = await self._git(path, "rev-parse", "--verify", "HEAD")
+        dirty = await self._git(
+            path,
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
         )
+        if head_commit is None or dirty is None:
+            raise IdentityDependencyError
+        remote_fingerprints = await self._remote_fingerprints(path)
         checkout = self.fingerprinter.checkout(
             repository,
             device.device_id,
@@ -75,7 +99,30 @@ class GitCliIdentityAdapter:
             checkout,
             worktree,
             repository_lookup_approved=remote is not None or stable_repository_id is not None,
+            common_directory_fingerprint=common,
+            branch=branch,
+            head_commit=head_commit,
+            remote_fingerprints=remote_fingerprints,
+            dirty_digest=self.fingerprinter.opaque(
+                "GitDirtyDigestV1",
+                dirty or "clean",
+            ),
         )
+
+    async def _remote_fingerprints(self, path: str) -> tuple[Fingerprint, ...]:
+        """Return a canonical unique set of keyed remote URLs."""
+        names_output = await self._git(path, "remote", required=False)
+        names = () if not names_output else tuple(names_output.splitlines())
+        fingerprints: set[Fingerprint] = set()
+        for name in names:
+            if _REMOTE_NAME.fullmatch(name) is None:
+                msg = "Git remote name evidence is invalid"
+                raise IdentityValidationError(msg)
+            remote = await self._git(path, "config", "--get", f"remote.{name}.url")
+            if remote is None:
+                raise IdentityDependencyError
+            fingerprints.add(self.fingerprinter.remote(remote))
+        return tuple(sorted(fingerprints, key=lambda value: value.value))
 
     async def _git(self, path: str, *arguments: str, required: bool = True) -> str | None:
         try:
@@ -114,3 +161,9 @@ def _read_repository_id(path: str) -> StableId | None:
     except OSError as error:
         raise IdentityDependencyError from error
     return StableId(value)
+
+
+def _git_directory_identities(common_directory: str, worktree_directory: str) -> tuple[str, str]:
+    common = Path(common_directory).stat()
+    worktree = Path(worktree_directory).stat()
+    return f"{common.st_dev}:{common.st_ino}", f"{worktree.st_dev}:{worktree.st_ino}"

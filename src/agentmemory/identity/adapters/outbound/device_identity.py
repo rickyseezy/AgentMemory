@@ -27,7 +27,9 @@ class LocalDeviceIdentityAdapter:
     async def observe(self, path: str) -> DeviceIdentity:
         """Resolve and stat a local workspace without returning the raw path."""
         try:
-            real_path, device_number = await asyncio.to_thread(_observe_path, path)
+            logical_path, real_path, device_number, file_number = await asyncio.to_thread(
+                _observe_path, path
+            )
         except OSError as error:
             raise IdentityDependencyError from error
         volume = self.fingerprinter.opaque("FilesystemVolumeFingerprintV1", str(device_number))
@@ -36,18 +38,30 @@ class LocalDeviceIdentityAdapter:
             volume.value,
             real_path,
         )
+        logical_path_fingerprint = self.fingerprinter.path(
+            self.device_id,
+            volume.value,
+            logical_path,
+        )
+        file_fingerprint = self.fingerprinter.opaque(
+            "FilesystemObjectFingerprintV1",
+            f"{device_number}:{file_number}",
+        )
         return DeviceIdentity(
             self.device_id,
             self.device_fingerprint,
             volume,
             path_fingerprint,
             self.verified,
+            logical_path_fingerprint,
+            file_fingerprint,
         )
 
 
-def _observe_path(path: str) -> tuple[str, int]:
+def _observe_path(path: str) -> tuple[str, str, int, int]:
+    logical_path = Path(path).absolute()
     real_path = Path(path).resolve(strict=True)
     metadata = real_path.stat()
     if not real_path.is_dir():
         raise NotADirectoryError
-    return os.fspath(real_path), metadata.st_dev
+    return os.fspath(logical_path), os.fspath(real_path), metadata.st_dev, metadata.st_ino

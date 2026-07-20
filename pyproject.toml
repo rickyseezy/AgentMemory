@@ -165,12 +165,15 @@ source_paths = ["src/agentmemory"]
 only_mutate = [
   "*operations/domain/projection_rebuild.py",
   "*identity/domain/services.py",
+  "*identity/domain/checkout.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
   "tests/core/test_projection_rebuild_application.py",
   "tests/identity/test_identity_resolution_domain.py",
   "tests/identity/test_identity_fingerprints.py",
+  "tests/identity/test_checkout_observation_domain.py",
+  "tests/identity/test_observe_checkout_application.py",
 ]
 mutate_only_covered_lines = true
 use_setproctitle = false

@@ -15,6 +15,7 @@ _OPERATION_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _MAX_PATH_LENGTH = 32_768
 _UUID_VERSION = 7
 _MIN_AMBIGUOUS_CANDIDATES = 2
+_MAX_BRANCH_LENGTH = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +138,8 @@ class DeviceIdentity:
     volume_fingerprint: Fingerprint
     path_fingerprint: Fingerprint
     verified: bool
+    logical_path_fingerprint: Fingerprint | None = None
+    file_fingerprint: Fingerprint | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +151,11 @@ class VcsIdentity:
     checkout_fingerprint: Fingerprint | None
     worktree_fingerprint: Fingerprint | None
     repository_lookup_approved: bool = False
+    common_directory_fingerprint: Fingerprint | None = None
+    branch: str | None = None
+    head_commit: str | None = None
+    remote_fingerprints: tuple[Fingerprint, ...] = ()
+    dirty_digest: Fingerprint | None = None
 
     def __post_init__(self) -> None:
         """Git evidence must identify a repository; non-Git evidence must not pretend to."""
@@ -159,6 +167,25 @@ class VcsIdentity:
             raise IdentityValidationError(msg)
         if self.repository_lookup_approved and self.repository_fingerprint is None:
             msg = "repository lookup authority requires a repository fingerprint"
+            raise IdentityValidationError(msg)
+        if (
+            self.head_commit is not None
+            and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", self.head_commit) is None
+        ):
+            msg = "VCS HEAD evidence is invalid"
+            raise IdentityValidationError(msg)
+        if self.branch is not None and (
+            not self.branch
+            or len(self.branch) > _MAX_BRANCH_LENGTH
+            or any(character in self.branch for character in "\x00\r\n")
+        ):
+            msg = "VCS branch evidence is invalid"
+            raise IdentityValidationError(msg)
+        if len(set(self.remote_fingerprints)) != len(self.remote_fingerprints) or (
+            self.remote_fingerprints
+            != tuple(sorted(self.remote_fingerprints, key=lambda value: value.value))
+        ):
+            msg = "VCS remote evidence must be unique and canonical"
             raise IdentityValidationError(msg)
 
 

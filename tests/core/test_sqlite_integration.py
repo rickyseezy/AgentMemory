@@ -80,7 +80,7 @@ async def test_real_migration_and_bootstrap_are_atomic_and_idempotent(tmp_path: 
             ).scalar_one() == 1
             assert (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
-            ).scalar_one() == "0003_id001_workspace_identity"
+            ).scalar_one() == "0004_id002_checkout_observation"
     finally:
         await store.close()
 
@@ -417,7 +417,7 @@ async def test_every_concrete_sqlite_readiness_capability_executes_live(tmp_path
         assert (await checks.sqlite_integrity(readiness_binding)).startswith("sqlite:")
         assert (
             await checks.migration_head(readiness_binding)
-            == "alembic:0003_id001_workspace_identity"
+            == "alembic:0004_id002_checkout_observation"
         )
         assert await checks.writable_volumes(readiness_binding) == "state:durable;artifacts:durable"
         assert (await checks.audit_append(readiness_binding)).startswith("audit:")

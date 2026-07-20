@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
 from agentmemory.identity.adapters.inbound.http_api import create_identity_router
+from agentmemory.identity.domain.checkout import CheckoutAggregate
 from agentmemory.identity.domain.errors import (
     IdentityAuthorizationError,
     IdentityConflictError,
@@ -27,6 +28,9 @@ from agentmemory.identity.domain.value_objects import (
     WorkspaceResolution,
 )
 from agentmemory.operations.bootstrap import export_core_openapi_schema
+
+if TYPE_CHECKING:
+    from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutCommand
 
 BRAIN_ID = StableId("018f0000-0000-7000-8000-000000000004")
 ACTOR_ID = StableId("018f0000-0000-7000-8000-000000000002")
@@ -78,6 +82,20 @@ class _Resolver:
         )
 
 
+@dataclass(slots=True)
+class _Observer:
+    calls: int = 0
+
+    async def execute(self, command: ObserveCheckoutCommand) -> CheckoutAggregate:
+        self.calls += 1
+        aggregate, _ = CheckoutAggregate.create(
+            CHECKOUT_ID,
+            command.brain_id,
+            command.observation(),
+        )
+        return aggregate
+
+
 def _body() -> dict[str, object]:
     return {
         "operation_id": "resolve-1",
@@ -99,6 +117,22 @@ def _body() -> dict[str, object]:
             "repository_lookup_approved": True,
         },
     }
+
+
+def _observe_body() -> dict[str, object]:
+    body = _body()
+    body["operation_id"] = "observe-1"
+    body["repository_id"] = REPOSITORY_ID.value
+    device = cast("dict[str, object]", body["device"])
+    device["logical_path_fingerprint"] = "1" * 64
+    device["file_fingerprint"] = "2" * 64
+    vcs = cast("dict[str, object]", body["vcs"])
+    vcs["common_directory_fingerprint"] = "3" * 64
+    vcs["branch"] = "main"
+    vcs["head_commit"] = "a" * 40
+    vcs["remote_fingerprints"] = ["4" * 64]
+    vcs["dirty_digest"] = "5" * 64
+    return body
 
 
 def _app(authenticator: _Authenticator, resolver: _Resolver) -> FastAPI:
@@ -198,6 +232,32 @@ async def test_malformed_fingerprint_fails_before_repository_access() -> None:
     assert resolver.calls == 0
 
 
+@pytest.mark.asyncio
+async def test_observe_checkout_contract_is_authenticated_path_free_and_content_free() -> None:
+    observer = _Observer()
+    application = FastAPI()
+    application.include_router(create_identity_router(_Authenticator(), _Resolver(), observer))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://127.0.0.1",
+    ) as client:
+        response = await client.post(
+            "/v1/checkouts:observe",
+            headers={"Authorization": "Bearer valid"},
+            json=_observe_body(),
+        )
+    assert response.status_code == 200
+    assert response.json() == {
+        "brain_id": BRAIN_ID.value,
+        "repository_id": REPOSITORY_ID.value,
+        "checkout_id": CHECKOUT_ID.value,
+        "version": 1,
+    }
+    assert "fingerprint" not in response.text
+    assert "branch" not in response.text
+    assert observer.calls == 1
+
+
 def test_complete_openapi_publishes_normative_identity_operation() -> None:
     schema = export_core_openapi_schema()
     paths = cast("dict[str, object]", schema["paths"])
@@ -205,3 +265,7 @@ def test_complete_openapi_publishes_normative_identity_operation() -> None:
     operation = cast("dict[str, object]", route["post"])
     assert operation["operationId"] == "ResolveWorkspaceQuery"
     assert operation["security"] == [{"AgentMemoryBearer": []}]
+    observe_route = cast("dict[str, object]", paths["/v1/checkouts:observe"])
+    observe = cast("dict[str, object]", observe_route["post"])
+    assert observe["operationId"] == "ObserveCheckoutCommand"
+    assert observe["security"] == [{"AgentMemoryBearer": []}]

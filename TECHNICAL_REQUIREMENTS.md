@@ -1855,6 +1855,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ID-002 — Preserve identity across moves, clones, and worktrees
 
+**Implementation record:** [`docs/implementation/ID-002.md`](docs/implementation/ID-002.md) and
+[`docs/runbooks/ID-002-CHECKOUT-CONTINUITY.md`](docs/runbooks/ID-002-CHECKOUT-CONTINUITY.md).
+
 **User story:** As a developer, moving, cloning, symlinking, or opening a worktree does not lose history.
 
 **Acceptance criteria**

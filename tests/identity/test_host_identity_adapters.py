@@ -184,7 +184,97 @@ async def test_real_git_adapter_preserves_repository_across_path_move(tmp_path: 
     assert second is not None
     assert second.repository_fingerprint == first.repository_fingerprint
     assert second.checkout_fingerprint != first.checkout_fingerprint
+    assert second.worktree_fingerprint == first.worktree_fingerprint
+    assert second.common_directory_fingerprint == first.common_directory_fingerprint
+    assert moved_device.file_fingerprint == first_device.file_fingerprint
+    assert moved_device.path_fingerprint != first_device.path_fingerprint
     assert "secret" not in repr(second)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_real_git_adapter_distinguishes_clone_and_linked_worktree(tmp_path: Path) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is unavailable in this supported-runtime test environment")
+    source = tmp_path / "source"
+    source.mkdir()
+    await _run(git, "init", str(source))
+    await _run(git, "-C", str(source), "config", "user.name", "AgentMemory Test")
+    await _run(git, "-C", str(source), "config", "user.email", "test@example.invalid")
+    (source / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    await _run(git, "-C", str(source), "add", "tracked.txt")
+    await _run(git, "-C", str(source), "commit", "-m", "identity")
+    remote = "ssh://git@example.invalid/team/project.git"
+    await _run(git, "-C", str(source), "remote", "add", "origin", remote)
+
+    clone = tmp_path / "clone"
+    await _run(git, "clone", "--no-hardlinks", str(source), str(clone))
+    await _run(git, "-C", str(clone), "remote", "set-url", "origin", remote)
+    linked = tmp_path / "linked"
+    await _run(git, "-C", str(source), "worktree", "add", "-b", "feature", str(linked))
+    (linked / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    devices = LocalDeviceIdentityAdapter(
+        DEVICE_ID,
+        Fingerprint.from_bytes(b"device"),
+        verified=True,
+        fingerprinter=_fingerprinter(),
+    )
+    adapter = GitCliIdentityAdapter(Path(git), _fingerprinter())
+    source_identity = await adapter.observe(str(source), await devices.observe(str(source)))
+    clone_identity = await adapter.observe(str(clone), await devices.observe(str(clone)))
+    linked_identity = await adapter.observe(str(linked), await devices.observe(str(linked)))
+    assert source_identity is not None
+    assert clone_identity is not None
+    assert linked_identity is not None
+    assert clone_identity.repository_fingerprint == source_identity.repository_fingerprint
+    assert clone_identity.worktree_fingerprint != source_identity.worktree_fingerprint
+    assert (
+        clone_identity.common_directory_fingerprint != source_identity.common_directory_fingerprint
+    )
+    assert linked_identity.repository_fingerprint == source_identity.repository_fingerprint
+    assert (
+        linked_identity.common_directory_fingerprint == source_identity.common_directory_fingerprint
+    )
+    assert linked_identity.worktree_fingerprint != source_identity.worktree_fingerprint
+    assert linked_identity.branch == "feature"
+    assert linked_identity.head_commit == source_identity.head_commit
+    assert linked_identity.dirty_digest != source_identity.dirty_digest
+
+    previous_remotes = source_identity.remote_fingerprints
+    await _run(
+        git,
+        "-C",
+        str(source),
+        "remote",
+        "set-url",
+        "origin",
+        "ssh://git@example.invalid/team/moved.git",
+    )
+    changed_remote = await adapter.observe(str(source), await devices.observe(str(source)))
+    assert changed_remote is not None
+    assert changed_remote.remote_fingerprints != previous_remotes
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_device_adapter_keeps_real_identity_for_symlink_alias(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(workspace, target_is_directory=True)
+    adapter = LocalDeviceIdentityAdapter(
+        DEVICE_ID,
+        Fingerprint.from_bytes(b"device"),
+        verified=True,
+        fingerprinter=_fingerprinter(),
+    )
+    direct = await adapter.observe(str(workspace))
+    linked = await adapter.observe(str(alias))
+    assert linked.path_fingerprint == direct.path_fingerprint
+    assert linked.file_fingerprint == direct.file_fingerprint
+    assert linked.logical_path_fingerprint != direct.logical_path_fingerprint
 
 
 @pytest.mark.asyncio

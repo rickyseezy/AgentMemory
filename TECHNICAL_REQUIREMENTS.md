@@ -1878,6 +1878,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ID-003 — Model complex repository layouts
 
+**Implementation record:** [`docs/implementation/ID-003.md`](docs/implementation/ID-003.md) and
+[`docs/runbooks/ID-003-REPOSITORY-TOPOLOGY.md`](docs/runbooks/ID-003-REPOSITORY-TOPOLOGY.md).
+
 **User story:** As a developer, monorepos, nested repositories, forks, submodules, and non-Git workspaces are represented accurately.
 
 **Acceptance criteria**

@@ -166,6 +166,7 @@ only_mutate = [
   "*operations/domain/projection_rebuild.py",
   "*identity/domain/services.py",
   "*identity/domain/checkout.py",
+  "*identity/domain/topology.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
@@ -174,6 +175,8 @@ pytest_add_cli_args_test_selection = [
   "tests/identity/test_identity_fingerprints.py",
   "tests/identity/test_checkout_observation_domain.py",
   "tests/identity/test_observe_checkout_application.py",
+  "tests/identity/test_repository_topology_domain.py",
+  "tests/identity/test_repository_topology_application.py",
 ]
 mutate_only_covered_lines = true
 use_setproctitle = false

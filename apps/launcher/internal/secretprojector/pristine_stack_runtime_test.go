@@ -129,7 +129,7 @@ func TestPF001PristineStackStartsNeo4jBeforeCommunityMigrations(t *testing.T) {
 	)
 	verify.Env = projectionTestEnvironment()
 	head, err := verify.Output()
-	if err != nil || string(head) != "0004_id002_checkout_observation\n" {
+	if err != nil || string(head) != "0005_id003_repository_topology\n" {
 		t.Fatalf("pristine relational migration head = %q/%v", head, safePristineError(err))
 	}
 }

@@ -8,6 +8,10 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from agentmemory.identity.domain.checkout import CheckoutAggregate, CheckoutEvent
+    from agentmemory.identity.domain.topology import (
+        ProjectRepositoryLink,
+        RepositoryTopologyCandidate,
+    )
     from agentmemory.identity.domain.value_objects import (
         DeviceIdentity,
         Fingerprint,
@@ -208,5 +212,94 @@ class CheckoutObservationUnitOfWorkFactory(Protocol):
     """Construct a fresh Checkout write transaction."""
 
     def __call__(self) -> CheckoutObservationUnitOfWork:
+        """Return one unopened transaction."""
+        ...
+
+
+class RepositoryTopologyReadRepository(Protocol):
+    """Validate candidate endpoint ownership without exposing repository content."""
+
+    async def require_candidate(self, candidate: RepositoryTopologyCandidate) -> None:
+        """Reject inactive, missing, cross-Brain, or mismatched endpoint entities."""
+        ...
+
+
+class ProjectRepositoryLinkRepository(Protocol):
+    """Persist the governed topology aggregate and its append-only history."""
+
+    async def require_candidate(self, candidate: RepositoryTopologyCandidate) -> None:
+        """Require all candidate endpoints to be active in the candidate Brain."""
+        ...
+
+    async def find_operation(
+        self,
+        brain_id: StableId,
+        operation_id: str,
+    ) -> tuple[str, ProjectRepositoryLink] | None:
+        """Return the immutable request digest and exact prior command result."""
+        ...
+
+    async def find_link(
+        self,
+        brain_id: StableId,
+        link_id: StableId,
+    ) -> ProjectRepositoryLink | None:
+        """Load one aggregate and its complete correction history."""
+        ...
+
+    async def find_active(
+        self,
+        candidate: RepositoryTopologyCandidate,
+    ) -> ProjectRepositoryLink | None:
+        """Find duplicate effective state with the same immutable endpoints."""
+        ...
+
+    async def append(
+        self,
+        request_digest: str,
+        event_id: StableId,
+        aggregate: ProjectRepositoryLink,
+        *,
+        expected_previous_version: int | None,
+    ) -> None:
+        """Compare-and-swap the snapshot and append event/history atomically."""
+        ...
+
+
+class RepositoryLinkUnitOfWork(Protocol):
+    """Own one serialized repository-link confirmation transaction."""
+
+    @property
+    def authorization(self) -> CheckoutObservationAuthorizationPolicy:
+        """Return transaction-scoped owner authorization."""
+        ...
+
+    @property
+    def links(self) -> ProjectRepositoryLinkRepository:
+        """Return transaction-scoped topology persistence."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Open the write transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Roll back unless explicitly committed."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit snapshot, history, event, and current projection together."""
+        ...
+
+
+class RepositoryLinkUnitOfWorkFactory(Protocol):
+    """Construct a fresh repository-link write transaction."""
+
+    def __call__(self) -> RepositoryLinkUnitOfWork:
         """Return one unopened transaction."""
         ...

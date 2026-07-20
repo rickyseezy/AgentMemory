@@ -4,17 +4,34 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 
-from fastapi import APIRouter, Security
+from fastapi import APIRouter, Header, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentmemory.identity.application.commands.confirm_repository_link import (
+    ConfirmRepositoryLinkCommand,
+)
 from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutCommand
+from agentmemory.identity.application.queries.discover_repository_topology import (
+    DiscoverRepositoryTopologyQuery,
+    RepositoryTopologyDiscovery,
+)
 from agentmemory.identity.domain.errors import (
     IdentityAuthorizationError,
     IdentityConflictError,
     IdentityDependencyError,
     IdentityValidationError,
+)
+from agentmemory.identity.domain.topology import (
+    ProjectRepositoryLink,
+    RepositoryRelationType,
+    RepositoryTopologyCandidate,
+    TopologyConfirmationSource,
+    TopologyEndpointType,
+    TopologyEvidence,
+    TopologyEvidenceKind,
+    TopologyEvidenceStrength,
 )
 from agentmemory.identity.domain.value_objects import (
     DeviceIdentity,
@@ -196,6 +213,147 @@ class ObserveCheckoutResponseModel(_StrictModel):
     version: int
 
 
+class TopologyEvidenceModel(_StrictModel):
+    """One keyed evidence fact without raw paths, remotes, or repository content."""
+
+    digest: str
+    kind: Literal[
+        "nested_git_marker",
+        "gitlink",
+        "gitmodule_declaration",
+        "shared_git_roots",
+        "upstream_remote",
+        "similar_remote",
+        "shared_content",
+        "project_manifest",
+        "non_git_manifest",
+        "user_confirmation",
+    ]
+    strength: Literal[
+        "candidate",
+        "deterministic_vcs",
+        "deterministic_manifest",
+        "user_confirmed",
+    ]
+
+    def to_domain(self) -> TopologyEvidence:
+        """Translate closed, privacy-safe evidence to its immutable value."""
+        return TopologyEvidence(
+            Fingerprint(self.digest),
+            TopologyEvidenceKind(self.kind),
+            TopologyEvidenceStrength(self.strength),
+        )
+
+
+class RepositoryTopologyCandidateModel(_StrictModel):
+    """One path-free candidate assertion emitted by a local topology adapter."""
+
+    subject_type: Literal["project", "repository"]
+    subject_id: str
+    relation_type: Literal[
+        "contains_repository",
+        "submodule_of",
+        "fork_of",
+        "project_uses_repository",
+    ]
+    target_type: Literal["project", "repository"]
+    target_id: str
+    component_root_fingerprint: str | None = None
+    evidence: list[TopologyEvidenceModel] = Field(min_length=1, max_length=32)
+
+    def to_domain(self, brain_id: StableId) -> RepositoryTopologyCandidate:
+        """Apply domain endpoint and canonical-evidence invariants at the boundary."""
+        return RepositoryTopologyCandidate(
+            brain_id,
+            TopologyEndpointType(self.subject_type),
+            StableId(self.subject_id),
+            RepositoryRelationType(self.relation_type),
+            TopologyEndpointType(self.target_type),
+            StableId(self.target_id),
+            _optional_fingerprint(self.component_root_fingerprint),
+            tuple(item.to_domain() for item in self.evidence),
+        )
+
+
+class DiscoverRepositoryTopologyRequestModel(_StrictModel):
+    """Authenticated bridge batch for DiscoverRepositoryTopologyQuery."""
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    brain_id: str
+    actor_id: str
+    grant_id: str
+    observations: list[RepositoryTopologyCandidateModel] = Field(max_length=512)
+
+    def query(self) -> DiscoverRepositoryTopologyQuery:
+        """Create the path-free application query."""
+        brain_id = StableId(self.brain_id)
+        return DiscoverRepositoryTopologyQuery(
+            self.operation_id,
+            brain_id,
+            StableId(self.actor_id),
+            StableId(self.grant_id),
+            tuple(item.to_domain(brain_id) for item in self.observations),
+        )
+
+
+class DiscoverRepositoryTopologyResponseModel(_StrictModel):
+    """Authorized candidate topology without host-local values."""
+
+    brain_id: str
+    candidates: tuple[RepositoryTopologyCandidateModel, ...]
+    explanation: tuple[str, ...]
+
+
+class ConfirmRepositoryLinkRequestModel(_StrictModel):
+    """Confirm a candidate or append a governed user correction."""
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    brain_id: str
+    actor_id: str
+    grant_id: str
+    candidate: RepositoryTopologyCandidateModel
+    confirmation_source: Literal["deterministic_vcs", "deterministic_manifest", "user"]
+    link_id: str | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+    correction_reason: str | None = Field(default=None, min_length=1, max_length=64)
+
+    def command(self) -> ConfirmRepositoryLinkCommand:
+        """Create the immutable idempotent confirmation command."""
+        brain_id = StableId(self.brain_id)
+        return ConfirmRepositoryLinkCommand(
+            self.operation_id,
+            brain_id,
+            StableId(self.actor_id),
+            StableId(self.grant_id),
+            self.candidate.to_domain(brain_id),
+            TopologyConfirmationSource(self.confirmation_source),
+            None if self.link_id is None else StableId(self.link_id),
+            self.expected_version,
+            self.correction_reason,
+        )
+
+
+class ConfirmRepositoryLinkResponseModel(_StrictModel):
+    """Content-free current topology-link snapshot."""
+
+    link_id: str
+    brain_id: str
+    subject_type: Literal["project", "repository"]
+    subject_id: str
+    relation_type: Literal[
+        "contains_repository",
+        "submodule_of",
+        "fork_of",
+        "project_uses_repository",
+    ]
+    target_type: Literal["project", "repository"]
+    target_id: str
+    component_root_fingerprint: str | None
+    valid_from: int
+    valid_to: int | None
+    version: int
+
+
 class AuthenticatorPort(Protocol):
     """Authenticate a local capability before identity authorization."""
 
@@ -226,6 +384,25 @@ class ObserveCheckoutPort(Protocol):
         ...
 
 
+class DiscoverRepositoryTopologyPort(Protocol):
+    """Return authorized candidate topology without mutating identity."""
+
+    async def execute(
+        self,
+        query: DiscoverRepositoryTopologyQuery,
+    ) -> RepositoryTopologyDiscovery:
+        """Validate and coalesce host candidate evidence."""
+        ...
+
+
+class ConfirmRepositoryLinkPort(Protocol):
+    """Commit one confirmed or corrected topology aggregate."""
+
+    async def execute(self, command: ConfirmRepositoryLinkCommand) -> ProjectRepositoryLink:
+        """Return the current canonical link snapshot."""
+        ...
+
+
 class _ContractAuthenticator:
     async def authenticate(self, authorization: str | None) -> None:
         del authorization
@@ -253,14 +430,35 @@ class _ContractObserver:
         raise RuntimeError(msg)
 
 
+class _ContractTopologyDiscovery:
+    async def execute(
+        self,
+        query: DiscoverRepositoryTopologyQuery,
+    ) -> RepositoryTopologyDiscovery:
+        del query
+        msg = "contract-only dependency cannot discover repository topology"
+        raise RuntimeError(msg)
+
+
+class _ContractLinkConfirmer:
+    async def execute(self, command: ConfirmRepositoryLinkCommand) -> ProjectRepositoryLink:
+        del command
+        msg = "contract-only dependency cannot confirm a repository link"
+        raise RuntimeError(msg)
+
+
 def create_identity_router(  # noqa: C901 -- Two closed endpoints share one router composition.
     authenticator: AuthenticatorPort,
     resolver: ResolveObservedWorkspacePort,
     observer: ObserveCheckoutPort | None = None,
+    topology_discovery: DiscoverRepositoryTopologyPort | None = None,
+    link_confirmer: ConfirmRepositoryLinkPort | None = None,
 ) -> APIRouter:
     """Create the identity router with only constructor-supplied capabilities."""
     router = APIRouter(prefix="/v1")
     checkout_observer = observer or _ContractObserver()
+    topology_query = topology_discovery or _ContractTopologyDiscovery()
+    topology_command = link_confirmer or _ContractLinkConfirmer()
 
     @router.post(
         "/projects:resolve",
@@ -330,7 +528,76 @@ def create_identity_router(  # noqa: C901 -- Two closed endpoints share one rout
             version=result.version,
         )
 
-    _registered_routes = (resolve_workspace, observe_checkout)
+    @router.post(
+        "/repositories:discover-topology",
+        operation_id="DiscoverRepositoryTopologyQuery",
+        response_model=DiscoverRepositoryTopologyResponseModel,
+    )
+    async def discover_repository_topology(
+        request: DiscoverRepositoryTopologyRequestModel,
+        authorization: Annotated[str | None, Security(_AUTHORIZATION)],
+    ) -> DiscoverRepositoryTopologyResponseModel | JSONResponse:
+        """Validate and coalesce keyed host observations without persisting them."""
+        try:
+            await authenticator.authenticate(authorization)
+            result = await topology_query.execute(request.query())
+        except IdentityAuthorizationError:
+            return _problem("AM_FORBIDDEN", 403, "identity scope is not authorized", request)
+        except IdentityConflictError:
+            return _problem("AM_CONFLICT", 409, "repository topology conflicts", request)
+        except IdentityValidationError:
+            return _problem("AM_VALIDATION", 422, "repository topology is invalid", request)
+        except IdentityDependencyError:
+            return _problem(
+                "AM_DEPENDENCY_UNAVAILABLE",
+                503,
+                "identity dependency is unavailable",
+                request,
+                retryable=True,
+            )
+        return DiscoverRepositoryTopologyResponseModel(
+            brain_id=result.brain_id.value,
+            candidates=tuple(_topology_candidate_response(item) for item in result.candidates),
+            explanation=result.explanation,
+        )
+
+    @router.post(
+        "/repository-links:confirm",
+        operation_id="ConfirmRepositoryLinkCommand",
+        response_model=ConfirmRepositoryLinkResponseModel,
+    )
+    async def confirm_repository_link(
+        request: ConfirmRepositoryLinkRequestModel,
+        authorization: Annotated[str | None, Security(_AUTHORIZATION)],
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> ConfirmRepositoryLinkResponseModel | JSONResponse:
+        """Confirm or correct one candidate under exact idempotency and owner authority."""
+        try:
+            await authenticator.authenticate(authorization)
+            _require_idempotency_key(idempotency_key, request.operation_id)
+            result = await topology_command.execute(request.command())
+        except IdentityAuthorizationError:
+            return _problem("AM_FORBIDDEN", 403, "identity scope is not authorized", request)
+        except IdentityConflictError:
+            return _problem("AM_CONFLICT", 409, "repository link conflicts", request)
+        except IdentityValidationError:
+            return _problem("AM_VALIDATION", 422, "repository link is invalid", request)
+        except IdentityDependencyError:
+            return _problem(
+                "AM_DEPENDENCY_UNAVAILABLE",
+                503,
+                "identity dependency is unavailable",
+                request,
+                retryable=True,
+            )
+        return _repository_link_response(result)
+
+    _registered_routes = (
+        resolve_workspace,
+        observe_checkout,
+        discover_repository_topology,
+        confirm_repository_link,
+    )
     del _registered_routes
     return router
 
@@ -341,6 +608,8 @@ def create_contract_identity_router() -> APIRouter:
         _ContractAuthenticator(),
         _ContractResolver(),
         _ContractObserver(),
+        _ContractTopologyDiscovery(),
+        _ContractLinkConfirmer(),
     )
 
 
@@ -364,15 +633,73 @@ def _candidate_response(candidate: IdentityCandidate) -> IdentityCandidateRespon
     )
 
 
+def _topology_candidate_response(
+    candidate: RepositoryTopologyCandidate,
+) -> RepositoryTopologyCandidateModel:
+    return RepositoryTopologyCandidateModel(
+        subject_type=candidate.subject_type.value,
+        subject_id=candidate.subject_id.value,
+        relation_type=candidate.relation_type.value,
+        target_type=candidate.target_type.value,
+        target_id=candidate.target_id.value,
+        component_root_fingerprint=(
+            None
+            if candidate.component_root_fingerprint is None
+            else candidate.component_root_fingerprint.value
+        ),
+        evidence=[
+            TopologyEvidenceModel(
+                digest=item.digest.value,
+                kind=item.kind.value,
+                strength=item.strength.value,
+            )
+            for item in candidate.evidence
+        ],
+    )
+
+
+def _repository_link_response(
+    aggregate: ProjectRepositoryLink,
+) -> ConfirmRepositoryLinkResponseModel:
+    return ConfirmRepositoryLinkResponseModel(
+        link_id=aggregate.link_id.value,
+        brain_id=aggregate.brain_id.value,
+        subject_type=aggregate.subject_type.value,
+        subject_id=aggregate.subject_id.value,
+        relation_type=aggregate.relation_type.value,
+        target_type=aggregate.target_type.value,
+        target_id=aggregate.target_id.value,
+        component_root_fingerprint=(
+            None
+            if aggregate.component_root_fingerprint is None
+            else aggregate.component_root_fingerprint.value
+        ),
+        valid_from=aggregate.valid_from,
+        valid_to=aggregate.valid_to,
+        version=aggregate.version,
+    )
+
+
 def _optional_fingerprint(value: str | None) -> Fingerprint | None:
     return None if value is None else Fingerprint(value)
+
+
+def _require_idempotency_key(value: str | None, operation_id: str) -> None:
+    if value != operation_id:
+        msg = "Idempotency-Key must equal operation_id"
+        raise IdentityValidationError(msg)
 
 
 def _problem(
     code: str,
     status_code: int,
     detail: str,
-    request: ResolveWorkspaceRequestModel | ObserveCheckoutRequestModel,
+    request: (
+        ResolveWorkspaceRequestModel
+        | ObserveCheckoutRequestModel
+        | DiscoverRepositoryTopologyRequestModel
+        | ConfirmRepositoryLinkRequestModel
+    ),
     *,
     retryable: bool = False,
 ) -> JSONResponse:

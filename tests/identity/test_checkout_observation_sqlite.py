@@ -125,7 +125,7 @@ def test_id002_migration_is_reversible_before_canonical_observations(tmp_path: P
     database = tmp_path / "migration.sqlite3"
     configuration = _migration_config(database)
     command.upgrade(configuration, "0003_id001_workspace_identity")
-    command.upgrade(configuration, "head")
+    command.upgrade(configuration, "0004_id002_checkout_observation")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "0004_id002_checkout_observation",

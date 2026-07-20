@@ -10,14 +10,29 @@ import pytest
 from fastapi import FastAPI
 
 from agentmemory.identity.adapters.inbound.http_api import create_identity_router
+from agentmemory.identity.application.queries.discover_repository_topology import (
+    DiscoverRepositoryTopologyQuery,
+    RepositoryTopologyDiscovery,
+)
 from agentmemory.identity.domain.checkout import CheckoutAggregate
 from agentmemory.identity.domain.errors import (
     IdentityAuthorizationError,
     IdentityConflictError,
     IdentityDependencyError,
 )
+from agentmemory.identity.domain.topology import (
+    LinkConfirmation,
+    ProjectRepositoryLink,
+    RepositoryRelationType,
+    RepositoryTopologyCandidate,
+    TopologyEndpointType,
+    TopologyEvidence,
+    TopologyEvidenceKind,
+    TopologyEvidenceStrength,
+)
 from agentmemory.identity.domain.value_objects import (
     DeviceIdentity,
+    Fingerprint,
     IdentityCandidate,
     IdentitySource,
     ObservedWorkspaceQuery,
@@ -30,6 +45,9 @@ from agentmemory.identity.domain.value_objects import (
 from agentmemory.operations.bootstrap import export_core_openapi_schema
 
 if TYPE_CHECKING:
+    from agentmemory.identity.application.commands.confirm_repository_link import (
+        ConfirmRepositoryLinkCommand,
+    )
     from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutCommand
 
 BRAIN_ID = StableId("018f0000-0000-7000-8000-000000000004")
@@ -96,6 +114,62 @@ class _Observer:
         return aggregate
 
 
+def _topology_candidate() -> RepositoryTopologyCandidate:
+    return RepositoryTopologyCandidate(
+        BRAIN_ID,
+        TopologyEndpointType.REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryRelationType.CONTAINS_REPOSITORY,
+        TopologyEndpointType.REPOSITORY,
+        StableId("018f0000-0000-7000-8000-000000000021"),
+        None,
+        (
+            TopologyEvidence(
+                Fingerprint("6" * 64),
+                TopologyEvidenceKind.NESTED_GIT_MARKER,
+                TopologyEvidenceStrength.DETERMINISTIC_VCS,
+            ),
+        ),
+    )
+
+
+@dataclass(slots=True)
+class _TopologyDiscovery:
+    calls: int = 0
+
+    async def execute(
+        self,
+        query: DiscoverRepositoryTopologyQuery,
+    ) -> RepositoryTopologyDiscovery:
+        self.calls += 1
+        assert query.brain_id == BRAIN_ID
+        return RepositoryTopologyDiscovery(
+            query.brain_id,
+            query.observations,
+            ("candidate:contains_repository",),
+        )
+
+
+@dataclass(slots=True)
+class _LinkConfirmer:
+    calls: int = 0
+
+    async def execute(self, command: ConfirmRepositoryLinkCommand) -> ProjectRepositoryLink:
+        self.calls += 1
+        aggregate, _ = ProjectRepositoryLink.confirm(
+            StableId("018f0000-0000-7000-8000-000000000040"),
+            command.candidate,
+            LinkConfirmation(
+                command.operation_id,
+                command.actor_id,
+                command.grant_id,
+                command.confirmation_source,
+                123,
+            ),
+        )
+        return aggregate
+
+
 def _body() -> dict[str, object]:
     return {
         "operation_id": "resolve-1",
@@ -133,6 +207,33 @@ def _observe_body() -> dict[str, object]:
     vcs["remote_fingerprints"] = ["4" * 64]
     vcs["dirty_digest"] = "5" * 64
     return body
+
+
+def _topology_body(operation_id: str = "discover-topology-1") -> dict[str, object]:
+    candidate = _topology_candidate()
+    return {
+        "operation_id": operation_id,
+        "brain_id": BRAIN_ID.value,
+        "actor_id": ACTOR_ID.value,
+        "grant_id": GRANT_ID.value,
+        "observations": [
+            {
+                "subject_type": candidate.subject_type.value,
+                "subject_id": candidate.subject_id.value,
+                "relation_type": candidate.relation_type.value,
+                "target_type": candidate.target_type.value,
+                "target_id": candidate.target_id.value,
+                "component_root_fingerprint": None,
+                "evidence": [
+                    {
+                        "digest": candidate.evidence[0].digest.value,
+                        "kind": candidate.evidence[0].kind.value,
+                        "strength": candidate.evidence[0].strength.value,
+                    }
+                ],
+            }
+        ],
+    }
 
 
 def _app(authenticator: _Authenticator, resolver: _Resolver) -> FastAPI:
@@ -258,6 +359,59 @@ async def test_observe_checkout_contract_is_authenticated_path_free_and_content_
     assert observer.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_topology_discovery_and_confirmation_are_path_free_and_idempotent() -> None:
+    discovery = _TopologyDiscovery()
+    confirmer = _LinkConfirmer()
+    application = FastAPI()
+    application.include_router(
+        create_identity_router(
+            _Authenticator(),
+            _Resolver(),
+            _Observer(),
+            discovery,
+            confirmer,
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://127.0.0.1",
+    ) as client:
+        discovery_response = await client.post(
+            "/v1/repositories:discover-topology",
+            headers={"Authorization": "Bearer valid"},
+            json=_topology_body(),
+        )
+        confirmation_body = _topology_body("confirm-topology-1")
+        observations = confirmation_body.pop("observations")
+        assert isinstance(observations, list)
+        confirmation_body["candidate"] = observations[0]
+        confirmation_body["confirmation_source"] = "deterministic_vcs"
+        confirmation_response = await client.post(
+            "/v1/repository-links:confirm",
+            headers={
+                "Authorization": "Bearer valid",
+                "Idempotency-Key": "confirm-topology-1",
+            },
+            json=confirmation_body,
+        )
+        missing_key_response = await client.post(
+            "/v1/repository-links:confirm",
+            headers={"Authorization": "Bearer valid"},
+            json=confirmation_body,
+        )
+    assert discovery_response.status_code == 200
+    assert discovery_response.json()["explanation"] == ["candidate:contains_repository"]
+    assert "path" not in discovery_response.text
+    assert "remote" not in discovery_response.text
+    assert confirmation_response.status_code == 200
+    assert confirmation_response.json()["version"] == 1
+    assert confirmation_response.json()["subject_id"] == REPOSITORY_ID.value
+    assert missing_key_response.status_code == 422
+    assert discovery.calls == 1
+    assert confirmer.calls == 1
+
+
 def test_complete_openapi_publishes_normative_identity_operation() -> None:
     schema = export_core_openapi_schema()
     paths = cast("dict[str, object]", schema["paths"])
@@ -269,3 +423,14 @@ def test_complete_openapi_publishes_normative_identity_operation() -> None:
     observe = cast("dict[str, object]", observe_route["post"])
     assert observe["operationId"] == "ObserveCheckoutCommand"
     assert observe["security"] == [{"AgentMemoryBearer": []}]
+    topology_route = cast(
+        "dict[str, object]",
+        paths["/v1/repositories:discover-topology"],
+    )
+    topology = cast("dict[str, object]", topology_route["post"])
+    assert topology["operationId"] == "DiscoverRepositoryTopologyQuery"
+    assert topology["security"] == [{"AgentMemoryBearer": []}]
+    confirmation_route = cast("dict[str, object]", paths["/v1/repository-links:confirm"])
+    confirmation = cast("dict[str, object]", confirmation_route["post"])
+    assert confirmation["operationId"] == "ConfirmRepositoryLinkCommand"
+    assert confirmation["security"] == [{"AgentMemoryBearer": []}]

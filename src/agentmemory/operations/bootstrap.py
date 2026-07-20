@@ -23,8 +23,18 @@ from agentmemory.identity.adapters.outbound.sqlite_identity import (
     SqliteProjectRepository,
     SqliteRepositoryIdentityRepository,
 )
+from agentmemory.identity.adapters.outbound.sqlite_repository_topology import (
+    SqliteRepositoryLinkUnitOfWorkFactory,
+    SqliteRepositoryTopologyReadRepository,
+)
 from agentmemory.identity.adapters.outbound.uuid7_identity import SystemUuid7IdentityGenerator
+from agentmemory.identity.application.commands.confirm_repository_link import (
+    ConfirmRepositoryLinkHandler,
+)
 from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutHandler
+from agentmemory.identity.application.queries.discover_repository_topology import (
+    DiscoverRepositoryTopologyHandler,
+)
 from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
@@ -284,12 +294,13 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             await container.close()
 
     application = create_app(dependencies, lifespan)
+    identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
     application.include_router(
         create_identity_router(
             authenticator,
             ResolveWorkspaceHandler(
                 IdentityResolutionDependencies(
-                    SqliteIdentityAuthorizationPolicy(store.engine),
+                    identity_authorization,
                     SqliteProjectRepository(store.engine),
                     SqliteCheckoutRepository(store.engine),
                     SqliteRepositoryIdentityRepository(store.engine),
@@ -298,6 +309,15 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             ObserveCheckoutHandler(
                 SqliteCheckoutObservationUnitOfWorkFactory(store, clock),
                 SystemUuid7IdentityGenerator(),
+            ),
+            DiscoverRepositoryTopologyHandler(
+                identity_authorization,
+                SqliteRepositoryTopologyReadRepository(store.engine),
+            ),
+            ConfirmRepositoryLinkHandler(
+                SqliteRepositoryLinkUnitOfWorkFactory(store, clock),
+                SystemUuid7IdentityGenerator(),
+                clock,
             ),
         )
     )

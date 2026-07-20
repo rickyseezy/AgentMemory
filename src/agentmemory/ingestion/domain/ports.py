@@ -62,6 +62,12 @@ if TYPE_CHECKING:
         CapturePolicyResult,
         EgressDestination,
     )
+    from agentmemory.ingestion.domain.schema_evolution import (
+        EventSchemaKey,
+        EventSchemaOutcome,
+        EventSchemaSource,
+        SchemaMigrationProgress,
+    )
     from agentmemory.ingestion.domain.spool_reconciliation import (
         SpoolAcknowledgement,
         SpoolRecord,
@@ -797,4 +803,53 @@ class OrderedReplayRepository(Protocol):
 
     async def recover_expired(self, now_microseconds: int) -> int:
         """Release stale replay leases without touching committed shadow state."""
+        ...
+
+
+class EventSchemaMigrationRepository(Protocol):
+    """Persist derived schema views, quarantines, and resumable progress only."""
+
+    async def start_or_resume(
+        self,
+        operation_id: str,
+        target: EventSchemaKey,
+    ) -> SchemaMigrationProgress:
+        """Idempotently create or reopen one exact target migration."""
+        ...
+
+    async def get(self, operation_id: str) -> SchemaMigrationProgress | None:
+        """Return durable content-free progress or None for an unknown operation."""
+        ...
+
+    async def load_after(
+        self,
+        operation_id: str,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[EventSchemaSource, ...]:
+        """Read original canonical bytes after the durable event cursor."""
+        ...
+
+    async def store_and_checkpoint(
+        self,
+        operation_id: str,
+        outcome: EventSchemaOutcome,
+    ) -> SchemaMigrationProgress:
+        """Atomically store one derived outcome and advance exact progress."""
+        ...
+
+    async def mark_interrupted(self, operation_id: str) -> SchemaMigrationProgress:
+        """Retain committed progress and make the run resumable."""
+        ...
+
+    async def complete(self, operation_id: str) -> SchemaMigrationProgress:
+        """Mark a fully scanned run completed without changing its views."""
+        ...
+
+
+class CanonicalEventSourceReader(Protocol):
+    """Authenticate and decrypt immutable original canonical event bytes locally."""
+
+    async def read(self, event_id: str) -> bytes:
+        """Return exact original bytes or raise a typed integrity/dependency failure."""
         ...

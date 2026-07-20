@@ -21,6 +21,7 @@ on:
       - "tests/**"
       - "tools/**"
       - "deploy/model-source-lock.v1.json"
+      - "deploy/event-schema-compatibility.v1.json"
   push:
     branches:
       - main
@@ -43,6 +44,7 @@ on:
       - "tests/**"
       - "tools/**"
       - "deploy/model-source-lock.v1.json"
+      - "deploy/event-schema-compatibility.v1.json"
 
 permissions:
   contents: read
@@ -85,6 +87,11 @@ jobs:
 
       - name: Verify immutable official model sources
         run: uv run python tools/verify_model_source_lock.py deploy/model-source-lock.v1.json
+
+      - name: Verify every advertised event-schema compatibility path
+        run: >-
+          uv run python tools/verify_event_schema_compatibility.py
+          deploy/event-schema-compatibility.v1.json
 
       - name: Enforce strict static types
         run: |

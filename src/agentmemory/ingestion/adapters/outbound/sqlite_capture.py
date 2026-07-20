@@ -156,11 +156,14 @@ class SqliteAgentEventUnitOfWork:
         store: SqliteCoreStore,
         clock: Clock,
         capacity: SqliteCaptureCapacityEnforcer | None = None,
+        *,
+        record_schema_lineage: bool = True,
     ) -> None:
         """Bind the single-writer store and policy clock."""
         self._store = store
         self._clock = clock
         self._capacity = capacity
+        self._record_schema_lineage = record_schema_lineage
         self._connection: AsyncConnection | None = None
         self._committed = False
         self.events: AgentEventRepository
@@ -188,7 +191,11 @@ class SqliteAgentEventUnitOfWork:
             self._store.write_lock.release()
             raise
         connection = self._require_connection()
-        self.events = SqliteAgentEventRepository(connection, self._capacity)
+        self.events = SqliteAgentEventRepository(
+            connection,
+            self._capacity,
+            record_schema_lineage=self._record_schema_lineage,
+        )
         self.artifacts = SqliteArtifactRepository(connection)
         self.outbox = SqliteOutboxRepository(connection)
         self.audit = SqliteIngestionAuditRepository(connection)
@@ -265,10 +272,13 @@ class SqliteAgentEventRepository:
         self,
         connection: AsyncConnection,
         capacity: SqliteCaptureCapacityEnforcer | None = None,
+        *,
+        record_schema_lineage: bool = True,
     ) -> None:
         """Bind this aggregate repository to its owning transaction."""
         self._connection = connection
         self._capacity = capacity
+        self._record_schema_lineage = record_schema_lineage
 
     async def append(
         self,
@@ -349,6 +359,20 @@ class SqliteAgentEventRepository:
                 "payload_ref": artifact_id,
             },
         )
+        if self._record_schema_lineage:
+            await self._connection.execute(
+                text(
+                    "INSERT INTO event_schema_sources "
+                    "(event_id,schema_family,schema_major,event_schema_version,"
+                    "original_canonical_sha256,created_at,schema_version) VALUES "
+                    "(:event_id,'agent_event',1,1,:canonical_sha256,:created_at,1)"
+                ),
+                {
+                    "event_id": event.event_id,
+                    "canonical_sha256": bytes.fromhex(encrypted.canonical_sha256),
+                    "created_at": now,
+                },
+            )
         await self._insert_envelope(admitted, encrypted, now)
 
     async def _insert_envelope(

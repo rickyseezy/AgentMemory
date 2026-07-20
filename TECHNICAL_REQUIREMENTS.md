@@ -2178,6 +2178,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-006 — Evolve event schemas safely
 
+**Implementation record:** [`docs/implementation/ING-006.md`](docs/implementation/ING-006.md) and
+[`docs/runbooks/ING-006-SCHEMA-EVOLUTION.md`](docs/runbooks/ING-006-SCHEMA-EVOLUTION.md).
+
 **User story:** As an operator, upgrades retain older sessions and reject unsupported data safely.
 
 **Acceptance criteria**

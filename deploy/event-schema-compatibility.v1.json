@@ -1,0 +1,13 @@
+{
+  "contracts": [
+    {
+      "consumer_versions": [1],
+      "current_version": 1,
+      "family": "agent_event",
+      "major": 1,
+      "producer_versions": [1],
+      "upcast_edges": []
+    }
+  ],
+  "schema_version": 1
+}

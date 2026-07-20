@@ -128,7 +128,7 @@ async def _capture_legacy_event(store: SqliteCoreStore, key_file: Path) -> None:
         classification=source.event.classification.value,
         plaintext=canonical,
     )
-    unit = SqliteAgentEventUnitOfWork(store, clock)
+    unit = SqliteAgentEventUnitOfWork(store, clock, record_schema_lineage=False)
     async with unit:
         artifact_id = await unit.artifacts.ensure_reference(source, encrypted)
         await unit.events.append(source, encrypted, artifact_id)

@@ -14,6 +14,11 @@ class RecordingBackend:
     vectors: tuple[tuple[float, ...], ...] = ()
     scores: tuple[float, ...] = ()
     subject: str = "persistent memory"
+    memory_candidates: bytes = (
+        b'{"candidates":[],"input_sha256":"'
+        + (b"a" * 64)
+        + b'","schema":"agentmemory.memory-candidates.v1"}'
+    )
     calls: list[tuple[str, object]] = field(default_factory=list[tuple[str, object]])
 
     async def health(self) -> None:
@@ -40,6 +45,10 @@ class RecordingBackend:
     async def extract_subject(self, content: str) -> str:
         self.calls.append(("extract", content))
         return self.subject
+
+    async def extract_memory_candidates(self, content: str, input_sha256: str) -> bytes:
+        self.calls.append(("extract_memory", (content, input_sha256)))
+        return self.memory_candidates.replace(b"a" * 64, input_sha256.encode())
 
 
 @pytest.fixture

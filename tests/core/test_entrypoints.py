@@ -13,6 +13,11 @@ import uvicorn
 from alembic import command
 from neo4j import AsyncGraphDatabase
 
+from agentmemory.memory.domain.lineage_backfill import (
+    TaskLineageBackfillProgress,
+    TaskLineageBackfillState,
+)
+from agentmemory.operations import bootstrap
 from agentmemory.operations.adapters.outbound.sqlite_store import SqliteCoreStore
 from agentmemory.operations.bootstrap import create_core_app
 from agentmemory.operations.infrastructure import entrypoints
@@ -205,6 +210,27 @@ class _ProviderClient:
         self.closed = True
 
 
+@dataclass(slots=True)
+class _BackfillRepository:
+    started: bool = False
+
+    async def start_or_resume(self) -> TaskLineageBackfillProgress:
+        self.started = True
+        return TaskLineageBackfillProgress(
+            "mem001-task-lineage-v1",
+            TaskLineageBackfillState.COMPLETED,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            0,
+            0,
+            None,
+        )
+
+
 def _patch_composition_resources(
     monkeypatch: pytest.MonkeyPatch,
     store: _Store,
@@ -227,9 +253,18 @@ def _patch_composition_resources(
         del options
         return provider_client
 
+    def create_backfill_repository(*dependencies: object) -> _BackfillRepository:
+        del dependencies
+        return _BackfillRepository()
+
     monkeypatch.setattr(SqliteCoreStore, "create", classmethod(create_store))
     monkeypatch.setattr(AsyncGraphDatabase, "driver", create_driver)
     monkeypatch.setattr(httpx, "AsyncClient", create_provider_client)
+    monkeypatch.setattr(
+        bootstrap,
+        "SqliteTaskLineageBackfillRepository",
+        create_backfill_repository,
+    )
 
 
 @pytest.mark.asyncio

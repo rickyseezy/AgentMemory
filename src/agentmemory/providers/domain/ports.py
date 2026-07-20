@@ -35,6 +35,10 @@ class InferenceBackend(Protocol):
         """Produce one schema-constrained subject."""
         ...
 
+    async def extract_memory_candidates(self, content: str, input_sha256: str) -> bytes:
+        """Produce one canonical input-bound memory-candidate document."""
+        ...
+
 
 class BillableProviderBackend(Protocol):
     """Invoke one provider while preserving its stable downstream idempotency key."""

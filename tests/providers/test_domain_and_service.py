@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from typing import TYPE_CHECKING, cast
 
@@ -182,3 +183,27 @@ async def test_extraction_bounds_and_normalizes_subject(
             await service.extract_subject(content)
     with pytest.raises(ValueError, match="not enabled"):
         await ProviderService(identity(ProviderRole.EMBEDDING), backend).extract_subject("x")
+
+
+@pytest.mark.asyncio
+async def test_memory_candidate_extraction_is_canonical_and_input_bound(
+    backend: RecordingBackend,
+) -> None:
+    service = ProviderService(identity(ProviderRole.EXTRACTION), backend)
+    content = b'{"evidence":[]}'
+    input_sha = hashlib.sha256(content).hexdigest()
+    raw = await service.extract_memory_candidates(content, input_sha)
+    assert input_sha.encode() in raw
+    assert backend.calls[-1] == ("extract_memory", ('{"evidence":[]}', input_sha))
+
+    backend.memory_candidates = backend.memory_candidates.replace(b"a" * 64, b"b" * 64)
+    with pytest.raises(RuntimeError, match="input identity"):
+        await service.extract_memory_candidates(content, input_sha)
+    with pytest.raises(ValueError, match="digest"):
+        await service.extract_memory_candidates(content, "wrong")
+    with pytest.raises(ValueError, match="content"):
+        await service.extract_memory_candidates(b"not-json", "a" * 64)
+    with pytest.raises(ValueError, match="not enabled"):
+        await ProviderService(identity(ProviderRole.EMBEDDING), backend).extract_memory_candidates(
+            b"{}", hashlib.sha256(b"{}").hexdigest()
+        )

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0014_ing006_schema_evolution"
+EXPECTED_MIGRATION_HEAD = "0015_mem001_memory_consolidation"
 
 
 class SqliteActiveBrainResolver:
@@ -357,7 +357,7 @@ class SqliteSemanticSmokeStore:
                     "not_before, attempts, payload_sha256, created_at, schema_version) VALUES "
                     "(:id, :source, :topic, :key, :payload, 'ready', 100, :now, 0, "
                     ":payload_sha256, :now, 1) "
-                    "ON CONFLICT(source_event_id, topic) DO NOTHING"
+                    "ON CONFLICT(source_event_id, topic, message_key) DO NOTHING"
                 ),
                 {
                     "id": f"outbox-{canary_id}",

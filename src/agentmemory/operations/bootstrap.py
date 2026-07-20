@@ -96,6 +96,9 @@ from agentmemory.ingestion.adapters.outbound.sqlite_privacy import (
     SqliteCapturePolicyDecisionRepository,
     SqliteCapturePolicyRepository,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_schema_evolution import (
+    SqliteCanonicalEventSourceReader,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     GetAdapterCapabilitiesHandler,
     ListAdapterCapabilitiesHandler,
@@ -123,6 +126,26 @@ from agentmemory.ingestion.application.ordered_replay import (
 )
 from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.backpressure import QueueLimits, RetryPolicy
+from agentmemory.memory.adapters.outbound.local_extractor import (
+    LocalMemoryCandidateHttpAdapter,
+)
+from agentmemory.memory.adapters.outbound.sqlite_consolidation import (
+    SqliteMemoryConsolidationAccessPolicy,
+    SqliteMemoryConsolidationReceiptQuery,
+    SqliteMemoryConsolidationUnitOfWorkFactory,
+    SqliteTaskEvidenceQuery,
+)
+from agentmemory.memory.adapters.outbound.sqlite_lineage_backfill import (
+    SqliteTaskLineageBackfillRepository,
+)
+from agentmemory.memory.adapters.outbound.sqlite_work import (
+    SqliteMemoryConsolidationWorkRepository,
+)
+from agentmemory.memory.application.consolidate_task import ConsolidateTaskHandler
+from agentmemory.memory.application.consolidation_worker import MemoryConsolidationWorker
+from agentmemory.memory.application.lineage_backfill import TaskLineageBackfillWorker
+from agentmemory.memory.domain.consolidation import ExtractorIdentity, MemoryPromotionPolicy
+from agentmemory.memory.domain.work import MemoryWorkRetryPolicy
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
     ApiDependencies,
@@ -262,6 +285,13 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.extraction_model_revision,
         resolved.extraction_capability_file,
     )
+    memory_extractor_identity = ExtractorIdentity(
+        resolved.memory_extractor_id,
+        resolved.memory_extractor_version,
+        resolved.extraction_model_id,
+        resolved.extraction_model_revision,
+        resolved.memory_candidate_schema,
+    )
     sqlite_checks = SqliteReadinessChecks(
         store,
         clock,
@@ -338,6 +368,41 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.installation_root_key_file,
     )
     ordered_replay_worker = _create_ordered_replay_worker(store, clock)
+    memory_keys = SqliteWrappedBrainKeyProvider(
+        store,
+        resolved.installation_root_key_file,
+        clock,
+    )
+    canonical_event_reader = SqliteCanonicalEventSourceReader(store, memory_keys)
+    memory_evidence = SqliteTaskEvidenceQuery(
+        store,
+        canonical_event_reader,
+    )
+    memory_backfill_repository = SqliteTaskLineageBackfillRepository(
+        store,
+        canonical_event_reader,
+        clock,
+    )
+    memory_backfill_worker = TaskLineageBackfillWorker(memory_backfill_repository)
+    memory_worker = MemoryConsolidationWorker(
+        SqliteMemoryConsolidationWorkRepository(store),
+        ConsolidateTaskHandler(
+            memory_evidence,
+            LocalMemoryCandidateHttpAdapter(
+                provider_client,
+                resolved.extraction_url,
+                resolved.extraction_capability_file,
+            ),
+            SqliteMemoryConsolidationAccessPolicy(store),
+            SqliteMemoryConsolidationReceiptQuery(store),
+            SqliteMemoryConsolidationUnitOfWorkFactory(store),
+            MemoryPromotionPolicy.production(),
+            clock,
+        ),
+        memory_extractor_identity,
+        MemoryWorkRetryPolicy(),
+        clock,
+    )
     queue_limits = resolved.queue_limits
     storage_capacity = LocalDiskSpaceProbe(resolved.state_directory)
     scheduler_repository = SqliteJobSchedulerRepository(store, storage_capacity)
@@ -403,11 +468,16 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         tasks: tuple[asyncio.Task[None], ...] = ()
         try:
             await store.observe_and_enforce_policy()
+            # Establish the immutable historical watermark before automatic
+            # consolidation may claim any task snapshot.
+            await memory_backfill_repository.start_or_resume()
             tasks = (
                 asyncio.create_task(projection_worker.run(stop)),
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
                 asyncio.create_task(ordered_replay_worker.run(stop)),
                 asyncio.create_task(scheduler_worker.run(stop)),
+                asyncio.create_task(memory_backfill_worker.run(stop)),
+                asyncio.create_task(memory_worker.run(stop)),
             )
             yield
         finally:

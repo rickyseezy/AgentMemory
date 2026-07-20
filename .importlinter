@@ -194,3 +194,52 @@ forbidden_modules =
     sqlalchemy
     uvicorn
     agentmemory.retrieval.adapters
+
+[importlinter:contract:memory layers]
+name = Memory clean architecture layers
+type = layers
+layers =
+    agentmemory.memory.adapters
+    agentmemory.memory.application
+    agentmemory.memory.domain
+
+[importlinter:contract:memory domain independence]
+name = Memory domain is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.memory.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.memory.application
+    agentmemory.memory.adapters
+    agentmemory.identity
+    agentmemory.ingestion
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval
+
+[importlinter:contract:memory application independence]
+name = Memory application is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.memory.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.memory.adapters
+    agentmemory.identity
+    agentmemory.ingestion
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval

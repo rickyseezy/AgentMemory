@@ -158,12 +158,14 @@ class SqliteAgentEventUnitOfWork:
         capacity: SqliteCaptureCapacityEnforcer | None = None,
         *,
         record_schema_lineage: bool = True,
+        record_task_lineage: bool = True,
     ) -> None:
         """Bind the single-writer store and policy clock."""
         self._store = store
         self._clock = clock
         self._capacity = capacity
         self._record_schema_lineage = record_schema_lineage
+        self._record_task_lineage = record_task_lineage
         self._connection: AsyncConnection | None = None
         self._committed = False
         self.events: AgentEventRepository
@@ -195,6 +197,7 @@ class SqliteAgentEventUnitOfWork:
             connection,
             self._capacity,
             record_schema_lineage=self._record_schema_lineage,
+            record_task_lineage=self._record_task_lineage,
         )
         self.artifacts = SqliteArtifactRepository(connection)
         self.outbox = SqliteOutboxRepository(connection)
@@ -274,11 +277,13 @@ class SqliteAgentEventRepository:
         capacity: SqliteCaptureCapacityEnforcer | None = None,
         *,
         record_schema_lineage: bool = True,
+        record_task_lineage: bool = True,
     ) -> None:
         """Bind this aggregate repository to its owning transaction."""
         self._connection = connection
         self._capacity = capacity
         self._record_schema_lineage = record_schema_lineage
+        self._record_task_lineage = record_task_lineage
 
     async def append(
         self,
@@ -374,6 +379,8 @@ class SqliteAgentEventRepository:
                 },
             )
         await self._insert_envelope(admitted, encrypted, now)
+        if self._record_task_lineage:
+            await self._insert_task_lineage(admitted, encrypted, now)
 
     async def _insert_envelope(
         self,
@@ -427,6 +434,52 @@ class SqliteAgentEventRepository:
                 "adapter_digest": bytes.fromhex(event.provenance.adapter_digest),
                 "capability_manifest": bytes.fromhex(event.provenance.capability_manifest_digest),
                 "capture_method": event.provenance.capture_method.value,
+                "created_at": now,
+            },
+        )
+
+    async def _insert_task_lineage(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+        now: int,
+    ) -> None:
+        """Index non-content task scope in the same transaction as canonical capture."""
+        event = admitted.event
+        task_id = event.provenance.task_id
+        if task_id is None:
+            return
+        identity = admitted.identity
+        await self._connection.execute(
+            text(
+                "INSERT INTO event_task_lineage "
+                "(event_id,brain_id,principal_id,project_id,repository_id,checkout_id,"
+                "session_id,task_id,correlation_id,causation_id,event_type,classification,"
+                "retention_policy_id,occurred_at,"
+                "canonical_event_sha256,created_at,schema_version) VALUES "
+                "(:event_id,:brain_id,:principal_id,:project_id,:repository_id,:checkout_id,"
+                ":session_id,:task_id,:correlation_id,:causation_id,:event_type,:classification,"
+                ":retention_policy_id,:occurred_at,"
+                ":canonical_event_sha256,:created_at,1)"
+            ),
+            {
+                "event_id": event.event_id,
+                "brain_id": identity.brain_id,
+                "principal_id": identity.principal_id,
+                "project_id": identity.project_id,
+                "repository_id": identity.repository_id,
+                "checkout_id": identity.checkout_id,
+                "session_id": event.provenance.session_id,
+                "task_id": task_id,
+                "correlation_id": event.correlation_id,
+                # Root events have no upstream cause. Their immutable event ID is
+                # the canonical causation anchor for downstream automatic work.
+                "causation_id": event.causation_id or event.event_id,
+                "event_type": event.event_type.value,
+                "classification": event.classification.value,
+                "retention_policy_id": event.retention_policy_id,
+                "occurred_at": _unix_microseconds(event.occurred_at),
+                "canonical_event_sha256": bytes.fromhex(encrypted.canonical_sha256),
                 "created_at": now,
             },
         )

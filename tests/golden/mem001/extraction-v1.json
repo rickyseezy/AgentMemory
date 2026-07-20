@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "decision", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "decision-supported"
+    },
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "constraint", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.prompt.received.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "constraint-supported"
+    },
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "procedure", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "procedure-supported"
+    },
+    {
+      "candidate": {"evidence": [0], "extraction": 9000, "memory_class": "preference", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.prompt.received.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "preference-explicit"
+    },
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "lesson", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.test.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "lesson-outcome-backed"
+    },
+    {
+      "candidate": {"evidence": [1], "extraction": 9000, "memory_class": "episode", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "episode-supported"
+    },
+    {
+      "candidate": {"evidence": [1], "extraction": 9000, "memory_class": "unresolved_work", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.checkpointed.v1"],
+      "expected": {"disposition": "promote", "reason": "promoted"},
+      "id": "unresolved-checkpoint"
+    },
+    {
+      "candidate": {"evidence": [99], "extraction": 9000, "memory_class": "decision", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "unsupported_evidence"},
+      "id": "invented-evidence"
+    },
+    {
+      "candidate": {"evidence": [1], "extraction": 9000, "memory_class": "constraint", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.prompt.received.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "insufficient_evidence"},
+      "id": "constraint-single-source"
+    },
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "decision", "reliability": 9000, "support": 7999},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "below_class_threshold"},
+      "id": "decision-low-support"
+    },
+    {
+      "candidate": {"evidence": [0], "extraction": 9000, "memory_class": "preference", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "missing_explicit_preference_evidence"},
+      "id": "preference-implicit"
+    },
+    {
+      "candidate": {"evidence": [0, 1], "extraction": 9000, "memory_class": "lesson", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "missing_outcome_evidence"},
+      "id": "lesson-without-outcome"
+    },
+    {
+      "candidate": {"evidence": [1], "extraction": 9000, "memory_class": "unresolved_work", "reliability": 9000, "support": 9000},
+      "evidence_types": ["agentmemory.tool.completed.v1", "agentmemory.task.completed.v1"],
+      "expected": {"disposition": "reject", "reason": "completed_task_cannot_be_unresolved"},
+      "id": "unresolved-after-completion"
+    }
+  ],
+  "schema": "agentmemory.mem001-extraction-golden.v1"
+}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, cast, override
 
 import httpx
 import pytest
@@ -242,6 +242,34 @@ async def test_extraction_requires_one_schema_constrained_subject() -> None:
     payload = {"choices": [{"message": {"content": '{"subject":"persistent memory"}'}}]}
     async with _client(lambda _request: _json_response(payload)) as client:
         assert await LlamaCppBackend(client).extract_subject("content") == "persistent memory"
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_uses_exact_json_schema_and_returns_canonical_bytes() -> None:
+    output: dict[str, object] = {
+        "schema": "agentmemory.memory-candidates.v1",
+        "input_sha256": "a" * 64,
+        "candidates": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = cast("dict[str, object]", json.loads(request.content))
+        response_format = cast("dict[str, object]", body["response_format"])
+        schema = cast("dict[str, object]", response_format["schema"])
+        properties = cast("dict[str, object]", schema["properties"])
+        input_property = cast("dict[str, object]", properties["input_sha256"])
+        candidates_property = cast("dict[str, object]", properties["candidates"])
+        assert input_property["const"] == "a" * 64
+        assert candidates_property["maxItems"] == 32
+        return _json_response({"choices": [{"message": {"content": json.dumps(output)}}]})
+
+    async with _client(handler) as client:
+        raw = await LlamaCppBackend(client).extract_memory_candidates("{}", "a" * 64)
+    assert raw == (
+        b'{"candidates":[],"input_sha256":"'
+        + b"a" * 64
+        + b'","schema":"agentmemory.memory-candidates.v1"}'
+    )
 
 
 _INVALID_EXTRACTION_RESPONSES: tuple[object, ...] = (

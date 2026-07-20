@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import TYPE_CHECKING
 
 import httpx
@@ -165,6 +166,74 @@ async def test_extraction_route_uses_closed_schema(
         )
     assert response.status_code == 200
     assert response.json()["subject"] == "persistent memory"
+
+
+@pytest.mark.asyncio
+async def test_memory_candidate_route_preserves_exact_operation_and_canonical_output(
+    backend: RecordingBackend, tmp_path: Path
+) -> None:
+    input_bytes = b'{"evidence":[]}'
+    input_sha = hashlib.sha256(input_bytes).hexdigest()
+    expected_output = backend.memory_candidates.replace(b"a" * 64, input_sha.encode())
+    async with _client(ProviderRole.EXTRACTION, backend, tmp_path) as client:
+        response = await client.post(
+            "/v1/extract/memory-candidates",
+            headers=_headers(),
+            json={
+                "protocol_version": "1.0",
+                "operation_id": "memory-operation-1",
+                "idempotency_key": "b" * 64,
+                "task_id": "018f0000-0000-7000-8000-000000000201",
+                "model_id": _identity(ProviderRole.EXTRACTION).model_id,
+                "model_revision": REVISION,
+                "classification": "confidential",
+                "schema": "memory-candidates.v1",
+                "input_sha256": input_sha,
+                "content_base64": "eyJldmlkZW5jZSI6W119",
+            },
+        )
+    assert response.status_code == 200
+    assert response.json() == {
+        "protocol_version": "1.0",
+        "operation_id": "memory-operation-1",
+        "idempotency_key": "b" * 64,
+        "task_id": "018f0000-0000-7000-8000-000000000201",
+        "input_sha256": input_sha,
+        "model_id": _identity(ProviderRole.EXTRACTION).model_id,
+        "model_revision": REVISION,
+        "schema": "memory-candidates.v1",
+        "output_json": expected_output.decode(),
+        "output_sha256": hashlib.sha256(expected_output).hexdigest(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_memory_candidate_route_rejects_bad_base64_or_digest(
+    backend: RecordingBackend, tmp_path: Path
+) -> None:
+    body = {
+        "protocol_version": "1.0",
+        "operation_id": "memory-operation-1",
+        "idempotency_key": "b" * 64,
+        "task_id": "018f0000-0000-7000-8000-000000000201",
+        "model_id": _identity(ProviderRole.EXTRACTION).model_id,
+        "model_revision": REVISION,
+        "classification": "internal",
+        "schema": "memory-candidates.v1",
+        "input_sha256": "a" * 64,
+        "content_base64": "not-base64",
+    }
+    async with _client(ProviderRole.EXTRACTION, backend, tmp_path) as client:
+        invalid_base64 = await client.post(
+            "/v1/extract/memory-candidates", headers=_headers(), json=body
+        )
+        mismatched_digest = await client.post(
+            "/v1/extract/memory-candidates",
+            headers=_headers(),
+            json={**body, "content_base64": "e30="},
+        )
+    assert invalid_base64.status_code == 422
+    assert mismatched_digest.status_code == 422
 
 
 @pytest.mark.asyncio

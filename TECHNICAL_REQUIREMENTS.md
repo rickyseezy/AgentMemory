@@ -2203,6 +2203,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-001 — Consolidate useful long-term memory
 
+**Implementation record:** [`docs/implementation/MEM-001.md`](docs/implementation/MEM-001.md) and
+[`docs/runbooks/MEM-001-CONSOLIDATION.md`](docs/runbooks/MEM-001-CONSOLIDATION.md).
+
 **User story:** As a developer, the Brain retains useful decisions, constraints, procedures, preferences, lessons, episodes, and unresolved work rather than every raw event.
 
 **Acceptance criteria**

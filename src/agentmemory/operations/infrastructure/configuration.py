@@ -54,6 +54,9 @@ class CoreSettings(BaseSettings):
     embedding_model_revision: str = Field(min_length=7, max_length=128)
     reranking_model_revision: str = Field(min_length=7, max_length=128)
     extraction_model_revision: str = Field(min_length=7, max_length=128)
+    memory_extractor_id: Literal["agentmemory.local-extractor"] = "agentmemory.local-extractor"
+    memory_extractor_version: Literal["1.0.0"] = "1.0.0"
+    memory_candidate_schema: Literal["memory-candidates.v1"] = "memory-candidates.v1"
     egress_enabled: Literal[False] = False
     scheduler_soft_pending: int = Field(default=10_000, ge=10, le=10_000_000)
     scheduler_hard_pending: int = Field(default=20_000, ge=20, le=20_000_000)

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
 import hmac
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -27,7 +30,7 @@ if TYPE_CHECKING:
 
     from agentmemory.providers.application.service import ProviderService
 
-_MAX_REQUEST_BYTES = 256 * 1024
+_MAX_REQUEST_BYTES = 2 * 1024 * 1024
 _REQUEST_TIMEOUT_SECONDS = 8
 _CAPABILITY_HEADER = "x-agentmemory-capability"
 _CAPABILITY_HEX_CHARACTERS = 64
@@ -92,6 +95,37 @@ class ExtractRequest(_StrictModel):
     classification: Literal["internal"]
     extraction_schema: Literal["readiness-subject-v1"] = Field(alias="schema")
     content: str = Field(min_length=1, max_length=32_768)
+
+
+class MemoryExtractRequest(_StrictModel):
+    """Exact operation-bound memory-candidate extraction contract."""
+
+    protocol_version: Literal["1.0"]
+    operation_id: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,127}$")
+    idempotency_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    task_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
+    model_id: str = Field(min_length=1, max_length=256)
+    model_revision: str = Field(min_length=40, max_length=128)
+    classification: Literal["public", "internal", "confidential", "restricted", "local_only"]
+    extraction_schema: Literal["memory-candidates.v1"] = Field(alias="schema")
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_base64: str = Field(min_length=4, max_length=1_398_104)
+
+    def content(self) -> bytes:
+        """Decode exact bounded canonical evidence bytes and authenticate their digest."""
+        try:
+            content = base64.b64decode(self.content_base64, validate=True)
+        except (ValueError, binascii.Error) as error:
+            msg = "memory extraction content encoding is invalid"
+            raise ValueError(msg) from error
+        if (
+            not content
+            or len(content) > 1024 * 1024
+            or hashlib.sha256(content).hexdigest() != self.input_sha256
+        ):
+            msg = "memory extraction content digest is invalid"
+            raise ValueError(msg)
+        return content
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +231,8 @@ def create_app(
             ProviderRole.EXTRACTION: "/v1/extract",
         }[service.identity.role]
     )
+    if service.identity.role is ProviderRole.EXTRACTION:
+        paths.add("/v1/extract/memory-candidates")
     application.middleware("http")(_ProviderProtection(boundary, frozenset(paths)))
     _register_errors(application)
     _register_probe(application, service)
@@ -287,7 +323,27 @@ def _register_extraction(application: FastAPI, service: ProviderService) -> None
             "subject": await _with_deadline(service.extract_subject(request.content)),
         }
 
-    _routes = (extract,)
+    @application.post("/v1/extract/memory-candidates")
+    async def extract_memory_candidates(request: MemoryExtractRequest) -> dict[str, object]:
+        identity = service.identity
+        _require_identity(request.model_id, request.model_revision, "extraction", service)
+        output = await _with_deadline(
+            service.extract_memory_candidates(request.content(), request.input_sha256)
+        )
+        return {
+            "protocol_version": "1.0",
+            "operation_id": request.operation_id,
+            "idempotency_key": request.idempotency_key,
+            "task_id": request.task_id,
+            "input_sha256": request.input_sha256,
+            "model_id": identity.model_id,
+            "model_revision": identity.model_revision,
+            "schema": request.extraction_schema,
+            "output_json": output.decode(),
+            "output_sha256": hashlib.sha256(output).hexdigest(),
+        }
+
+    _routes = (extract, extract_memory_candidates)
     del _routes
 
 

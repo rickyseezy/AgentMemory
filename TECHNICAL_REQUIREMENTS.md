@@ -2251,6 +2251,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-003 — Deduplicate without losing evidence
 
+**Implementation record:** [`docs/implementation/MEM-003.md`](docs/implementation/MEM-003.md) and
+[`docs/runbooks/MEM-003-DEDUPLICATION.md`](docs/runbooks/MEM-003-DEDUPLICATION.md).
+
 **User story:** As a user, repeated sessions do not flood recall with paraphrases.
 
 **Acceptance criteria**
@@ -2264,6 +2267,8 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 - DeduplicateMemoriesCommand uses exact canonical fingerprint first, then semantic candidate retrieval, then deterministic CompatibilityPolicy.
 - Merge is a Memory aggregate operation creating MemoryMerged and redirect lineage; source IDs remain historically resolvable.
 - Semantic similarity alone cannot authorize merge.
+- The automatic consolidation worker runs idempotent deduplication before acknowledging each newly
+  consolidated memory; dependency failures retain the durable work lease/retry lifecycle.
 
 **Mandatory tests:** exact/property normalization; paraphrase golden corpus; opposite polarity; different scopes/times; concurrent merge; lineage.
 

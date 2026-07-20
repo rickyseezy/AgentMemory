@@ -84,9 +84,10 @@ class MemoryClass(StrEnum):
 
 
 class MemoryStatus(StrEnum):
-    """MEM-001 reachable states from the normative Memory lifecycle."""
+    """Reachable states through MEM-003; merged sources remain historical."""
 
     ACTIVE = "active"
+    MERGED = "merged"
 
 
 class PromotionDisposition(StrEnum):
@@ -713,7 +714,7 @@ class Memory:
     def _validate_content_and_time(self) -> None:
         """Validate identity, lifecycle, content digest, and bitemporal shape."""
         _require_uuid7(self.memory_id, "memory_id")
-        if self.status is not MemoryStatus.ACTIVE:
+        if self.status not in {MemoryStatus.ACTIVE, MemoryStatus.MERGED}:
             _invalid("status", "unsupported")
         _require_bounded_text(self.statement, "statement", _MAX_STATEMENT_CHARACTERS)
         if self.statement != unicodedata.normalize("NFC", self.statement).strip():
@@ -744,6 +745,8 @@ class Memory:
             _require_utc(self.recorded_to, "recorded_to")
             if self.recorded_to <= self.recorded_from:
                 _invalid("recorded_to", "not_after_start")
+        if self.status is MemoryStatus.MERGED and self.recorded_to is None:
+            _invalid("recorded_to", "merged_memory_open")
 
     def _validate_provenance(self) -> None:
         """Validate every mandatory source, policy, and aggregate coordinate."""
@@ -752,7 +755,7 @@ class Memory:
         if self.classification not in _CLASSIFICATION_ORDER:
             _invalid("classification", "unsupported")
         _require_token(self.retention_policy_id, "retention_policy_id")
-        if self.aggregate_version != 1:
+        if self.aggregate_version < 1:
             _invalid("aggregate_version", "unsupported")
 
     @property

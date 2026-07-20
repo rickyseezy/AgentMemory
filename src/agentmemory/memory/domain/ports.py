@@ -17,6 +17,12 @@ if TYPE_CHECKING:
         MemoryScope,
         TaskEvidenceBundle,
     )
+    from agentmemory.memory.domain.deduplication import (
+        DeduplicationCommit,
+        DeduplicationResult,
+        MemoryDeduplicationProfile,
+        SemanticMemoryCandidate,
+    )
     from agentmemory.memory.domain.explanation import (
         MemoryExplanation,
         MemoryExplanationAccess,
@@ -97,6 +103,87 @@ class MemoryRepository(Protocol):
         access: MemoryExplanationAccess,
     ) -> MemoryExplanation | None:
         """Return a complete explanation or hide absent and unauthorized targets alike."""
+        ...
+
+
+class MemoryDeduplicationReadRepository(Protocol):
+    """Read authorized canonical profiles and exact candidates without mutation."""
+
+    async def get_result(self, idempotency_key: str) -> DeduplicationResult | None:
+        """Return one authenticated prior result or None."""
+        ...
+
+    async def load_authorized(
+        self,
+        memory_id: str,
+        brain_id: str,
+        actor_id: str,
+        grant_id: str,
+        at: datetime,
+    ) -> MemoryDeduplicationProfile | None:
+        """Collapse absent and unauthorized targets into None."""
+        ...
+
+    async def find_exact(
+        self,
+        target: MemoryDeduplicationProfile,
+        limit: int,
+    ) -> tuple[MemoryDeduplicationProfile, ...]:
+        """Return bounded active exact-fingerprint candidates in stable order."""
+        ...
+
+
+class SemanticMemoryCandidateFinder(Protocol):
+    """Retrieve bounded same-Brain candidates; never authorize a merge."""
+
+    async def find(
+        self,
+        target: MemoryDeduplicationProfile,
+        limit: int,
+    ) -> tuple[SemanticMemoryCandidate, ...]:
+        """Return scored profiles from one pinned embedding space."""
+        ...
+
+
+class MemoryDeduplicationRepository(MemoryDeduplicationReadRepository, Protocol):
+    """Stage one CAS-protected merge and its lineage inside an owned transaction."""
+
+    async def add(self, commit: DeduplicationCommit) -> None:
+        """Stage receipt, redirects, evidence union, events, outbox, and audit."""
+        ...
+
+
+class MemoryDeduplicationUnitOfWork(Protocol):
+    """Own one short serialized MEM-003 mutation transaction."""
+
+    @property
+    def repository(self) -> MemoryDeduplicationRepository:
+        """Return the transaction-bound repository."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Acquire the local writer and open the transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Rollback every incomplete operation and release the writer."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit exactly once."""
+        ...
+
+
+class MemoryDeduplicationUnitOfWorkFactory(Protocol):
+    """Create unopened MEM-003 Units of Work."""
+
+    def __call__(self) -> MemoryDeduplicationUnitOfWork:
+        """Return one unopened Unit of Work."""
         ...
 
 

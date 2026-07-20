@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from agentmemory.memory.application.consolidate_task import ConsolidateTaskCommand
+from agentmemory.memory.application.deduplicate_memories import DeduplicateMemoriesCommand
 from agentmemory.memory.domain.consolidation import ConsolidationResult
 from agentmemory.memory.domain.errors import (
     MemoryAuthorizationError,
@@ -21,6 +22,7 @@ from agentmemory.memory.domain.work import MemoryWorkErrorCode
 
 if TYPE_CHECKING:
     from agentmemory.memory.application.consolidate_task import ConsolidateTaskHandler
+    from agentmemory.memory.application.deduplicate_memories import DeduplicateMemoriesHandler
     from agentmemory.memory.domain.consolidation import ExtractorIdentity
     from agentmemory.memory.domain.ports import MemoryConsolidationWorkRepository
     from agentmemory.memory.domain.work import MemoryConsolidationWork, MemoryWorkRetryPolicy
@@ -45,6 +47,7 @@ class MemoryConsolidationWorker:
     extractor: ExtractorIdentity
     retry_policy: MemoryWorkRetryPolicy
     clock: Clock
+    deduplicator: DeduplicateMemoriesHandler | None = None
     owner: str = "core-memory-v1"
     poll_seconds: float = _POLL_SECONDS
     lease_microseconds: int = _LEASE_MICROSECONDS
@@ -107,6 +110,7 @@ class MemoryConsolidationWorker:
         try:
             result = await self.handler.execute(command)
             _require_result(work, result)
+            await self._deduplicate(work, result)
         except MemoryAuthorizationError:
             await self._fail(work, MemoryWorkErrorCode.AUTHORIZATION_DENIED)
         except MemoryValidationError, MemoryEvidenceNotFoundError:
@@ -124,6 +128,35 @@ class MemoryConsolidationWorker:
                 result.result_sha256,
                 _micros(self.clock),
             )
+
+    async def _deduplicate(
+        self,
+        work: MemoryConsolidationWork,
+        result: ConsolidationResult,
+    ) -> None:
+        """Run idempotent exact-first deduplication before acknowledging durable work."""
+        if self.deduplicator is None:
+            return
+        for memory_id in result.memory_ids:
+            now = self.clock.now()
+            try:
+                await self.deduplicator.execute(
+                    DeduplicateMemoriesCommand(
+                        memory_id,
+                        work.actor_id,
+                        work.grant_id,
+                        work.scope.brain_id,
+                        work.correlation_id,
+                        work.terminal_event_id,
+                        memory_id,
+                        now,
+                        now + timedelta(seconds=_REQUEST_SECONDS),
+                    )
+                )
+            except MemoryEvidenceNotFoundError:
+                # A prior item in the same deterministic batch may already have
+                # redirected this newly committed identity.
+                continue
 
     async def _fail(
         self,

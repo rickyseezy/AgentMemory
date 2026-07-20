@@ -139,6 +139,11 @@ from agentmemory.memory.adapters.outbound.sqlite_consolidation import (
     SqliteMemoryConsolidationUnitOfWorkFactory,
     SqliteTaskEvidenceQuery,
 )
+from agentmemory.memory.adapters.outbound.sqlite_deduplication import (
+    SqliteMemoryDeduplicationRepository,
+    SqliteMemoryDeduplicationUnitOfWorkFactory,
+    SqliteSemanticMemoryCandidateFinder,
+)
 from agentmemory.memory.adapters.outbound.sqlite_lineage_backfill import (
     SqliteTaskLineageBackfillRepository,
 )
@@ -148,9 +153,11 @@ from agentmemory.memory.adapters.outbound.sqlite_work import (
 )
 from agentmemory.memory.application.consolidate_task import ConsolidateTaskHandler
 from agentmemory.memory.application.consolidation_worker import MemoryConsolidationWorker
+from agentmemory.memory.application.deduplicate_memories import DeduplicateMemoriesHandler
 from agentmemory.memory.application.explain_memory import ExplainMemoryHandler
 from agentmemory.memory.application.lineage_backfill import TaskLineageBackfillWorker
 from agentmemory.memory.domain.consolidation import ExtractorIdentity, MemoryPromotionPolicy
+from agentmemory.memory.domain.deduplication import MemoryCompatibilityPolicy
 from agentmemory.memory.domain.work import MemoryWorkRetryPolicy
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
@@ -390,6 +397,13 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         clock,
     )
     memory_backfill_worker = TaskLineageBackfillWorker(memory_backfill_repository)
+    memory_deduplication = DeduplicateMemoriesHandler(
+        SqliteMemoryDeduplicationRepository(store),
+        SqliteSemanticMemoryCandidateFinder(store, embeddings),
+        SqliteMemoryDeduplicationUnitOfWorkFactory(store),
+        MemoryCompatibilityPolicy(),
+        clock,
+    )
     memory_worker = MemoryConsolidationWorker(
         SqliteMemoryConsolidationWorkRepository(store),
         ConsolidateTaskHandler(
@@ -408,6 +422,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         memory_extractor_identity,
         MemoryWorkRetryPolicy(),
         clock,
+        memory_deduplication,
     )
     queue_limits = resolved.queue_limits
     storage_capacity = LocalDiskSpaceProbe(resolved.state_directory)

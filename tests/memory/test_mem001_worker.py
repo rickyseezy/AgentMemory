@@ -31,6 +31,10 @@ if TYPE_CHECKING:
         ConsolidateTaskCommand,
         ConsolidateTaskHandler,
     )
+    from agentmemory.memory.application.deduplicate_memories import (
+        DeduplicateMemoriesCommand,
+        DeduplicateMemoriesHandler,
+    )
     from agentmemory.memory.domain.consolidation import ConsolidationResult, ExtractorIdentity
     from agentmemory.memory.domain.ports import MemoryConsolidationWorkRepository
 
@@ -46,6 +50,10 @@ def _failed_results() -> list[
 
 
 def _commands() -> list[ConsolidateTaskCommand]:
+    return []
+
+
+def _deduplication_commands() -> list[DeduplicateMemoriesCommand]:
     return []
 
 
@@ -127,6 +135,15 @@ class _Handler:
         return self.result
 
 
+@dataclass
+class _Deduplicator:
+    commands: list[DeduplicateMemoriesCommand] = field(default_factory=_deduplication_commands)
+
+    async def execute(self, command: DeduplicateMemoriesCommand) -> object:
+        self.commands.append(command)
+        return object()
+
+
 def _worker(repository: _Repository, handler: _Handler) -> MemoryConsolidationWorker:
     return MemoryConsolidationWorker(
         cast("MemoryConsolidationWorkRepository", repository),
@@ -146,6 +163,25 @@ async def test_worker_executes_exact_terminal_snapshot_and_completes_receipt() -
     assert await _worker(repository, handler).run_once()
     assert repository.succeeded == [(work, _commit().result.result_sha256)]
     assert not repository.failed
+
+
+@pytest.mark.asyncio
+async def test_worker_deduplicates_every_new_memory_before_acknowledging_work() -> None:
+    work = _work()
+    repository = _Repository(work)
+    handler = _Handler(_commit().result)
+    deduplicator = _Deduplicator()
+    worker = replace(
+        _worker(repository, handler),
+        deduplicator=cast("DeduplicateMemoriesHandler", deduplicator),
+    )
+
+    assert await worker.run_once()
+    assert (
+        tuple(command.memory_id for command in deduplicator.commands) == _commit().result.memory_ids
+    )
+    assert all(command.actor_id == work.actor_id for command in deduplicator.commands)
+    assert repository.succeeded == [(work, _commit().result.result_sha256)]
     assert handler.commands[0].terminal_event_id == work.terminal_event_id
     assert handler.commands[0].grant_id == work.grant_id
 

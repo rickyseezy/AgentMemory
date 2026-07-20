@@ -173,7 +173,7 @@ _MEMORY_MUTATIONS: list[tuple[Callable[[Memory], Memory], str]] = [
         lambda item: replace(item, provenance=replace(item.provenance, evidence_ids=())),
         "provenance.evidence_ids",
     ),
-    (lambda item: replace(item, aggregate_version=2), "aggregate_version"),
+    (lambda item: replace(item, aggregate_version=0), "aggregate_version"),
     (lambda item: replace(item, classification="unknown"), "classification"),
     (lambda item: replace(item, recorded_to=item.recorded_from), "recorded_to"),
     (lambda item: replace(item, statement=f"{item.statement} "), "statement"),

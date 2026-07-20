@@ -2109,6 +2109,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-003 — Preserve ordering and deterministic replay
 
+**Implementation record:** [`docs/implementation/ING-003.md`](docs/implementation/ING-003.md) and
+[`docs/runbooks/ING-003-ORDERED-REPLAY.md`](docs/runbooks/ING-003-ORDERED-REPLAY.md).
+
 **User story:** As an operator, I can replay selected event ranges with causally correct results.
 
 **Acceptance criteria**

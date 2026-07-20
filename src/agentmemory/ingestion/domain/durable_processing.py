@@ -20,6 +20,7 @@ class ProcessingDisposition(StrEnum):
     IDLE = "idle"
     COMPLETED = "completed"
     REPAIR_REQUIRED = "repair_required"
+    REPLAY_REQUIRED = "replay_required"
     RETRY_SCHEDULED = "retry_scheduled"
 
 

@@ -39,6 +39,14 @@ if TYPE_CHECKING:
         TranscriptFormat,
         WorkspaceSnapshot,
     )
+    from agentmemory.ingestion.domain.ordered_replay import (
+        OrderedEventClaim,
+        OrderedProjectionState,
+        OrderedReplayRun,
+        ReplayRunRequest,
+        ReplaySourcePage,
+        ReplaySourceRecord,
+    )
     from agentmemory.ingestion.domain.spool_reconciliation import (
         SpoolAcknowledgement,
         SpoolRecord,
@@ -447,10 +455,23 @@ class DurableEventProcessingRepository(Protocol):
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         projection: VerifiedEventProjection,
         completed_at_microseconds: int,
     ) -> None:
         """Commit the terminal receipt and completed outbox state atomically."""
+        ...
+
+    async def claim_order(  # noqa: PLR0913 -- Port carries exact lease/gap evidence.
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+        gap_timeout_microseconds: int,
+    ) -> OrderedEventClaim:
+        """Claim the next causal sequence, wait on a gap, or identify late replay work."""
         ...
 
     async def complete_replay(
@@ -466,6 +487,7 @@ class DurableEventProcessingRepository(Protocol):
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         reason_code: str,
         detected_at_microseconds: int,
     ) -> None:
@@ -476,10 +498,21 @@ class DurableEventProcessingRepository(Protocol):
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim | None,
         reason_code: str,
         retry_at_microseconds: int,
     ) -> None:
         """Release only the exact lease for a later safe retry."""
+        ...
+
+    async def defer_replay(
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
+        detected_at_microseconds: int,
+    ) -> None:
+        """Atomically hold one late event and record the required shadow replay."""
         ...
 
     async def recover_expired_leases(self, now_microseconds: int) -> int:
@@ -488,4 +521,109 @@ class DurableEventProcessingRepository(Protocol):
 
     async def alert_unprocessed_events(self, detected_at_microseconds: int) -> int:
         """Alert on committed events whose atomic outbox intent is absent."""
+        ...
+
+
+class OrderedReplayAccessPolicy(Protocol):
+    """Authorize replay scope against current canonical grants."""
+
+    async def authorize(self, request: ReplayRunRequest, now_microseconds: int) -> None:
+        """Raise unless the actor's exact Brain grant remains active."""
+        ...
+
+
+class OrderedReplayRepository(Protocol):
+    """Persist immutable selection, isolated shadow state, and validation evidence."""
+
+    async def create(
+        self,
+        request: ReplayRunRequest,
+        now_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Idempotently capture a source watermark and create one queued shadow run."""
+        ...
+
+    async def get(self, operation_id: str) -> OrderedReplayRun | None:
+        """Return content-free durable status for one operation."""
+        ...
+
+    async def claim(
+        self,
+        operation_id: str,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Claim queued/partial/expired work with an exact durable lease."""
+        ...
+
+    async def read_page(self, run: OrderedReplayRun, limit: int) -> ReplaySourcePage:
+        """Read the next bounded immutable source page in causal order."""
+        ...
+
+    async def shadow_state(
+        self,
+        operation_id: str,
+        ordering_key: str,
+    ) -> OrderedProjectionState | None:
+        """Return the last state inside only this shadow generation."""
+        ...
+
+    async def append(  # noqa: PLR0913 -- CAS requires complete immutable replay evidence.
+        self,
+        run: OrderedReplayRun,
+        source: ReplaySourceRecord,
+        prior_state_sha256: str,
+        state: OrderedProjectionState | None,
+        state_sha256: str,
+        now_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Atomically append history/state and advance the durable source cursor."""
+        ...
+
+    async def begin_validation(
+        self,
+        run: OrderedReplayRun,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Transition a complete building run to leased validation."""
+        ...
+
+    async def shadow_states(
+        self,
+        operation_id: str,
+    ) -> tuple[OrderedProjectionState, ...]:
+        """Return final isolated states in deterministic key order."""
+        ...
+
+    async def live_states(self, run: OrderedReplayRun) -> tuple[OrderedProjectionState, ...]:
+        """Return comparable live states for the replay's touched keys."""
+        ...
+
+    async def finish_validation(
+        self,
+        run: OrderedReplayRun,
+        shadow_digest: str,
+        live_digest: str,
+        now_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Commit matching ready or divergent superseded evidence without activation."""
+        ...
+
+    async def mark_partial(
+        self,
+        run: OrderedReplayRun,
+        failure_code: str,
+        now_microseconds: int,
+    ) -> OrderedReplayRun:
+        """Release the exact lease with a bounded resumable reason."""
+        ...
+
+    async def next_runnable(self, now_microseconds: int) -> str | None:
+        """Return the oldest queued, partial, or expired replay operation."""
+        ...
+
+    async def recover_expired(self, now_microseconds: int) -> int:
+        """Release stale replay leases without touching committed shadow state."""
         ...

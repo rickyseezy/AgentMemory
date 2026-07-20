@@ -132,7 +132,11 @@ async def test_concurrent_inbox_duplicate_storm_creates_one_projection_and_audit
             SqliteWrappedBrainKeyProvider(store, key_file, FixedClock(NOW)),
         )
         projection = await verifier.verify(message)
-        await repository.complete(message, claimed[0], projection, now)
+        assert claimed[0].owner is not None
+        order = await repository.claim_order(
+            message, claimed[0], claimed[0].owner, now, now + 100, 60
+        )
+        await repository.complete(message, claimed[0], order, projection, now)
         replay = await repository.claim_inbox(
             message,
             "canonical-event-projection-v1",
@@ -236,6 +240,14 @@ async def test_consumer_crash_before_completion_reclaims_both_leases_and_project
             now + 10,
         )
         assert abandoned_inbox.disposition is InboxClaimDisposition.CLAIMED
+        await repository.claim_order(
+            abandoned_message,
+            abandoned_inbox,
+            "dead-consumer",
+            now,
+            now + 10,
+            60,
+        )
         assert await repository.recover_expired_leases(now + 10) == 1
         recovered_message = await repository.claim_next("recovered-dispatcher", now + 10, now + 30)
         assert recovered_message is not None
@@ -252,7 +264,21 @@ async def test_consumer_crash_before_completion_reclaims_both_leases_and_project
             store.engine,
             SqliteWrappedBrainKeyProvider(store, key_file, FixedClock(NOW)),
         ).verify(recovered_message)
-        await repository.complete(recovered_message, recovered_inbox, projection, now + 10)
+        recovered_order = await repository.claim_order(
+            recovered_message,
+            recovered_inbox,
+            "recovered-consumer",
+            now + 10,
+            now + 30,
+            60,
+        )
+        await repository.complete(
+            recovered_message,
+            recovered_inbox,
+            recovered_order,
+            projection,
+            now + 10,
+        )
         async with store.engine.connect() as connection:
             assert (
                 await connection.execute(text("SELECT COUNT(*) FROM event_projection_receipts"))
@@ -287,7 +313,10 @@ async def test_commit_before_ack_replay_finishes_redelivery_without_second_proje
             store.engine,
             SqliteWrappedBrainKeyProvider(store, key_file, FixedClock(NOW)),
         ).verify(first_message)
-        await repository.complete(first_message, first_inbox, projection, now)
+        first_order = await repository.claim_order(
+            first_message, first_inbox, "consumer-1", now, now + 10, 60
+        )
+        await repository.complete(first_message, first_inbox, first_order, projection, now)
 
         async with store.engine.begin() as connection:
             await connection.execute(
@@ -351,7 +380,8 @@ async def test_projection_key_and_source_generation_are_physically_unique(tmp_pa
             store.engine,
             SqliteWrappedBrainKeyProvider(store, key_file, FixedClock(NOW)),
         ).verify(message)
-        await repository.complete(message, inbox, projection, now)
+        order = await repository.claim_order(message, inbox, "consumer", now, now + 10, 60)
+        await repository.complete(message, inbox, order, projection, now)
         async with store.engine.begin() as connection:
             with pytest.raises(IntegrityError):
                 await connection.execute(

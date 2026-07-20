@@ -25,13 +25,18 @@ from agentmemory.ingestion.domain.errors import (
     IngestionIntegrityError,
     IngestionValidationError,
 )
+from agentmemory.ingestion.domain.ordered_replay import (
+    OrderClaimDisposition,
+    OrderedEventClaim,
+)
 from tests.core.support import FixedClock
-from tests.ingestion.adp002_support import BRAIN_ID, EVENT_ID, NOW
+from tests.ingestion.adp002_support import BRAIN_ID, EVENT_ID, NOW, ORDERING_KEY
 
 MESSAGE_ID = "018f0000-0000-7000-8000-000000000901"
 PAYLOAD_SHA256 = "a" * 64
 CANONICAL_SHA256 = "b" * 64
 PROJECTION_SHA256 = "c" * 64
+ZERO_SHA256 = "0" * 64
 
 
 def claimed(**changes: object) -> ClaimedOutboxMessage:
@@ -184,10 +189,34 @@ class _Queue:
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         projection: VerifiedEventProjection,
         completed_at_microseconds: int,
     ) -> None:
+        del order
         self.completed.append((message, inbox, projection, completed_at_microseconds))
+
+    async def claim_order(  # noqa: PLR0913 -- Mirrors the production port exactly.
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+        gap_timeout_microseconds: int,
+    ) -> OrderedEventClaim:
+        del message, inbox, now_microseconds, gap_timeout_microseconds
+        return OrderedEventClaim(
+            ORDERING_KEY,
+            1,
+            0,
+            ZERO_SHA256,
+            OrderClaimDisposition.READY,
+            owner,
+            lease_until_microseconds,
+            None,
+            None,
+        )
 
     async def claim_inbox(
         self,
@@ -212,19 +241,32 @@ class _Queue:
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         reason_code: str,
         detected_at_microseconds: int,
     ) -> None:
+        del order
         self.repairs.append((message, inbox, reason_code, detected_at_microseconds))
 
     async def release_retry(
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim | None,
         reason_code: str,
         retry_at_microseconds: int,
     ) -> None:
+        del order
         self.retries.append((message, inbox, reason_code, retry_at_microseconds))
+
+    async def defer_replay(
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
+        detected_at_microseconds: int,
+    ) -> None:
+        del message, inbox, order, detected_at_microseconds
 
     async def recover_expired_leases(self, now_microseconds: int) -> int:
         self.recovered.append(now_microseconds)

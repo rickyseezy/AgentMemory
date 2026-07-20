@@ -54,6 +54,10 @@ from agentmemory.ingestion.adapters.inbound.http_api import (
     create_agent_event_router,
     create_contract_agent_event_router,
 )
+from agentmemory.ingestion.adapters.inbound.ordered_replay_http_api import (
+    create_contract_ordered_replay_router,
+    create_ordered_replay_router,
+)
 from agentmemory.ingestion.adapters.outbound.canonical_encoder import CanonicalAgentEventEncoder
 from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
     AesGcmAgentEventEncryptor,
@@ -74,6 +78,10 @@ from agentmemory.ingestion.adapters.outbound.sqlite_durable_processing import (
     SqliteCanonicalEventProjectionVerifier,
     SqliteDurableEventProcessingRepository,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_ordered_replay import (
+    SqliteOrderedReplayAccessPolicy,
+    SqliteOrderedReplayRepository,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     GetAdapterCapabilitiesHandler,
     ListAdapterCapabilitiesHandler,
@@ -85,6 +93,12 @@ from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEv
 from agentmemory.ingestion.application.durable_processing import (
     DurableEventProcessingHandler,
     DurableIngestionWorker,
+)
+from agentmemory.ingestion.application.ordered_replay import (
+    GetOrderedReplayHandler,
+    OrderedReplayExecutor,
+    OrderedReplayWorker,
+    StartOrderedReplayHandler,
 )
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
@@ -180,7 +194,9 @@ class CoreContainer:
         await self.store.close()
 
 
-def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
+def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
+    settings: CoreSettings | None = None,
+) -> FastAPI:
     """Compose Core; the container network and Host policy enforce the trust boundary."""
     resolved = settings or CoreSettings.from_environment()
     clock = SystemClock()
@@ -298,6 +314,7 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
         clock,
         resolved.installation_root_key_file,
     )
+    ordered_replay_worker = _create_ordered_replay_worker(store, clock)
     runtime_probes = (
         FunctionalReadinessProbe(
             ReadinessProbe.SQLITE_INTEGRITY,
@@ -355,6 +372,7 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             tasks = (
                 asyncio.create_task(projection_worker.run(stop)),
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
+                asyncio.create_task(ordered_replay_worker.run(stop)),
             )
             yield
         finally:
@@ -399,6 +417,20 @@ def _create_durable_ingestion_worker(
     )
 
 
+def _create_ordered_replay_worker(
+    store: SqliteCoreStore,
+    clock: SystemClock,
+) -> OrderedReplayWorker:
+    """Compose the shadow replay worker behind narrow ingestion ports."""
+    repository = SqliteOrderedReplayRepository(store)
+    access = SqliteOrderedReplayAccessPolicy(store)
+    return OrderedReplayWorker(
+        repository,
+        OrderedReplayExecutor(access, repository, clock, "core-ordered-replay-v1"),
+        clock,
+    )
+
+
 def export_core_openapi_schema() -> dict[str, object]:
     """Build the deterministic complete Core contract across bounded contexts."""
     return export_openapi_schema(
@@ -407,6 +439,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
+            create_contract_ordered_replay_router(),
         )
     )
 
@@ -513,6 +546,15 @@ def _include_ingestion_runtime_routers(
     installation_root_key_file: Path,
 ) -> None:
     """Compose and install all ingestion routers at the outermost boundary."""
+    replay_repository = SqliteOrderedReplayRepository(store)
+    replay_access = SqliteOrderedReplayAccessPolicy(store)
+    application.include_router(
+        create_ordered_replay_router(
+            authenticator,
+            StartOrderedReplayHandler(replay_access, replay_repository, clock),
+            GetOrderedReplayHandler(replay_access, replay_repository, clock),
+        )
+    )
     application.include_router(
         _create_adapter_capability_runtime_router(store, clock, authenticator)
     )

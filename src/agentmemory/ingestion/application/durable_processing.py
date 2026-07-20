@@ -12,6 +12,7 @@ from agentmemory.ingestion.domain.durable_processing import (
     ProcessingDisposition,
 )
 from agentmemory.ingestion.domain.errors import IngestionDependencyError, IngestionIntegrityError
+from agentmemory.ingestion.domain.ordered_replay import OrderClaimDisposition
 
 if TYPE_CHECKING:
     from agentmemory.ingestion.domain.ports import (
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 _LEASE_MICROSECONDS = 60 * 1_000_000
 _RETRY_MICROSECONDS = 1 * 1_000_000
+_GAP_TIMEOUT_MICROSECONDS = 60 * 1_000_000
 _DEFAULT_POLL_SECONDS = 0.5
 _MAX_POLL_SECONDS = 10.0
 _MAX_OWNER_LENGTH = 128
@@ -71,6 +73,7 @@ class DurableEventProcessingHandler:
             await self.repository.release_retry(
                 message,
                 inbox,
+                None,
                 "consumer_claim_busy",
                 now + _RETRY_MICROSECONDS,
             )
@@ -79,12 +82,49 @@ class DurableEventProcessingHandler:
                 message.event_id,
                 ProcessingDisposition.RETRY_SCHEDULED,
             )
+        order = await self.repository.claim_order(
+            message,
+            inbox,
+            self.owner,
+            now,
+            now + _LEASE_MICROSECONDS,
+            _GAP_TIMEOUT_MICROSECONDS,
+        )
+        if order.disposition in {
+            OrderClaimDisposition.BUSY,
+            OrderClaimDisposition.WAIT,
+        }:
+            reason = (
+                "causal_order_busy"
+                if order.disposition is OrderClaimDisposition.BUSY
+                else "causal_gap_wait"
+            )
+            await self.repository.release_retry(
+                message,
+                inbox,
+                order,
+                reason,
+                now + _RETRY_MICROSECONDS,
+            )
+            return DurableProcessingResult(
+                message.message_id,
+                message.event_id,
+                ProcessingDisposition.RETRY_SCHEDULED,
+            )
+        if order.disposition is OrderClaimDisposition.LATE_REPLAY_REQUIRED:
+            await self.repository.defer_replay(message, inbox, order, now)
+            return DurableProcessingResult(
+                message.message_id,
+                message.event_id,
+                ProcessingDisposition.REPLAY_REQUIRED,
+            )
         try:
             projection = await self.verifier.verify(message)
         except IngestionIntegrityError:
             await self.repository.require_repair(
                 message,
                 inbox,
+                order,
                 "canonical_integrity_violation",
                 now,
             )
@@ -93,12 +133,13 @@ class DurableEventProcessingHandler:
             await self.repository.release_retry(
                 message,
                 inbox,
+                order,
                 "dependency_unavailable",
                 now + _RETRY_MICROSECONDS,
             )
             disposition = ProcessingDisposition.RETRY_SCHEDULED
         else:
-            await self.repository.complete(message, inbox, projection, now)
+            await self.repository.complete(message, inbox, order, projection, now)
             disposition = ProcessingDisposition.COMPLETED
         return DurableProcessingResult(message.message_id, message.event_id, disposition)
 

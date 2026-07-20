@@ -28,6 +28,14 @@ from agentmemory.ingestion.domain.errors import (
     IngestionIntegrityError,
     IngestionValidationError,
 )
+from agentmemory.ingestion.domain.ordered_replay import (
+    CANONICAL_EVENT_PROJECTION_FINGERPRINT,
+    OrderClaimDisposition,
+    OrderedEventClaim,
+    OrderedReductionInput,
+    RecordedOperationEvidence,
+    reduce_projection,
+)
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -46,6 +54,7 @@ _REPAIR_DETAILS = "Canonical event integrity verification failed"
 _OUTBOX_KEYS = frozenset({"brain_id", "event_id", "event_type", "schema_version"})
 _STARTUP_SCAN_LIMIT = 100
 _PROJECTION_GENERATION = "canonical-event-projection-v1"
+_ZERO_DIGEST = "0" * 64
 
 _VERIFY_QUERY = """
 SELECT o.id AS message_id, o.source_event_id, o.topic, o.payload, o.payload_sha256,
@@ -126,6 +135,7 @@ class SqliteDurableEventProcessingRepository:
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         projection: VerifiedEventProjection,
         completed_at_microseconds: int,
     ) -> None:
@@ -137,6 +147,13 @@ class SqliteDurableEventProcessingRepository:
         ):
             raise IngestionIntegrityError(_ERR_INTEGRITY)
         async with _WriteTransaction(self._store) as transaction:
+            reduction, state_sha256 = await _ordered_reduction(
+                transaction.connection,
+                message,
+                inbox,
+                order,
+                projection,
+            )
             await transaction.connection.execute(
                 text(
                     "INSERT INTO event_projection_receipts "
@@ -197,6 +214,15 @@ class SqliteDurableEventProcessingRepository:
             )
             if inbox_updated.rowcount != 1:
                 raise IngestionIntegrityError(_ERR_LEASE)
+            await _finish_ordered_projection(
+                transaction.connection,
+                message,
+                inbox,
+                order,
+                reduction,
+                state_sha256,
+                completed_at_microseconds,
+            )
             await _append_projection_audit(
                 transaction.connection,
                 message,
@@ -204,6 +230,247 @@ class SqliteDurableEventProcessingRepository:
                 completed_at_microseconds,
             )
             await transaction.commit()
+
+    async def claim_order(  # noqa: PLR0913 -- Port carries exact lease/gap evidence.
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+        gap_timeout_microseconds: int,
+    ) -> OrderedEventClaim:
+        """Arbitrate one event against its per-key causal watermark."""
+        if (
+            inbox.disposition is not InboxClaimDisposition.CLAIMED
+            or inbox.owner != owner
+            or lease_until_microseconds <= now_microseconds
+            or gap_timeout_microseconds < 0
+        ):
+            raise IngestionIntegrityError(_ERR_LEASE)
+        async with _WriteTransaction(self._store) as transaction:
+            event_row = (
+                (
+                    await transaction.connection.execute(
+                        text(
+                            "SELECT x.ordering_key,x.sequence FROM agent_event_envelopes x "
+                            "JOIN agent_events e ON e.event_id=x.event_id "
+                            "WHERE x.event_id=:event AND e.brain_id=:brain"
+                        ),
+                        {"brain": message.brain_id, "event": message.event_id},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if event_row is None:
+                raise IngestionIntegrityError(_ERR_INTEGRITY)
+            ordering_key = str(event_row["ordering_key"])
+            raw_sequence = event_row["sequence"]
+            if raw_sequence is None:
+                claim = OrderedEventClaim(
+                    ordering_key,
+                    None,
+                    None,
+                    _ZERO_DIGEST,
+                    OrderClaimDisposition.UNORDERED,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                await transaction.commit()
+                return claim
+            event_sequence = int(str(raw_sequence))
+            await transaction.connection.execute(
+                text(
+                    "INSERT OR IGNORE INTO projection_order_watermarks "
+                    "(projection_name,brain_id,ordering_key,applied_sequence,state_sha256,"
+                    "created_at,updated_at,schema_version) VALUES "
+                    "(:projection,:brain,:ordering,0,:state,:now,:now,1)"
+                ),
+                {
+                    "brain": message.brain_id,
+                    "now": now_microseconds,
+                    "ordering": ordering_key,
+                    "projection": inbox.consumer,
+                    "state": bytes(32),
+                },
+            )
+            watermark = await _watermark(
+                transaction.connection,
+                inbox.consumer,
+                message.brain_id,
+                ordering_key,
+            )
+            prior_sequence = int(str(watermark["applied_sequence"]))
+            prior_state = _bytes(watermark["state_sha256"]).hex()
+            if event_sequence <= prior_sequence:
+                await _mark_late_gap(
+                    transaction.connection,
+                    message,
+                    inbox.consumer,
+                    ordering_key,
+                    event_sequence,
+                    now_microseconds,
+                )
+                claim = OrderedEventClaim(
+                    ordering_key,
+                    event_sequence,
+                    prior_sequence,
+                    prior_state,
+                    OrderClaimDisposition.LATE_REPLAY_REQUIRED,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                await transaction.commit()
+                return claim
+            current_lease = watermark["lease_until"]
+            if current_lease is not None and int(str(current_lease)) > now_microseconds:
+                claim = OrderedEventClaim(
+                    ordering_key,
+                    event_sequence,
+                    prior_sequence,
+                    prior_state,
+                    OrderClaimDisposition.BUSY,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                await transaction.commit()
+                return claim
+            if current_lease is not None:
+                await _clear_expired_order_lease(
+                    transaction.connection,
+                    inbox.consumer,
+                    message.brain_id,
+                    ordering_key,
+                    now_microseconds,
+                )
+            if event_sequence == prior_sequence + 1:
+                disposition = OrderClaimDisposition.READY
+                gap_from = None
+                gap_to = None
+            else:
+                gap_from = prior_sequence + 1
+                gap_to = event_sequence - 1
+                timeout_at = now_microseconds + gap_timeout_microseconds
+                gap = (
+                    (
+                        await transaction.connection.execute(
+                            text(
+                                "SELECT state,timeout_at FROM projection_order_gaps "
+                                "WHERE projection_name=:projection AND brain_id=:brain "
+                                "AND ordering_key=:ordering AND blocking_event_id=:event"
+                            ),
+                            {
+                                "brain": message.brain_id,
+                                "event": message.event_id,
+                                "ordering": ordering_key,
+                                "projection": inbox.consumer,
+                            },
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if gap is None:
+                    await transaction.connection.execute(
+                        text(
+                            "INSERT INTO projection_order_gaps "
+                            "(projection_name,brain_id,ordering_key,blocking_event_id,"
+                            "from_sequence,to_sequence,state,first_detected_at,timeout_at,"
+                            "created_at,updated_at,schema_version) VALUES "
+                            "(:projection,:brain,:ordering,:event,:gap_from,:gap_to,'waiting',"
+                            ":now,:timeout,:now,:now,1)"
+                        ),
+                        {
+                            "brain": message.brain_id,
+                            "event": message.event_id,
+                            "gap_from": gap_from,
+                            "gap_to": gap_to,
+                            "now": now_microseconds,
+                            "ordering": ordering_key,
+                            "projection": inbox.consumer,
+                            "timeout": timeout_at,
+                        },
+                    )
+                else:
+                    timeout_at = int(str(gap["timeout_at"]))
+                    await transaction.connection.execute(
+                        text(
+                            "UPDATE projection_order_gaps SET from_sequence=:gap_from,"
+                            "to_sequence=:gap_to,updated_at=:now WHERE "
+                            "projection_name=:projection AND brain_id=:brain "
+                            "AND ordering_key=:ordering AND blocking_event_id=:event "
+                            "AND state='waiting'"
+                        ),
+                        {
+                            "brain": message.brain_id,
+                            "event": message.event_id,
+                            "gap_from": gap_from,
+                            "gap_to": gap_to,
+                            "now": now_microseconds,
+                            "ordering": ordering_key,
+                            "projection": inbox.consumer,
+                        },
+                    )
+                if timeout_at > now_microseconds:
+                    claim = OrderedEventClaim(
+                        ordering_key,
+                        event_sequence,
+                        prior_sequence,
+                        prior_state,
+                        OrderClaimDisposition.WAIT,
+                        None,
+                        None,
+                        gap_from,
+                        gap_to,
+                    )
+                    await transaction.commit()
+                    return claim
+                await transaction.connection.execute(
+                    text(
+                        "UPDATE projection_order_gaps SET state='declared',declared_at=:now,"
+                        "updated_at=:now WHERE projection_name=:projection AND brain_id=:brain "
+                        "AND ordering_key=:ordering AND blocking_event_id=:event "
+                        "AND state='waiting' AND timeout_at<=:now"
+                    ),
+                    {
+                        "brain": message.brain_id,
+                        "event": message.event_id,
+                        "now": now_microseconds,
+                        "ordering": ordering_key,
+                        "projection": inbox.consumer,
+                    },
+                )
+                disposition = OrderClaimDisposition.READY_AFTER_GAP
+            await _lease_order_watermark(
+                transaction.connection,
+                message,
+                inbox.consumer,
+                ordering_key,
+                event_sequence,
+                prior_sequence,
+                owner,
+                lease_until_microseconds,
+            )
+            claim = OrderedEventClaim(
+                ordering_key,
+                event_sequence,
+                prior_sequence,
+                prior_state,
+                disposition,
+                owner,
+                lease_until_microseconds,
+                gap_from,
+                gap_to,
+            )
+            await transaction.commit()
+            return claim
 
     async def claim_inbox(
         self,
@@ -404,6 +671,7 @@ class SqliteDurableEventProcessingRepository:
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
         reason_code: str,
         detected_at_microseconds: int,
     ) -> None:
@@ -428,12 +696,14 @@ class SqliteDurableEventProcessingRepository:
                 inbox,
                 detected_at_microseconds,
             )
+            await _release_order_lease(transaction.connection, message, inbox, order)
             await transaction.commit()
 
     async def release_retry(
         self,
         message: ClaimedOutboxMessage,
         inbox: InboxReceiptClaim,
+        order: OrderedEventClaim | None,
         reason_code: str,
         retry_at_microseconds: int,
     ) -> None:
@@ -470,6 +740,77 @@ class SqliteDurableEventProcessingRepository:
                 )
                 if inbox_updated.rowcount != 1:
                     raise IngestionIntegrityError(_ERR_LEASE)
+            if order is not None:
+                await _release_order_lease(transaction.connection, message, inbox, order)
+            await transaction.commit()
+
+    async def defer_replay(
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        order: OrderedEventClaim,
+        detected_at_microseconds: int,
+    ) -> None:
+        """Hold a late event outside live state until an explicit shadow replay succeeds."""
+        if (
+            order.disposition is not OrderClaimDisposition.LATE_REPLAY_REQUIRED
+            or order.event_sequence is None
+            or inbox.disposition is not InboxClaimDisposition.CLAIMED
+            or inbox.owner is None
+        ):
+            raise IngestionIntegrityError(_ERR_INTEGRITY)
+        async with _WriteTransaction(self._store) as transaction:
+            await _assert_order_event(
+                transaction.connection,
+                message,
+                order.ordering_key,
+                order.event_sequence,
+            )
+            await transaction.connection.execute(
+                text(
+                    "INSERT OR IGNORE INTO ordered_replay_required_events "
+                    "(projection_name,event_id,brain_id,outbox_message_id,ordering_key,"
+                    "event_sequence,state,detected_at,schema_version) VALUES "
+                    "(:projection,:event,:brain,:message,:ordering,:sequence,'pending',:now,1)"
+                ),
+                {
+                    "brain": message.brain_id,
+                    "event": message.event_id,
+                    "message": message.message_id,
+                    "now": detected_at_microseconds,
+                    "ordering": order.ordering_key,
+                    "projection": inbox.consumer,
+                    "sequence": order.event_sequence,
+                },
+            )
+            await _finish_lease(
+                transaction.connection,
+                message,
+                "replay_required",
+                None,
+                "causal_late_event",
+            )
+            inbox_updated = await transaction.connection.execute(
+                text(
+                    "UPDATE inbox_receipts SET state='replay_required',lease_owner=NULL,"
+                    "lease_until=NULL,processed_at=:now,updated_at=:now WHERE "
+                    "consumer=:consumer AND message_id=:message AND state='processing' "
+                    "AND lease_owner=:owner"
+                ),
+                {
+                    "consumer": inbox.consumer,
+                    "message": inbox.message_id,
+                    "now": detected_at_microseconds,
+                    "owner": inbox.owner,
+                },
+            )
+            if inbox_updated.rowcount != 1:
+                raise IngestionIntegrityError(_ERR_LEASE)
+            await _append_replay_required_audit(
+                transaction.connection,
+                message,
+                detected_at_microseconds,
+            )
             await transaction.commit()
 
     async def recover_expired_leases(self, now_microseconds: int) -> int:
@@ -480,6 +821,14 @@ class SqliteDurableEventProcessingRepository:
                     "UPDATE outbox_messages SET status='ready',lease_owner=NULL,lease_until=NULL,"
                     "not_before=:now,last_error_code='lease_expired' "
                     "WHERE status='leased' AND lease_until<=:now"
+                ),
+                {"now": now_microseconds},
+            )
+            await transaction.connection.execute(
+                text(
+                    "UPDATE projection_order_watermarks SET lease_owner=NULL,"
+                    "lease_event_id=NULL,lease_sequence=NULL,lease_until=NULL,updated_at=:now "
+                    "WHERE lease_until IS NOT NULL AND lease_until<=:now"
                 ),
                 {"now": now_microseconds},
             )
@@ -646,6 +995,344 @@ class _WriteTransaction:
         except SQLAlchemyError as error:
             raise IngestionDependencyError(_ERR_STORAGE) from error
         self._committed = True
+
+
+async def _watermark(
+    connection: AsyncConnection,
+    projection_name: str,
+    brain_id: str,
+    ordering_key: str,
+) -> RowMapping:
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT * FROM projection_order_watermarks WHERE "
+                    "projection_name=:projection AND brain_id=:brain AND ordering_key=:ordering"
+                ),
+                {
+                    "brain": brain_id,
+                    "ordering": ordering_key,
+                    "projection": projection_name,
+                },
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+    return row
+
+
+async def _clear_expired_order_lease(
+    connection: AsyncConnection,
+    projection_name: str,
+    brain_id: str,
+    ordering_key: str,
+    now_microseconds: int,
+) -> None:
+    await connection.execute(
+        text(
+            "UPDATE projection_order_watermarks SET lease_owner=NULL,lease_event_id=NULL,"
+            "lease_sequence=NULL,lease_until=NULL,updated_at=:now WHERE "
+            "projection_name=:projection AND brain_id=:brain AND ordering_key=:ordering "
+            "AND lease_until IS NOT NULL AND lease_until<=:now"
+        ),
+        {
+            "brain": brain_id,
+            "now": now_microseconds,
+            "ordering": ordering_key,
+            "projection": projection_name,
+        },
+    )
+
+
+async def _lease_order_watermark(  # noqa: PLR0913 -- CAS inputs are intentionally explicit.
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    projection_name: str,
+    ordering_key: str,
+    event_sequence: int,
+    prior_sequence: int,
+    owner: str,
+    lease_until_microseconds: int,
+) -> None:
+    result = await connection.execute(
+        text(
+            "UPDATE projection_order_watermarks SET lease_owner=:owner,lease_event_id=:event,"
+            "lease_sequence=:sequence,lease_until=:lease,updated_at=:lease WHERE "
+            "projection_name=:projection AND brain_id=:brain AND ordering_key=:ordering "
+            "AND applied_sequence=:prior AND lease_owner IS NULL"
+        ),
+        {
+            "brain": message.brain_id,
+            "event": message.event_id,
+            "lease": lease_until_microseconds,
+            "ordering": ordering_key,
+            "owner": owner,
+            "prior": prior_sequence,
+            "projection": projection_name,
+            "sequence": event_sequence,
+        },
+    )
+    if result.rowcount != 1:
+        raise IngestionIntegrityError(_ERR_LEASE)
+
+
+async def _mark_late_gap(  # noqa: PLR0913 -- Durable gap identity is composite.
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    projection_name: str,
+    ordering_key: str,
+    event_sequence: int,
+    detected_at_microseconds: int,
+) -> None:
+    await connection.execute(
+        text(
+            "UPDATE projection_order_gaps SET state='late_arrived',late_event_id=:event,"
+            "late_arrived_at=:now,updated_at=:now WHERE rowid=(SELECT rowid FROM "
+            "projection_order_gaps WHERE projection_name=:projection AND brain_id=:brain "
+            "AND ordering_key=:ordering AND state='declared' AND "
+            ":sequence BETWEEN from_sequence AND to_sequence ORDER BY declared_at,rowid LIMIT 1)"
+        ),
+        {
+            "brain": message.brain_id,
+            "event": message.event_id,
+            "now": detected_at_microseconds,
+            "ordering": ordering_key,
+            "projection": projection_name,
+            "sequence": event_sequence,
+        },
+    )
+
+
+async def _assert_order_event(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    ordering_key: str,
+    event_sequence: int | None,
+) -> None:
+    value = (
+        await connection.execute(
+            text(
+                "SELECT COUNT(*) FROM agent_event_envelopes x JOIN agent_events e "
+                "ON e.event_id=x.event_id WHERE x.event_id=:event AND e.brain_id=:brain "
+                "AND x.ordering_key=:ordering AND "
+                "((:sequence IS NULL AND x.sequence IS NULL) OR x.sequence=:sequence)"
+            ),
+            {
+                "brain": message.brain_id,
+                "event": message.event_id,
+                "ordering": ordering_key,
+                "sequence": event_sequence,
+            },
+        )
+    ).scalar_one()
+    if value != 1:
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+
+
+async def _ordered_reduction(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    inbox: InboxReceiptClaim,
+    order: OrderedEventClaim,
+    projection: VerifiedEventProjection,
+) -> tuple[OrderedReductionInput, str]:
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT e.brain_id,e.schema_version AS event_schema_version,"
+                    "x.ordering_key,x.sequence,x.canonical_sha256,"
+                    "r.operation_id,r.profile_id,r.model_revision,r.purpose,"
+                    "r.result_sha256 AS recorded_result_sha256,r.result_ref AS recorded_result_ref,"
+                    "p.profile_id AS provider_profile_id,p.brain_id AS provider_brain_id,"
+                    "p.state AS provider_state,p.result_sha256 AS provider_result_sha256,"
+                    "p.result_ref AS provider_result_ref FROM agent_events e "
+                    "JOIN agent_event_envelopes x ON x.event_id=e.event_id "
+                    "LEFT JOIN recorded_reduction_inputs r ON "
+                    "r.event_id=e.event_id AND r.projection_name=:projection "
+                    "LEFT JOIN provider_operation_results p ON p.operation_id=r.operation_id "
+                    "WHERE e.event_id=:event AND e.brain_id=:brain"
+                ),
+                {
+                    "brain": message.brain_id,
+                    "event": message.event_id,
+                    "projection": inbox.consumer,
+                },
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+    raw_sequence = row["sequence"]
+    event_sequence = None if raw_sequence is None else int(str(raw_sequence))
+    canonical_sha256 = _bytes(row["canonical_sha256"]).hex()
+    if (
+        str(row["ordering_key"]) != order.ordering_key
+        or event_sequence != order.event_sequence
+        or canonical_sha256 != projection.canonical_sha256
+    ):
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+    operation_id = row["operation_id"]
+    recorded: RecordedOperationEvidence | None = None
+    if operation_id is not None:
+        recorded_result = _bytes(row["recorded_result_sha256"])
+        provider_result = _bytes(row["provider_result_sha256"])
+        if (
+            str(row["provider_state"]) != "completed"
+            or str(row["profile_id"]) != str(row["provider_profile_id"])
+            or str(row["provider_brain_id"]) != message.brain_id
+            or recorded_result != provider_result
+            or str(row["recorded_result_ref"]) != str(row["provider_result_ref"])
+        ):
+            raise IngestionIntegrityError(_ERR_INTEGRITY)
+        recorded = RecordedOperationEvidence(
+            str(operation_id),
+            str(row["profile_id"]),
+            str(row["model_revision"]),
+            str(row["purpose"]),
+            recorded_result.hex(),
+        )
+    reduction = OrderedReductionInput(
+        message.event_id,
+        order.ordering_key,
+        order.event_sequence,
+        int(str(row["event_schema_version"])),
+        canonical_sha256,
+        projection.projection_sha256,
+        recorded is not None,
+        recorded,
+    )
+    prior_state = order.prior_state_sha256
+    if order.disposition is OrderClaimDisposition.UNORDERED:
+        if order.prior_sequence is not None:
+            raise IngestionIntegrityError(_ERR_INTEGRITY)
+        prior_state = _ZERO_DIGEST
+    elif order.disposition not in {
+        OrderClaimDisposition.READY,
+        OrderClaimDisposition.READY_AFTER_GAP,
+    }:
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+    return reduction, reduce_projection(
+        prior_state,
+        reduction,
+        CANONICAL_EVENT_PROJECTION_FINGERPRINT,
+    )
+
+
+async def _finish_ordered_projection(  # noqa: PLR0913 -- Atomic boundary needs all evidence.
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    inbox: InboxReceiptClaim,
+    order: OrderedEventClaim,
+    reduction: OrderedReductionInput,
+    state_sha256: str,
+    completed_at_microseconds: int,
+) -> None:
+    if order.disposition in {
+        OrderClaimDisposition.READY,
+        OrderClaimDisposition.READY_AFTER_GAP,
+    }:
+        if (
+            order.owner is None
+            or order.event_sequence is None
+            or order.prior_sequence is None
+            or order.owner != inbox.owner
+        ):
+            raise IngestionIntegrityError(_ERR_LEASE)
+        updated = await connection.execute(
+            text(
+                "UPDATE projection_order_watermarks SET applied_sequence=:sequence,"
+                "state_sha256=:state,last_event_id=:event,lease_owner=NULL,lease_event_id=NULL,"
+                "lease_sequence=NULL,lease_until=NULL,updated_at=:now WHERE "
+                "projection_name=:projection AND brain_id=:brain AND ordering_key=:ordering "
+                "AND applied_sequence=:prior AND state_sha256=:prior_state "
+                "AND lease_owner=:owner AND lease_event_id=:event AND lease_sequence=:sequence"
+            ),
+            {
+                "brain": message.brain_id,
+                "event": message.event_id,
+                "now": completed_at_microseconds,
+                "ordering": order.ordering_key,
+                "owner": order.owner,
+                "prior": order.prior_sequence,
+                "prior_state": bytes.fromhex(order.prior_state_sha256),
+                "projection": inbox.consumer,
+                "sequence": order.event_sequence,
+                "state": bytes.fromhex(state_sha256),
+            },
+        )
+        if updated.rowcount != 1:
+            raise IngestionIntegrityError(_ERR_LEASE)
+    elif order.disposition is not OrderClaimDisposition.UNORDERED:
+        raise IngestionIntegrityError(_ERR_INTEGRITY)
+    await connection.execute(
+        text(
+            "INSERT INTO ordered_projection_history "
+            "(projection_name,event_id,brain_id,ordering_key,event_sequence,"
+            "event_schema_version,canonical_sha256,projection_sha256,prior_state_sha256,"
+            "state_sha256,code_fingerprint,recorded_operation_id,applied_at,schema_version) "
+            "VALUES (:projection,:event,:brain,:ordering,:sequence,:event_schema,:canonical,"
+            ":result,:prior,:state,:fingerprint,:operation,:now,1)"
+        ),
+        {
+            "brain": message.brain_id,
+            "canonical": bytes.fromhex(reduction.canonical_sha256),
+            "event": message.event_id,
+            "event_schema": reduction.event_schema_version,
+            "fingerprint": CANONICAL_EVENT_PROJECTION_FINGERPRINT,
+            "now": completed_at_microseconds,
+            "operation": (
+                None
+                if reduction.recorded_operation is None
+                else reduction.recorded_operation.operation_id
+            ),
+            "ordering": order.ordering_key,
+            "prior": bytes.fromhex(order.prior_state_sha256),
+            "projection": inbox.consumer,
+            "result": bytes.fromhex(reduction.projection_sha256),
+            "sequence": order.event_sequence,
+            "state": bytes.fromhex(state_sha256),
+        },
+    )
+
+
+async def _release_order_lease(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    inbox: InboxReceiptClaim,
+    order: OrderedEventClaim,
+) -> None:
+    if order.disposition not in {
+        OrderClaimDisposition.READY,
+        OrderClaimDisposition.READY_AFTER_GAP,
+    }:
+        return
+    if order.owner is None or order.event_sequence is None or order.owner != inbox.owner:
+        raise IngestionIntegrityError(_ERR_LEASE)
+    result = await connection.execute(
+        text(
+            "UPDATE projection_order_watermarks SET lease_owner=NULL,lease_event_id=NULL,"
+            "lease_sequence=NULL,lease_until=NULL WHERE projection_name=:projection "
+            "AND brain_id=:brain AND ordering_key=:ordering AND lease_owner=:owner "
+            "AND lease_event_id=:event AND lease_sequence=:sequence"
+        ),
+        {
+            "brain": message.brain_id,
+            "event": message.event_id,
+            "ordering": order.ordering_key,
+            "owner": order.owner,
+            "projection": inbox.consumer,
+            "sequence": order.event_sequence,
+        },
+    )
+    if result.rowcount != 1:
+        raise IngestionIntegrityError(_ERR_LEASE)
 
 
 def _claimed(row: RowMapping, owner: str, lease_until: int) -> ClaimedOutboxMessage:
@@ -888,6 +1575,34 @@ async def _append_projection_audit(
             "event_hash": hashlib.sha256(previous_hash + fact).digest(),
             "key": f"ingestion-projected:{message.event_id}",
             "now": completed_at,
+            "previous": previous_hash,
+        },
+    )
+
+
+async def _append_replay_required_audit(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    detected_at: int,
+) -> None:
+    previous_hash = await _previous_audit_hash(connection)
+    fact = _audit_fact("ingestion.replay_required", message.brain_id, message.event_id)
+    await connection.execute(
+        text(
+            "INSERT OR IGNORE INTO audit_events "
+            "(brain_id,actor_id,action,target_ref,idempotency_key,before_hash,after_hash,"
+            "previous_hash,event_hash,occurred_at,schema_version) VALUES "
+            "(:brain,'system:ingestion-projection','ingestion.replay_required',:event,:key,"
+            ":before,:after,:previous,:event_hash,:now,1)"
+        ),
+        {
+            "after": hashlib.sha256(b"replay_required").digest(),
+            "before": bytes(32),
+            "brain": message.brain_id,
+            "event": message.event_id,
+            "event_hash": hashlib.sha256(previous_hash + fact).digest(),
+            "key": f"ingestion-replay-required:{message.event_id}",
+            "now": detected_at,
             "previous": previous_hash,
         },
     )

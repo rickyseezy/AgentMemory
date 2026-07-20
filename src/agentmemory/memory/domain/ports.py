@@ -17,6 +17,10 @@ if TYPE_CHECKING:
         MemoryScope,
         TaskEvidenceBundle,
     )
+    from agentmemory.memory.domain.explanation import (
+        MemoryExplanation,
+        MemoryExplanationAccess,
+    )
     from agentmemory.memory.domain.lineage_backfill import (
         TaskLineageBackfillOutcome,
         TaskLineageBackfillProgress,
@@ -82,6 +86,17 @@ class MemoryConsolidationRepository(Protocol):
 
     async def add(self, consolidation: ConsolidationCommit) -> None:
         """Stage memories, lineage, events, outbox, audit, and receipt."""
+        ...
+
+
+class MemoryRepository(Protocol):
+    """Read complete canonical memory provenance through one authority-filtered query."""
+
+    async def explain_authorized(
+        self,
+        access: MemoryExplanationAccess,
+    ) -> MemoryExplanation | None:
+        """Return a complete explanation or hide absent and unauthorized targets alike."""
         ...
 
 

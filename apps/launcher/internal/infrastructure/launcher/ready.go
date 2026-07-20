@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rickyseezy/AgentMemory/apps/launcher/internal/adapters/mcpbootstrap"
@@ -15,13 +16,28 @@ import (
 
 const (
 	toolBrainStatus               = "brain_status"
+	toolMemoryExplain             = "memory_explain"
 	toolManagedRuntimeRemovalPlan = "managed_runtime_removal_plan"
 	toolRemoveManagedRuntime      = "remove_managed_runtime"
 	resourceReady                 = "agentmemory://ready"
+	memoryExplainOutputSchema     = `{"type":"object","additionalProperties":false,"properties":{"memory_id":{"$ref":"#/$defs/uuid7"},"memory_class":{"type":"string"},"scope":{"type":"object","additionalProperties":false,"properties":{"brain_id":{"$ref":"#/$defs/uuid7"},"project_id":{"$ref":"#/$defs/uuid7"},"repository_id":{"$ref":"#/$defs/uuid7"},"checkout_id":{"anyOf":[{"$ref":"#/$defs/uuid7"},{"type":"null"}]}},"required":["brain_id","project_id","repository_id","checkout_id"]},"status":{"type":"string"},"statement":{"type":"string"},"content_sha256":{"$ref":"#/$defs/digest"},"confidence":{"type":"object","additionalProperties":false,"properties":{"evidence_support":{"type":"integer","minimum":0,"maximum":10000},"source_reliability":{"type":"integer","minimum":0,"maximum":10000},"extraction_quality":{"type":"integer","minimum":0,"maximum":10000}},"required":["evidence_support","source_reliability","extraction_quality"]},"valid_time":{"$ref":"#/$defs/time_range"},"recorded_time":{"$ref":"#/$defs/time_range"},"provenance":{"type":"object","additionalProperties":false,"properties":{"actor_id":{"$ref":"#/$defs/uuid7"},"agent_id":{"$ref":"#/$defs/uuid7"},"source_task_id":{"$ref":"#/$defs/uuid7"},"created_by_event":{"$ref":"#/$defs/uuid7"},"extractor":{"type":"object","additionalProperties":false,"properties":{"extractor_id":{"type":"string"},"extractor_version":{"type":"string"},"model_id":{"type":"string"},"model_revision":{"type":"string"},"output_schema":{"type":"string"},"fingerprint":{"$ref":"#/$defs/digest"}},"required":["extractor_id","extractor_version","model_id","model_revision","output_schema","fingerprint"]},"evidence_watermark_sha256":{"$ref":"#/$defs/digest"},"extractor_input_sha256":{"$ref":"#/$defs/digest"},"content_sha256":{"$ref":"#/$defs/digest"},"promotion_policy_version":{"type":"string"},"provenance_sha256":{"$ref":"#/$defs/digest"}},"required":["actor_id","agent_id","source_task_id","created_by_event","extractor","evidence_watermark_sha256","extractor_input_sha256","content_sha256","promotion_policy_version","provenance_sha256"]},"classification":{"type":"string"},"retention_policy_id":{"type":"string"},"aggregate_version":{"type":"integer","minimum":1},"evidence":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"event_id":{"$ref":"#/$defs/uuid7"},"canonical_event_sha256":{"$ref":"#/$defs/digest"},"availability":{"type":"string","enum":["available","purged","missing"]},"event_type":{"type":["string","null"]},"occurred_at":{"anyOf":[{"$ref":"#/$defs/instant"},{"type":"null"}]},"resource_uri":{"type":["string","null"]}},"required":["event_id","canonical_event_sha256","availability","event_type","occurred_at","resource_uri"]}},"evaluated_valid_at":{"$ref":"#/$defs/instant"},"evaluated_recorded_at":{"$ref":"#/$defs/instant"},"effective":{"type":"boolean"}},"required":["memory_id","memory_class","scope","status","statement","content_sha256","confidence","valid_time","recorded_time","provenance","classification","retention_policy_id","aggregate_version","evidence","evaluated_valid_at","evaluated_recorded_at","effective"],"$defs":{"time_range":{"type":"object","additionalProperties":false,"properties":{"from":{"$ref":"#/$defs/instant"},"to":{"anyOf":[{"$ref":"#/$defs/instant"},{"type":"null"}]}},"required":["from","to"]},"uuid7":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},"digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"instant":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"}}}`
 )
 
 type coreStatus interface {
 	Ready(context.Context) (bool, error)
+}
+
+type memoryExplanationClient interface {
+	ExplainMemory(context.Context, string, string, string, string, string, string) (json.RawMessage, error)
+}
+
+type memoryExplainInput struct {
+	MemoryID   string `json:"memory_id"`
+	BrainID    string `json:"brain_id"`
+	ActorID    string `json:"actor_id"`
+	GrantID    string `json:"grant_id"`
+	ValidAt    string `json:"valid_at"`
+	RecordedAt string `json:"recorded_at"`
 }
 
 type managedRuntimeRemovalPlan struct {
@@ -68,6 +84,7 @@ type managedRuntimeRemovalController interface {
 type coreReadySurface struct {
 	installationID string
 	status         coreStatus
+	memory         memoryExplanationClient
 	removal        managedRuntimeRemovalController
 }
 
@@ -95,7 +112,13 @@ func newCoreReadySurfaceInternal(
 		len(installationID) > 128 || nilAny(status) {
 		return nil, errors.New("core Ready surface authority is invalid")
 	}
-	return &coreReadySurface{installationID: installationID, status: status, removal: removal}, nil
+	memory, _ := status.(memoryExplanationClient)
+	if nilReadyCapability(memory) {
+		memory = nil
+	}
+	return &coreReadySurface{
+		installationID: installationID, status: status, memory: memory, removal: removal,
+	}, nil
 }
 
 func (s *coreReadySurface) ReadySurface(ctx context.Context) (mcpbootstrap.ReadySurface, error) {
@@ -120,6 +143,21 @@ func (s *coreReadySurface) ReadySurface(ctx context.Context) (mcpbootstrap.Ready
 		},
 		Handler: s.handleStatus,
 	}}
+	if !nilReadyCapability(s.memory) {
+		tools = append(tools, mcpbootstrap.ReadyTool{
+			Tool: &mcp.Tool{
+				Name: toolMemoryExplain, Title: "Explain memory provenance",
+				Description:  "Return the authorized provenance, evidence availability, and bitemporal state of one local Brain memory.",
+				InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"memory_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},"brain_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},"actor_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},"grant_id":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},"valid_at":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"},"recorded_at":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"}},"required":["memory_id","brain_id","actor_id","grant_id","valid_at","recorded_at"]}`),
+				OutputSchema: json.RawMessage(memoryExplainOutputSchema),
+				Annotations: &mcp.ToolAnnotations{
+					Title: "Explain memory provenance", ReadOnlyHint: true,
+					OpenWorldHint: &closedWorld, DestructiveHint: &additive, IdempotentHint: true,
+				},
+			},
+			Handler: s.handleMemoryExplain,
+		})
+	}
 	if !nilReadyCapability(s.removal) {
 		destructive := true
 		tools = append(tools,
@@ -162,6 +200,37 @@ func (s *coreReadySurface) ReadySurface(ctx context.Context) (mcpbootstrap.Ready
 			Handler: s.handleResource,
 		}},
 	}, nil
+}
+
+func (s *coreReadySurface) handleMemoryExplain(
+	ctx context.Context,
+	request *mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	var input memoryExplainInput
+	if err := decodeReadyArguments(request, &input); err != nil || nilReadyCapability(s.memory) ||
+		!validReadyUUIDv7(input.MemoryID) || !validReadyUUIDv7(input.BrainID) ||
+		!validReadyUUIDv7(input.ActorID) || !validReadyUUIDv7(input.GrantID) ||
+		!validReadyMemoryTime(input.ValidAt) || !validReadyMemoryTime(input.RecordedAt) {
+		return nil, errors.New("memory explanation request is invalid")
+	}
+	if _, err := s.statusPayload(ctx); err != nil {
+		return nil, err
+	}
+	payload, err := s.memory.ExplainMemory(
+		ctx,
+		input.MemoryID,
+		input.BrainID,
+		input.ActorID,
+		input.GrantID,
+		input.ValidAt,
+		input.RecordedAt,
+	)
+	trimmed := bytes.TrimSpace(payload)
+	if err != nil || len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' ||
+		rejectReadyDuplicateJSONKeys(trimmed) != nil {
+		return nil, errors.New("memory explanation is unavailable")
+	}
+	return readyToolResult(json.RawMessage(trimmed))
 }
 
 func (s *coreReadySurface) handleRemovalPlan(
@@ -229,6 +298,9 @@ func decodeReadyArguments(request *mcp.CallToolRequest, destination any) error {
 	if request == nil || request.Params == nil || len(request.Params.Arguments) == 0 || destination == nil {
 		return errors.New("tool arguments are unavailable")
 	}
+	if err := rejectReadyDuplicateJSONKeys(request.Params.Arguments); err != nil {
+		return errors.New("tool arguments are ambiguous")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(request.Params.Arguments))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -238,6 +310,87 @@ func decodeReadyArguments(request *mcp.CallToolRequest, destination any) error {
 		return errors.New("tool arguments contain trailing data")
 	}
 	return nil
+}
+
+func rejectReadyDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := scanReadyJSONValue(decoder); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("JSON has trailing content")
+	}
+	return nil
+}
+
+func scanReadyJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, keyError := decoder.Token()
+			key, ok := keyToken.(string)
+			if keyError != nil || !ok {
+				return errors.New("JSON object key is invalid")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("JSON object contains a duplicate key")
+			}
+			seen[key] = struct{}{}
+			if err := scanReadyJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, closeError := decoder.Token()
+		if closeError != nil || closing != json.Delim('}') {
+			return errors.New("JSON object is incomplete")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanReadyJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, closeError := decoder.Token()
+		if closeError != nil || closing != json.Delim(']') {
+			return errors.New("JSON array is incomplete")
+		}
+	default:
+		return errors.New("JSON delimiter is invalid")
+	}
+	return nil
+}
+
+func validReadyUUIDv7(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' ||
+		value[14] != '7' || !strings.ContainsRune("89ab", rune(value[19])) {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validReadyMemoryTime(value string) bool {
+	const layout = "2006-01-02T15:04:05.000000Z"
+	parsed, err := time.Parse(layout, value)
+	return err == nil && parsed.UTC().Format(layout) == value
 }
 
 func readyToolResult(payload any) (*mcp.CallToolResult, error) {

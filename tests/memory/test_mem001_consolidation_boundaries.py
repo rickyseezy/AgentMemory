@@ -81,7 +81,13 @@ def _active_memory(source: TaskEvidenceBundle | None = None) -> Memory:
     resolved = source or bundle()
     candidate = _candidate(resolved)
     decision = MemoryPromotionPolicy.production().evaluate(candidate, resolved)
-    return candidate.activate(decision, resolved, extractor(), NOW + timedelta(seconds=2))
+    return candidate.activate(
+        decision,
+        resolved,
+        extractor(),
+        ACTOR_ID,
+        NOW + timedelta(seconds=2),
+    )
 
 
 _EVIDENCE_MUTATIONS: list[tuple[Callable[[TaskEvidence], TaskEvidence], str]] = [
@@ -768,7 +774,7 @@ def test_valid_to_and_recorded_to_accept_strictly_later_utc_boundaries() -> None
     bounded = replace(candidate, valid_to=candidate.valid_from + timedelta(microseconds=1))
     source = bundle()
     decision = MemoryPromotionPolicy.production().evaluate(bounded, source)
-    memory = bounded.activate(decision, source, extractor(), NOW + timedelta(seconds=2))
+    memory = bounded.activate(decision, source, extractor(), ACTOR_ID, NOW + timedelta(seconds=2))
     recorded = replace(memory, recorded_to=memory.recorded_from + timedelta(microseconds=1))
     assert recorded.valid_to is not None
     assert recorded.recorded_to is not None
@@ -834,7 +840,13 @@ def test_memory_candidate_activation_rejects_unsupported_evidence_even_with_forg
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
     forged = replace(decision, disposition=type(decision.disposition).PROMOTE)
     with pytest.raises(MemoryValidationError) as failure:
-        candidate.activate(forged, source, extractor(), NOW + timedelta(seconds=2))
+        candidate.activate(
+            forged,
+            source,
+            extractor(),
+            ACTOR_ID,
+            NOW + timedelta(seconds=2),
+        )
     assert failure.value.code_for("promotion") == "unsupported_evidence"
 
 

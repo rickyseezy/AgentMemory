@@ -9,6 +9,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const (
+	memoryExplainMemoryID   = "018f0000-0000-7000-8000-000000000401"
+	memoryExplainBrainID    = "018f0000-0000-7000-8000-000000000004"
+	memoryExplainActorID    = "018f0000-0000-7000-8000-000000000002"
+	memoryExplainGrantID    = "018f0000-0000-7000-8000-000000000003"
+	memoryExplainValidAt    = "2026-07-21T10:00:00.000000Z"
+	memoryExplainRecordedAt = "2026-07-21T11:00:00.000000Z"
+)
+
 func TestPF001CoreReadySurfacePreflightsAndServesAuthenticatedLiveState(t *testing.T) {
 	t.Parallel()
 	status := &coreStatusStub{ready: true}
@@ -36,6 +45,108 @@ func TestPF001CoreReadySurfacePreflightsAndServesAuthenticatedLiveState(t *testi
 	if err != nil || resourceResult == nil || len(resourceResult.Contents) != 1 ||
 		resourceResult.Contents[0].URI != resourceReady || status.calls != 3 {
 		t.Fatalf("resource=%+v,%v calls=%d", resourceResult, err, status.calls)
+	}
+}
+
+func TestMEM002ReadySurfacePublishesStrictMemoryExplainTool(t *testing.T) {
+	t.Parallel()
+	status := &coreMemoryStub{
+		coreStatusStub: coreStatusStub{ready: true},
+		response:       json.RawMessage(`{"memory_id":"018f0000-0000-7000-8000-000000000401","effective":true}`),
+	}
+	provider, err := newCoreReadySurface("installation", status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := provider.ReadySurface(context.Background())
+	if err != nil || len(surface.Tools) != 2 || surface.Tools[1].Tool.Name != toolMemoryExplain {
+		t.Fatalf("ReadySurface()=%+v,%v", surface, err)
+	}
+	inputSchema, inputOK := surface.Tools[1].Tool.InputSchema.(json.RawMessage)
+	outputSchema, outputOK := surface.Tools[1].Tool.OutputSchema.(json.RawMessage)
+	if !inputOK || !outputOK || !json.Valid(inputSchema) || !json.Valid(outputSchema) ||
+		rejectReadyDuplicateJSONKeys(inputSchema) != nil ||
+		rejectReadyDuplicateJSONKeys(outputSchema) != nil ||
+		surface.Tools[1].Tool.Annotations == nil || !surface.Tools[1].Tool.Annotations.ReadOnlyHint ||
+		surface.Tools[1].Tool.Annotations.OpenWorldHint == nil ||
+		*surface.Tools[1].Tool.Annotations.OpenWorldHint {
+		t.Fatalf("memory tool contract=%+v", surface.Tools[1].Tool)
+	}
+	result, err := surface.Tools[1].Handler(context.Background(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{
+			"memory_id":"018f0000-0000-7000-8000-000000000401",
+			"brain_id":"018f0000-0000-7000-8000-000000000004",
+			"actor_id":"018f0000-0000-7000-8000-000000000002",
+			"grant_id":"018f0000-0000-7000-8000-000000000003",
+			"valid_at":"2026-07-21T10:00:00.000000Z",
+			"recorded_at":"2026-07-21T11:00:00.000000Z"
+		}`)},
+	})
+	if err != nil || status.calls != 1 || result == nil || len(result.Content) != 1 {
+		t.Fatalf("memory_explain=%+v,%v calls=%d", result, err, status.calls)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	if string(encoded) != `{"effective":true,"memory_id":"018f0000-0000-7000-8000-000000000401"}` {
+		t.Fatalf("structured=%s", encoded)
+	}
+	if status.input.MemoryID != memoryExplainMemoryID || status.input.BrainID != memoryExplainBrainID ||
+		status.input.ActorID != memoryExplainActorID || status.input.GrantID != memoryExplainGrantID ||
+		status.input.ValidAt != memoryExplainValidAt || status.input.RecordedAt != memoryExplainRecordedAt {
+		t.Fatalf("input=%+v", status.input)
+	}
+	for name, arguments := range map[string]json.RawMessage{
+		"duplicate": json.RawMessage(`{"memory_id":"018f0000-0000-7000-8000-000000000401","memory_id":"018f0000-0000-7000-8000-000000000401","brain_id":"018f0000-0000-7000-8000-000000000004","actor_id":"018f0000-0000-7000-8000-000000000002","grant_id":"018f0000-0000-7000-8000-000000000003","valid_at":"2026-07-21T10:00:00.000000Z","recorded_at":"2026-07-21T11:00:00.000000Z"}`),
+		"unknown":   json.RawMessage(`{"memory_id":"x","unknown":true}`),
+		"missing":   json.RawMessage(`{}`),
+		"unsafe":    json.RawMessage(`{"memory_id":"../../status","brain_id":"018f0000-0000-7000-8000-000000000004","actor_id":"018f0000-0000-7000-8000-000000000002","grant_id":"018f0000-0000-7000-8000-000000000003","valid_at":"2026-07-21T10:00:00.000000Z","recorded_at":"2026-07-21T11:00:00.000000Z"}`),
+	} {
+		if rejected, callErr := surface.Tools[1].Handler(context.Background(), &mcp.CallToolRequest{
+			Params: &mcp.CallToolParamsRaw{Arguments: arguments},
+		}); rejected != nil || callErr == nil {
+			t.Fatalf("%s=%+v,%v", name, rejected, callErr)
+		}
+	}
+}
+
+func TestMEM002ReadyMemoryHandlerFailsClosedOnCoreRegressionOrAmbiguousOutput(t *testing.T) {
+	t.Parallel()
+	status := &coreMemoryStub{
+		coreStatusStub: coreStatusStub{ready: true},
+		response:       json.RawMessage(`{"memory_id":"first","memory_id":"second"}`),
+	}
+	provider, err := newCoreReadySurface("installation", status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface, err := provider.ReadySurface(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: json.RawMessage(`{
+		"memory_id":"018f0000-0000-7000-8000-000000000401",
+		"brain_id":"018f0000-0000-7000-8000-000000000004",
+		"actor_id":"018f0000-0000-7000-8000-000000000002",
+		"grant_id":"018f0000-0000-7000-8000-000000000003",
+		"valid_at":"2026-07-21T10:00:00.000000Z",
+		"recorded_at":"2026-07-21T11:00:00.000000Z"
+	}`)}}
+	if result, callErr := surface.Tools[1].Handler(context.Background(), request); result != nil || callErr == nil {
+		t.Fatalf("ambiguous output=%+v,%v", result, callErr)
+	}
+	status.response = json.RawMessage(`[]`)
+	if result, callErr := surface.Tools[1].Handler(context.Background(), request); result != nil || callErr == nil {
+		t.Fatalf("non-object output=%+v,%v", result, callErr)
+	}
+	status.response = json.RawMessage(`{"memory_id":"safe"}`)
+	status.err = errors.New("private core error")
+	if result, callErr := surface.Tools[1].Handler(context.Background(), request); result != nil || callErr == nil ||
+		callErr.Error() != "memory explanation is unavailable" {
+		t.Fatalf("private error=%+v,%v", result, callErr)
+	}
+	status.err = nil
+	status.ready = false
+	if result, callErr := surface.Tools[1].Handler(context.Background(), request); result != nil || callErr == nil {
+		t.Fatalf("regressed core=%+v,%v", result, callErr)
 	}
 }
 
@@ -197,6 +308,31 @@ type coreStatusStub struct {
 	ready bool
 	err   error
 	calls int
+}
+
+type coreMemoryStub struct {
+	coreStatusStub
+	response json.RawMessage
+	input    memoryExplainInput
+	calls    int
+	err      error
+}
+
+func (s *coreMemoryStub) ExplainMemory(
+	_ context.Context,
+	memoryID string,
+	brainID string,
+	actorID string,
+	grantID string,
+	validAt string,
+	recordedAt string,
+) (json.RawMessage, error) {
+	s.calls++
+	s.input = memoryExplainInput{
+		MemoryID: memoryID, BrainID: brainID, ActorID: actorID, GrantID: grantID,
+		ValidAt: validAt, RecordedAt: recordedAt,
+	}
+	return append(json.RawMessage(nil), s.response...), s.err
 }
 
 type managedRuntimeRemovalStub struct {

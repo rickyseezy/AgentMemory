@@ -648,7 +648,7 @@ async def _insert_memory(
     domain_event_id = str(uuid7())
     revision_id = str(uuid7())
     content_json = _canonical_json({"statement": memory.statement}).decode()
-    provenance_json = _memory_provenance_json(memory, commit)
+    provenance_json = _memory_provenance_json(memory)
     await connection.execute(
         text(
             "INSERT INTO memory_revisions "
@@ -706,7 +706,7 @@ async def _insert_memory_domain_event(
 ) -> None:
     now = _micros(memory.recorded_from)
     content_json = _canonical_json({"statement": memory.statement}).decode()
-    provenance_json = _memory_provenance_json(memory, commit)
+    provenance_json = _memory_provenance_json(memory)
     event_json = _canonical_json(
         {
             "classification": memory.classification,
@@ -721,6 +721,17 @@ async def _insert_memory_domain_event(
             "status": memory.status.value,
         }
     ).decode()
+    payload = event_json.encode()
+    source_digest = hashlib.sha256(
+        _canonical_json(
+            {
+                "content_sha256": memory.content_sha256,
+                "created_by_event": memory.created_by_event,
+                "memory_id": memory.memory_id,
+                "provenance_sha256": memory.provenance.provenance_sha256,
+            }
+        )
+    ).digest()
     await connection.execute(
         text(
             "INSERT INTO domain_events "
@@ -728,12 +739,18 @@ async def _insert_memory_domain_event(
             "payload_json,payload_hash,source_digest,missing_dependency,occurred_at,recorded_at,"
             "schema_version,aggregate_type,aggregate_id,aggregate_version,event_type,event_json,"
             "correlation_id,causation_id) VALUES "
-            "(:event_id,:brain,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,:now,:now,1,'memory',"
-            ":memory,1,'MemoryActivated',:event_json,:correlation,:causation)"
+            "(:event_id,:brain,'graph',:stable,'memory',:target,:payload,:payload_hash,"
+            ":source_digest,NULL,:now,:now,2,'memory',:memory,1,'MemoryProjected',"
+            ":event_json,:correlation,:causation)"
         ),
         {
             "event_id": event_id,
             "brain": memory.scope.brain_id,
+            "stable": memory.memory_id,
+            "target": hashlib.sha256(memory.memory_id.encode()).digest(),
+            "payload": event_json,
+            "payload_hash": hashlib.sha256(payload).digest(),
+            "source_digest": source_digest,
             "now": now,
             "memory": memory.memory_id,
             "event_json": event_json,
@@ -846,24 +863,8 @@ async def _insert_audit(
     )
 
 
-def _memory_provenance_json(memory: Memory, commit: ConsolidationCommit) -> str:
-    return _canonical_json(
-        {
-            "created_by_event": memory.created_by_event,
-            "evidence_ids": list(memory.evidence_ids),
-            "extractor": {
-                "extractor_id": memory.extractor.extractor_id,
-                "extractor_version": memory.extractor.extractor_version,
-                "fingerprint": memory.extractor.fingerprint,
-                "model_id": memory.extractor.model_id,
-                "model_revision": memory.extractor.model_revision,
-                "output_schema": memory.extractor.output_schema,
-            },
-            "promotion_policy_version": memory.promotion_policy_version,
-            "source_task_id": memory.source_task_id,
-            "evidence_watermark_sha256": commit.evidence_watermark_sha256,
-        }
-    ).decode()
+def _memory_provenance_json(memory: Memory) -> str:
+    return _canonical_json(dict(memory.provenance.canonical)).decode()
 
 
 def _result(row: RowMapping, idempotency_key: str) -> ConsolidationResult:

@@ -75,8 +75,14 @@ async def _database_commit(store: SqliteCoreStore, key_file: Path) -> Consolidat
         source.extractor_input_sha256,
     ).candidates[0]
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
-    memory = candidate.activate(decision, source, identity, NOW + timedelta(seconds=2))
     original = _commit()
+    memory = candidate.activate(
+        decision,
+        source,
+        identity,
+        original.actor_id,
+        NOW + timedelta(seconds=2),
+    )
     return replace(
         original,
         idempotency_key=consolidation_idempotency_key(

@@ -2226,6 +2226,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-002 — Preserve provenance and temporal metadata
 
+**Implementation record:** [`docs/implementation/MEM-002.md`](docs/implementation/MEM-002.md) and
+[`docs/runbooks/MEM-002-PROVENANCE.md`](docs/runbooks/MEM-002-PROVENANCE.md).
+
 **User story:** As a user, I can see who or what created a memory and when it was valid.
 
 **Acceptance criteria**
@@ -2238,8 +2241,11 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 - MemoryProvenance is an immutable value object required by Memory.create.
 - MemoryRepository persists aggregate metadata canonically and emits MemoryProjected for Neo4j.
 - ExplainMemoryQuery joins only authorized evidence and reports missing/purged evidence explicitly.
+- The installed MCP advertises the read-only, closed-world `memory_explain` tool only when the
+  authenticated literal-loopback Core client implements the explanation capability; it validates
+  all six coordinates, rechecks live readiness, and exposes the complete response schema.
 
-**Mandatory tests:** creation invariants; repository round-trip; temporal boundaries; purged evidence; authorization; schema migration.
+**Mandatory tests:** creation invariants; repository round-trip; temporal boundaries; purged evidence; authorization; schema migration; strict HTTP and MCP contracts; duplicate-key, malformed-output, cancellation, and Core-readiness failures.
 
 **Why:** Provenance and bitemporal state make memory trustworthy rather than merely searchable.
 

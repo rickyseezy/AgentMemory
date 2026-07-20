@@ -31,6 +31,7 @@ BRAIN_ID = "018f0000-0000-7000-8000-000000000004"
 PROJECT_ID = "018f0000-0000-7000-8000-000000000010"
 REPOSITORY_ID = "018f0000-0000-7000-8000-000000000020"
 TASK_ID = "018f0000-0000-7000-8000-000000000201"
+ACTOR_ID = "018f0000-0000-7000-8000-000000000101"
 EVENT_ONE = "018f0000-0000-7000-8000-000000000301"
 EVENT_TWO = "018f0000-0000-7000-8000-000000000302"
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
@@ -168,7 +169,10 @@ def _preference_without_explicit_evidence(source: TaskEvidenceBundle) -> bytes:
 
 
 _MEMORY_MUTATIONS: list[tuple[Callable[[Memory], Memory], str]] = [
-    (lambda item: replace(item, evidence_ids=()), "evidence_ids"),
+    (
+        lambda item: replace(item, provenance=replace(item.provenance, evidence_ids=())),
+        "provenance.evidence_ids",
+    ),
     (lambda item: replace(item, aggregate_version=2), "aggregate_version"),
     (lambda item: replace(item, classification="unknown"), "classification"),
     (lambda item: replace(item, recorded_to=item.recorded_from), "recorded_to"),
@@ -244,7 +248,7 @@ def test_promotion_policy_accepts_supported_candidate_with_class_specific_thresh
     ).candidates[0]
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
     assert decision.disposition is PromotionDisposition.PROMOTE
-    memory = candidate.activate(decision, source, extractor(), NOW + timedelta(seconds=2))
+    memory = candidate.activate(decision, source, extractor(), ACTOR_ID, NOW + timedelta(seconds=2))
     assert memory.status.value == "active"
     assert memory.evidence_ids == (EVENT_ONE, EVENT_TWO)
     assert memory.source_task_id == TASK_ID
@@ -281,7 +285,7 @@ def test_promotion_policy_rejects_unsupported_low_confidence_and_unproven_model_
     assert decision.disposition is PromotionDisposition.REJECT
     assert decision.reason_code == reason
     with pytest.raises(MemoryValidationError):
-        candidate.activate(decision, source, extractor(), NOW)
+        candidate.activate(decision, source, extractor(), ACTOR_ID, NOW)
 
 
 def test_memory_identity_is_stable_for_same_task_watermark_extractor_and_candidate() -> None:
@@ -290,8 +294,8 @@ def test_memory_identity_is_stable_for_same_task_watermark_extractor_and_candida
         candidate_document(source), source.extractor_input_sha256
     ).candidates[0]
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
-    first = candidate.activate(decision, source, extractor(), NOW)
-    second = candidate.activate(decision, source, extractor(), NOW + timedelta(days=1))
+    first = candidate.activate(decision, source, extractor(), ACTOR_ID, NOW)
+    second = candidate.activate(decision, source, extractor(), ACTOR_ID, NOW + timedelta(days=1))
     assert first.memory_id == second.memory_id
     assert first.recorded_from != second.recorded_from
 
@@ -325,7 +329,7 @@ def test_derived_memory_inherits_maximum_classification_of_complete_extractor_in
         source.extractor_input_sha256,
     ).candidates[0]
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
-    memory = candidate.activate(decision, source, extractor(), NOW + timedelta(seconds=2))
+    memory = candidate.activate(decision, source, extractor(), ACTOR_ID, NOW + timedelta(seconds=2))
     assert source.classification == "restricted"
     assert memory.classification == "restricted"
 
@@ -343,7 +347,7 @@ def test_memory_aggregate_rejects_forged_active_snapshots(
         candidate_document(source), source.extractor_input_sha256
     ).candidates[0]
     decision = MemoryPromotionPolicy.production().evaluate(candidate, source)
-    memory = candidate.activate(decision, source, extractor(), NOW + timedelta(seconds=2))
+    memory = candidate.activate(decision, source, extractor(), ACTOR_ID, NOW + timedelta(seconds=2))
     with pytest.raises(MemoryValidationError) as failure:
         mutation(memory)
     assert failure.value.code_for(field) is not None

@@ -376,6 +376,7 @@ class MemoryCandidate:
         decision: PromotionDecision,
         source: TaskEvidenceBundle,
         extractor: ExtractorIdentity,
+        actor_id: str,
         recorded_at: datetime,
     ) -> Memory:
         """Create active memory only from a policy receipt bound to source and candidate."""
@@ -399,26 +400,32 @@ class MemoryCandidate:
             self.candidate_key,
             self.content_sha256,
         )
-        return Memory(
-            memory_id,
-            self.memory_class,
-            self.scope,
-            MemoryStatus.ACTIVE,
-            self.statement,
-            self.content_sha256,
-            self.confidence,
-            self.valid_from,
-            self.valid_to,
-            recorded_at,
-            None,
-            extractor,
-            self.evidence_ids,
-            source.task_id,
-            source.terminal_event_id,
-            source.classification,
-            source.retention_policy_id,
-            decision.policy_version,
-            1,
+        return Memory.create(
+            memory_id=memory_id,
+            memory_class=self.memory_class,
+            scope=self.scope,
+            status=MemoryStatus.ACTIVE,
+            statement=self.statement,
+            confidence=self.confidence,
+            valid_from=self.valid_from,
+            valid_to=self.valid_to,
+            recorded_from=recorded_at,
+            recorded_to=None,
+            provenance=MemoryProvenance(
+                actor_id=actor_id,
+                agent_id=extractor.extractor_id,
+                source_task_id=source.task_id,
+                created_by_event=source.terminal_event_id,
+                extractor=extractor,
+                evidence_ids=self.evidence_ids,
+                evidence_watermark_sha256=source.watermark_sha256,
+                extractor_input_sha256=source.extractor_input_sha256,
+                content_sha256=self.content_sha256,
+                promotion_policy_version=decision.policy_version,
+            ),
+            classification=source.classification,
+            retention_policy_id=source.retention_policy_id,
+            aggregate_version=1,
         )
 
 
@@ -563,6 +570,82 @@ class MemoryPromotionPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryProvenance:
+    """Immutable complete authority and derivation coordinates for one memory."""
+
+    actor_id: str
+    agent_id: str
+    source_task_id: str
+    created_by_event: str
+    extractor: ExtractorIdentity
+    evidence_ids: tuple[str, ...]
+    evidence_watermark_sha256: str
+    extractor_input_sha256: str
+    content_sha256: str
+    promotion_policy_version: str
+
+    def __post_init__(self) -> None:
+        """Reject absent, mutable, ambiguous, or unbound provenance."""
+        _require_uuid7(self.actor_id, "provenance.actor_id")
+        _require_token(self.agent_id, "provenance.agent_id")
+        if self.agent_id != self.extractor.extractor_id:
+            _invalid("provenance.agent_id", "extractor_mismatch")
+        _require_uuid7(self.source_task_id, "provenance.source_task_id")
+        _require_uuid7(self.created_by_event, "provenance.created_by_event")
+        if (
+            not self.evidence_ids
+            or len(self.evidence_ids) > _MAX_EVIDENCE_PER_CANDIDATE
+            or tuple(sorted(set(self.evidence_ids))) != self.evidence_ids
+        ):
+            _invalid("provenance.evidence_ids", "not_canonical")
+        for event_id in self.evidence_ids:
+            _require_uuid7(event_id, "provenance.evidence_ids")
+        _require_digest(
+            self.evidence_watermark_sha256,
+            "provenance.evidence_watermark_sha256",
+        )
+        _require_digest(
+            self.extractor_input_sha256,
+            "provenance.extractor_input_sha256",
+        )
+        _require_digest(self.content_sha256, "provenance.content_sha256")
+        _require_token(
+            self.promotion_policy_version,
+            "provenance.promotion_policy_version",
+        )
+
+    @property
+    def canonical(self) -> Mapping[str, JsonValue]:
+        """Return the closed language-neutral provenance document."""
+        return MappingProxyType(
+            {
+                "actor_id": self.actor_id,
+                "agent_id": self.agent_id,
+                "content_sha256": self.content_sha256,
+                "created_by_event": self.created_by_event,
+                "evidence_ids": list(self.evidence_ids),
+                "evidence_watermark_sha256": self.evidence_watermark_sha256,
+                "extractor": {
+                    "extractor_id": self.extractor.extractor_id,
+                    "extractor_version": self.extractor.extractor_version,
+                    "fingerprint": self.extractor.fingerprint,
+                    "model_id": self.extractor.model_id,
+                    "model_revision": self.extractor.model_revision,
+                    "output_schema": self.extractor.output_schema,
+                },
+                "extractor_input_sha256": self.extractor_input_sha256,
+                "promotion_policy_version": self.promotion_policy_version,
+                "source_task_id": self.source_task_id,
+            }
+        )
+
+    @property
+    def provenance_sha256(self) -> str:
+        """Fingerprint the complete immutable provenance document."""
+        return hashlib.sha256(_canonical_json(dict(self.canonical))).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class Memory:
     """One evidence-backed active long-term memory aggregate snapshot."""
 
@@ -577,14 +660,50 @@ class Memory:
     valid_to: datetime | None
     recorded_from: datetime
     recorded_to: datetime | None
-    extractor: ExtractorIdentity
-    evidence_ids: tuple[str, ...]
-    source_task_id: str
-    created_by_event: str
+    provenance: MemoryProvenance
     classification: str
     retention_policy_id: str
-    promotion_policy_version: str
     aggregate_version: int
+
+    @classmethod
+    def create(  # noqa: PLR0913 -- Factory names every mandatory aggregate coordinate.
+        cls,
+        *,
+        memory_id: str,
+        memory_class: MemoryClass,
+        scope: MemoryScope,
+        status: MemoryStatus,
+        statement: str,
+        confidence: ConfidenceDimensions,
+        valid_from: datetime,
+        valid_to: datetime | None,
+        recorded_from: datetime,
+        recorded_to: datetime | None,
+        provenance: MemoryProvenance | None,
+        classification: str,
+        retention_policy_id: str,
+        aggregate_version: int,
+    ) -> Memory:
+        """Activate only a memory carrying complete immutable provenance."""
+        if provenance is None:
+            _invalid("provenance", "required")
+        return cls(
+            memory_id,
+            memory_class,
+            scope,
+            status,
+            statement,
+            provenance.content_sha256,
+            confidence,
+            valid_from,
+            valid_to,
+            recorded_from,
+            recorded_to,
+            provenance,
+            classification,
+            retention_policy_id,
+            aggregate_version,
+        )
 
     def __post_init__(self) -> None:
         """Defend active snapshots against forged identity or missing provenance."""
@@ -628,22 +747,38 @@ class Memory:
 
     def _validate_provenance(self) -> None:
         """Validate every mandatory source, policy, and aggregate coordinate."""
-        _require_uuid7(self.source_task_id, "source_task_id")
-        _require_uuid7(self.created_by_event, "created_by_event")
-        if (
-            not self.evidence_ids
-            or len(self.evidence_ids) > _MAX_EVIDENCE_PER_CANDIDATE
-            or tuple(sorted(set(self.evidence_ids))) != self.evidence_ids
-        ):
-            _invalid("evidence_ids", "not_canonical")
-        for event_id in self.evidence_ids:
-            _require_uuid7(event_id, "evidence_ids")
+        if self.content_sha256 != self.provenance.content_sha256:
+            _invalid("content_sha256", "provenance_mismatch")
         if self.classification not in _CLASSIFICATION_ORDER:
             _invalid("classification", "unsupported")
         _require_token(self.retention_policy_id, "retention_policy_id")
-        _require_token(self.promotion_policy_version, "promotion_policy_version")
         if self.aggregate_version != 1:
             _invalid("aggregate_version", "unsupported")
+
+    @property
+    def extractor(self) -> ExtractorIdentity:
+        """Expose the immutable extractor coordinate for existing consumers."""
+        return self.provenance.extractor
+
+    @property
+    def evidence_ids(self) -> tuple[str, ...]:
+        """Expose exact evidence lineage without duplicating mutable state."""
+        return self.provenance.evidence_ids
+
+    @property
+    def source_task_id(self) -> str:
+        """Expose the canonical source task coordinate."""
+        return self.provenance.source_task_id
+
+    @property
+    def created_by_event(self) -> str:
+        """Expose the canonical creation event coordinate."""
+        return self.provenance.created_by_event
+
+    @property
+    def promotion_policy_version(self) -> str:
+        """Expose the immutable deterministic promotion policy coordinate."""
+        return self.provenance.promotion_policy_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -825,7 +960,10 @@ class ConsolidationCommit:
             memory.source_task_id != self.task_id
             or memory.scope != self.scope
             or memory.extractor != self.extractor
+            or memory.provenance.actor_id != self.actor_id
             or memory.created_by_event != self.source_terminal_event_id
+            or memory.provenance.evidence_watermark_sha256 != self.evidence_watermark_sha256
+            or memory.provenance.extractor_input_sha256 != self.extractor_input_sha256
             or memory.classification != self.classification
             or memory.retention_policy_id != self.retention_policy_id
             or memory.promotion_policy_version != self.promotion_policy_version

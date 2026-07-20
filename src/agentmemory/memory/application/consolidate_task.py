@@ -144,7 +144,15 @@ class ConsolidateTaskHandler:
         for candidate in batch.candidates:
             decision = self.promotion_policy.evaluate(candidate, source)
             if decision.disposition is PromotionDisposition.PROMOTE:
-                memories.append(candidate.activate(decision, source, command.extractor, now))
+                memories.append(
+                    candidate.activate(
+                        decision,
+                        source,
+                        command.extractor,
+                        command.actor_id,
+                        now,
+                    )
+                )
             else:
                 rejections.append(
                     CandidateRejection(

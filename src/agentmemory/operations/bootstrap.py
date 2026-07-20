@@ -126,6 +126,10 @@ from agentmemory.ingestion.application.ordered_replay import (
 )
 from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.backpressure import QueueLimits, RetryPolicy
+from agentmemory.memory.adapters.inbound.http_api import (
+    create_contract_memory_router,
+    create_memory_router,
+)
 from agentmemory.memory.adapters.outbound.local_extractor import (
     LocalMemoryCandidateHttpAdapter,
 )
@@ -138,11 +142,13 @@ from agentmemory.memory.adapters.outbound.sqlite_consolidation import (
 from agentmemory.memory.adapters.outbound.sqlite_lineage_backfill import (
     SqliteTaskLineageBackfillRepository,
 )
+from agentmemory.memory.adapters.outbound.sqlite_provenance import SqliteMemoryRepository
 from agentmemory.memory.adapters.outbound.sqlite_work import (
     SqliteMemoryConsolidationWorkRepository,
 )
 from agentmemory.memory.application.consolidate_task import ConsolidateTaskHandler
 from agentmemory.memory.application.consolidation_worker import MemoryConsolidationWorker
+from agentmemory.memory.application.explain_memory import ExplainMemoryHandler
 from agentmemory.memory.application.lineage_backfill import TaskLineageBackfillWorker
 from agentmemory.memory.domain.consolidation import ExtractorIdentity, MemoryPromotionPolicy
 from agentmemory.memory.domain.work import MemoryWorkRetryPolicy
@@ -494,6 +500,13 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         authenticator,
         resolved.installation_root_key_file,
     )
+    application.include_router(
+        create_memory_router(
+            authenticator,
+            ExplainMemoryHandler(SqliteMemoryRepository(store), clock),
+            clock,
+        )
+    )
     _include_ingestion_runtime_routers(
         application,
         store,
@@ -546,6 +559,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
+            create_contract_memory_router(),
             create_contract_ordered_replay_router(),
             create_contract_backpressure_router(),
         )

@@ -16,7 +16,7 @@ before starting an agent host. Users do not configure SQLite, AES, Docker, or cr
 |---|---|---|
 | `accepted` | Event, outbox, and audit committed | Continue immediately |
 | `duplicate` | Exact durable retry exists | Continue; acknowledge local copy |
-| `deferred` | Core unavailable; encrypted spool committed | Continue; ADP-005 reconciles later |
+| `deferred` | Core unavailable; encrypted spool committed | Continue; the ADP-005 worker reconciles automatically |
 | `spool_full` | Bounded capacity exhausted | Warn without content; restore Core/reconcile, do not delete unacknowledged items |
 | `spool_unavailable` | Spool key/path/disk/integrity failure | Warn without content; stop claiming capture durability |
 | `invalid` | Redaction/schema/domain validation failed | Quarantine safe metadata; fix adapter, never force-insert |
@@ -40,7 +40,9 @@ repair and must not be bypassed by changing claimed IDs or manifests.
 
 - Verify owner-only non-symlink directory and `0600` regular key/file ownership.
 - Verify the exact protected spool key is available; never replace it while pending ciphertext exists.
-- Check bounded count/byte use and Core recovery. Only ADP-005 may delete accepted/duplicate IDs.
+- Check bounded count/byte use and Core recovery. Follow
+  [`ADP-005-SPOOL-RECOVERY.md`](ADP-005-SPOOL-RECOVERY.md); only its accepted/duplicate path may delete
+  local ciphertext.
 - AAD/tag failure means tamper, corruption, or wrong key. Stop reconciliation and preserve safe hashes and
   file metadata for incident handling. Never return partially decrypted bytes.
 - Back up/restore rules are governed by OPS stories; copying a live spool manually is unsupported.

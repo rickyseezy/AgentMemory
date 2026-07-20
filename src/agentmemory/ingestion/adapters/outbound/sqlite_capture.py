@@ -227,7 +227,8 @@ class SqliteAgentEventRepository:
             (
                 await self._connection.execute(
                     text(
-                        "SELECT e.payload_hash, e.ingested_at, x.canonical_sha256 "
+                        "SELECT e.payload_hash, e.ingested_at, x.canonical_sha256, "
+                        "x.clock_skew_microseconds "
                         "FROM agent_events AS e JOIN agent_event_envelopes AS x "
                         "ON x.event_id = e.event_id WHERE e.event_id = :event_id"
                     ),
@@ -247,6 +248,7 @@ class SqliteAgentEventRepository:
                 event.event_id,
                 AppendDisposition.DUPLICATE,
                 int(existing["ingested_at"]),
+                int(existing["clock_skew_microseconds"]),
             )
         now = _unix_microseconds(admitted.ingested_at)
         try:
@@ -257,7 +259,12 @@ class SqliteAgentEventRepository:
             raise IngestionConflictError(_ERR_EVENT_CONFLICT) from error
         except SQLAlchemyError as error:
             raise IngestionDependencyError(_ERR_ENQUEUE) from error
-        return AppendAgentEventResult(event.event_id, AppendDisposition.ACCEPTED, now)
+        return AppendAgentEventResult(
+            event.event_id,
+            AppendDisposition.ACCEPTED,
+            now,
+            admitted.clock_skew_microseconds,
+        )
 
     async def _insert_event(
         self,

@@ -55,6 +55,8 @@ def config_document(credential_file: Path) -> dict[str, object]:
         "repository_id": REPOSITORY_ID,
         "retention_policy_id": "default",
         "session_id": SESSION_ID,
+        "spool_database": str(credential_file.parent / "spool.sqlite3"),
+        "spool_key_file": str(credential_file.parent / "spool-key"),
         "task_id": context().task_id,
     }
 
@@ -121,6 +123,7 @@ async def test_http_adapter_registers_complete_manifest_and_appends_canonical_ev
             json={
                 "event_id": event.event_id,
                 "ingested_at_microseconds": 42,
+                "clock_skew_microseconds": -3,
                 "status": "accepted",
             },
         )
@@ -132,6 +135,7 @@ async def test_http_adapter_registers_complete_manifest_and_appends_canonical_ev
 
     assert result.disposition is AppendDisposition.ACCEPTED
     assert result.ingested_at_microseconds == 42
+    assert result.clock_skew_microseconds == -3
     registration = json.loads(requests[0].content)
     matrix = registration["manifest"]["evidence_availability"]
     assert len(matrix) == len(context().manifest.evidence_availability)

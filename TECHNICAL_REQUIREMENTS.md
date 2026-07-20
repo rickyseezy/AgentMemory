@@ -2017,6 +2017,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ADP-005 — Buffer and reconcile activity during local service interruption
 
+**Implementation record:** [`docs/implementation/ADP-005.md`](docs/implementation/ADP-005.md) and
+[`docs/runbooks/ADP-005-SPOOL-RECOVERY.md`](docs/runbooks/ADP-005-SPOOL-RECOVERY.md).
+
 **User story:** As a developer, my captured session survives a stopped, restarting, upgrading, or temporarily unavailable local core.
 
 **Acceptance criteria**

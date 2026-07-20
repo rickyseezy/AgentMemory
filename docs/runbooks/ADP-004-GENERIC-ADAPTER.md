@@ -12,6 +12,8 @@ The launcher writes one regular, owner-only (`0600`) JSON file with exactly thes
 {
   "endpoint": "http://127.0.0.1:8765",
   "credential_file": "/protected/session/credential",
+  "spool_database": "/protected/session/spool.sqlite3",
+  "spool_key_file": "/protected/session/spool-key",
   "brain_id": "UUIDv7",
   "principal_id": "UUIDv7",
   "project_id": "UUIDv7",
@@ -98,8 +100,9 @@ summary input so the redactor runs before canonical event creation.
 - A normal child returns its exit status after all capture acknowledgements commit.
 - Timeout returns exit code 124 and records the process/session as `abrupt`.
 - Invalid configuration returns exit code 2 and a type-only stderr diagnostic.
-- A stopped/unavailable Core fails the operation without writing plaintext fallback state. ADP-005
-  adds the bounded encrypted offline spool/reconciliation path.
+- A stopped/unavailable Core returns `deferred` only after the exact redacted canonical event commits to
+  the ADP-005 encrypted spool. The launcher-supervised worker owns automatic replay; see
+  [`ADP-005-SPOOL-RECOVERY.md`](ADP-005-SPOOL-RECOVERY.md).
 
 ## Triage
 

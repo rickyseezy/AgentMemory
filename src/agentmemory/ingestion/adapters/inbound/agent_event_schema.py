@@ -228,6 +228,14 @@ class AgentEventEnvelopeV1(BaseModel):
         )
 
 
+class AgentEventBatchV1(BaseModel):
+    """Strict bounded replay batch accepted by the local Core."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    events: tuple[AgentEventEnvelopeV1, ...] = Field(min_length=1, max_length=100)
+
+
 def parse_agent_event_json(raw: bytes) -> AgentEvent:
     """Validate strict JSON/schema/domain invariants at any producer or daemon boundary."""
     _preflight_strict_json(raw)
@@ -243,6 +251,23 @@ def parse_agent_event_json(raw: bytes) -> AgentEvent:
         )
         raise IngestionValidationError(violations) from error
     return envelope.to_domain()
+
+
+def parse_agent_event_batch_json(raw: bytes) -> tuple[AgentEvent, ...]:
+    """Validate a bounded batch completely before any item can be persisted."""
+    _preflight_strict_json(raw)
+    try:
+        batch = AgentEventBatchV1.model_validate_json(raw, strict=True)
+    except ValidationError as error:
+        violations = tuple(
+            FieldViolation(
+                ".".join(str(part) for part in item["loc"]) or "$",
+                str(item["type"]),
+            )
+            for item in error.errors(include_input=False, include_url=False)
+        )
+        raise IngestionValidationError(violations) from error
+    return tuple(envelope.to_domain() for envelope in batch.events)
 
 
 def agent_event_json_schema() -> dict[str, Any]:

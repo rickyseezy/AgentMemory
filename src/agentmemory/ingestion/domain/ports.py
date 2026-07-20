@@ -34,6 +34,11 @@ if TYPE_CHECKING:
         TranscriptFormat,
         WorkspaceSnapshot,
     )
+    from agentmemory.ingestion.domain.spool_reconciliation import (
+        SpoolAcknowledgement,
+        SpoolRecord,
+        SpoolUploadResult,
+    )
 
 NativeEventT_contra = TypeVar("NativeEventT_contra", contravariant=True)
 
@@ -103,6 +108,61 @@ class ProcessExecutor(Protocol):
         timeout_seconds: float | None,
     ) -> ProcessExecutionResult:
         """Return bounded output and explicit normal/abrupt completion."""
+        ...
+
+
+class OfflineSpoolRepository(Protocol):
+    """Durable host-side queue, lease, watermark, and ciphertext-erasure boundary."""
+
+    async def try_acquire_lease(
+        self,
+        owner: str,
+        acquired_at_microseconds: int,
+        expires_at_microseconds: int,
+    ) -> bool:
+        """Acquire the singleton recovery lease or return False while another owner is live."""
+        ...
+
+    async def pending(
+        self,
+        *,
+        maximum_items: int,
+        maximum_bytes: int,
+    ) -> tuple[SpoolRecord, ...]:
+        """Return one bounded deterministic batch without mutating queue state."""
+        ...
+
+    async def acknowledge(
+        self,
+        owner: str,
+        acknowledgements: tuple[SpoolAcknowledgement, ...],
+        acknowledged_at_microseconds: int,
+    ) -> int:
+        """Erase only the owner's contiguous durable prefixes and advance watermarks atomically."""
+        ...
+
+    async def count_pending(self) -> int:
+        """Return a content-free pending count for bounded recovery scheduling."""
+        ...
+
+    async def release_lease(self, owner: str) -> None:
+        """Release only a lease held by the exact owner."""
+        ...
+
+
+class SpoolBatchUploader(Protocol):
+    """Recovered Core boundary for one bounded per-item upload batch."""
+
+    async def upload(self, records: tuple[SpoolRecord, ...]) -> tuple[SpoolUploadResult, ...]:
+        """Return exactly one content-free durable/retry/rejection result per record."""
+        ...
+
+
+class RecoveryScheduler(Protocol):
+    """Cancellation-aware retry delay owned by the launcher boundary."""
+
+    async def wait(self, seconds: float) -> bool:
+        """Wait for the delay or return True when launcher shutdown was requested."""
         ...
 
 

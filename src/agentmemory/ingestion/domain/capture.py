@@ -88,3 +88,4 @@ class AppendAgentEventResult:
     event_id: str
     disposition: AppendDisposition
     ingested_at_microseconds: int
+    clock_skew_microseconds: int = 0

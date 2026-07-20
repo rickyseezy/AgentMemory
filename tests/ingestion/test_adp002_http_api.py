@@ -67,6 +67,7 @@ async def test_endpoint_authenticates_and_returns_only_durable_capture_metadata(
         "event_id": EVENT_ID,
         "status": "accepted",
         "ingested_at_microseconds": 42,
+        "clock_skew_microseconds": 0,
     }
     assert auth.values == ["Bearer token"]
     assert handler.calls == 1

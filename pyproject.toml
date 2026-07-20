@@ -31,6 +31,7 @@ agentmemory-healthcheck = "agentmemory.operations.infrastructure.entrypoints:hea
 agentmemory-openapi = "agentmemory.operations.infrastructure.entrypoints:export_openapi"
 agentmemory-provider = "agentmemory.providers.infrastructure.entrypoints:main"
 agentmemory-generic = "agentmemory.ingestion.infrastructure.generic_cli:main"
+agentmemory-spool-worker = "agentmemory.ingestion.infrastructure.spool_recovery_cli:main"
 
 [dependency-groups]
 dev = [
@@ -173,10 +174,13 @@ only_mutate = [
   "*ingestion/domain/adapter_capability.py",
   "*ingestion/domain/generic_adapter.py",
   "*ingestion/domain/capture.py",
+  "*ingestion/domain/spool_reconciliation.py",
   "*ingestion/application/adapter_capabilities.py",
   "*ingestion/application/generic_adapter.py",
   "*ingestion/application/append_agent_event.py",
   "*ingestion/application/capture_agent_event.py",
+  "*ingestion/application/reconcile_spool.py",
+  "*ingestion/application/spool_worker.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
@@ -197,6 +201,8 @@ pytest_add_cli_args_test_selection = [
   "tests/ingestion/test_agent_event_schema.py",
   "tests/ingestion/test_adp002_envelope_crypto.py",
   "tests/ingestion/test_adp002_append_application.py",
+  "tests/ingestion/test_adp005_reconciliation_domain_application.py",
+  "tests/ingestion/test_adp005_recovery_worker.py",
 ]
 mutate_only_covered_lines = false
 use_setproctitle = false

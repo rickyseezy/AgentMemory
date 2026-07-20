@@ -236,12 +236,14 @@ async def test_registration_permission_override_is_effective_not_manifest_mutati
         (CaptureCapability.SESSION_LIFECYCLE,),
     )
     result = await register.execute(command)
-    assert result.registration.manifest.availability_for(
-        CaptureCapability.SESSION_LIFECYCLE
-    ).status is CaptureMethod.NATIVE
-    assert result.registration.availability_for(
-        CaptureCapability.SESSION_LIFECYCLE
-    ).status is CaptureMethod.PERMISSION_DENIED
+    assert (
+        result.registration.manifest.availability_for(CaptureCapability.SESSION_LIFECYCLE).status
+        is CaptureMethod.NATIVE
+    )
+    assert (
+        result.registration.availability_for(CaptureCapability.SESSION_LIFECYCLE).status
+        is CaptureMethod.PERMISSION_DENIED
+    )
     assert command.request_sha256 == (
         "0264555538880081e83f7955a9e3bfb3929905ffbf34e48859da9711c7053b0c"
     )
@@ -403,9 +405,7 @@ async def test_query_handlers_expose_evidence_and_bounded_warnings_without_host_
     )
     queries = _QueryRepository((registration,), (warning,))
 
-    listed = await ListAdapterCapabilitiesHandler(queries).execute(
-        ListAdapterCapabilitiesQuery(1)
-    )
+    listed = await ListAdapterCapabilitiesHandler(queries).execute(ListAdapterCapabilitiesQuery(1))
     found = await GetAdapterCapabilitiesHandler(queries).execute(
         GetAdapterCapabilitiesQuery("agentmemory.codex", "1.0.0", 0)
     )
@@ -413,9 +413,10 @@ async def test_query_handlers_expose_evidence_and_bounded_warnings_without_host_
         GetAdapterCapabilitiesQuery("agentmemory.codex", "9.0.0", 1)
     )
 
-    assert listed[0].registration.availability_for(
-        CaptureCapability.SESSION_LIFECYCLE
-    ).status is CaptureMethod.NATIVE
+    assert (
+        listed[0].registration.availability_for(CaptureCapability.SESSION_LIFECYCLE).status
+        is CaptureMethod.NATIVE
+    )
     assert listed[0].warnings == (warning,)
     assert found is not None
     assert found.warnings == ()

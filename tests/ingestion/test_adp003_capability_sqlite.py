@@ -89,9 +89,7 @@ def test_migration_rejects_conflicting_legacy_adapter_versions_before_ddl(
                 configuration,
                 "0008_adp003_adapter_capabilities",
             )
-        columns = {
-            item["name"] for item in inspect(engine).get_columns("agent_adapter_manifests")
-        }
+        columns = {item["name"] for item in inspect(engine).get_columns("agent_adapter_manifests")}
         assert "manifest_format" not in columns
     finally:
         engine.dispose()
@@ -143,24 +141,16 @@ async def test_registration_observation_warning_audit_and_idempotency_are_atomic
         async with store.engine.connect() as connection:
             counts = (
                 (
+                    await connection.execute(text("SELECT COUNT(*) FROM agent_adapter_manifests"))
+                ).scalar_one(),
+                (
                     await connection.execute(
-                        text("SELECT COUNT(*) FROM agent_adapter_manifests")
+                        text("SELECT COUNT(*) FROM agent_adapter_capability_observations")
                     )
                 ).scalar_one(),
                 (
                     await connection.execute(
-                        text(
-                            "SELECT COUNT(*) FROM "
-                            "agent_adapter_capability_observations"
-                        )
-                    )
-                ).scalar_one(),
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT COUNT(*) FROM "
-                            "agent_adapter_compatibility_warnings"
-                        )
+                        text("SELECT COUNT(*) FROM agent_adapter_compatibility_warnings")
                     )
                 ).scalar_one(),
                 (
@@ -172,10 +162,7 @@ async def test_registration_observation_warning_audit_and_idempotency_are_atomic
             assert counts == (1, 2, 1, 3)
             assert (
                 await connection.execute(
-                    text(
-                        "SELECT COUNT(*) FROM audit_events "
-                        "WHERE action LIKE 'agent_adapter.%'"
-                    )
+                    text("SELECT COUNT(*) FROM audit_events WHERE action LIKE 'agent_adapter.%'")
                 )
             ).scalar_one() == 3
 
@@ -218,9 +205,7 @@ async def test_concurrent_version_registration_is_exactly_once(tmp_path: Path) -
     try:
         results = await asyncio.gather(
             *(
-                handler.execute(
-                    RegisterAgentAdapterCommand(f"register-{index}", configured)
-                )
+                handler.execute(RegisterAgentAdapterCommand(f"register-{index}", configured))
                 for index in range(8)
             )
         )

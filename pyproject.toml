@@ -30,6 +30,7 @@ agentmemory-migrate = "agentmemory.operations.infrastructure.entrypoints:migrate
 agentmemory-healthcheck = "agentmemory.operations.infrastructure.entrypoints:healthcheck"
 agentmemory-openapi = "agentmemory.operations.infrastructure.entrypoints:export_openapi"
 agentmemory-provider = "agentmemory.providers.infrastructure.entrypoints:main"
+agentmemory-generic = "agentmemory.ingestion.infrastructure.generic_cli:main"
 
 [dependency-groups]
 dev = [
@@ -170,8 +171,10 @@ only_mutate = [
   "*identity/domain/topology.py",
   "*ingestion/domain/agent_event.py",
   "*ingestion/domain/adapter_capability.py",
+  "*ingestion/domain/generic_adapter.py",
   "*ingestion/domain/capture.py",
   "*ingestion/application/adapter_capabilities.py",
+  "*ingestion/application/generic_adapter.py",
   "*ingestion/application/append_agent_event.py",
   "*ingestion/application/capture_agent_event.py",
 ]
@@ -187,6 +190,9 @@ pytest_add_cli_args_test_selection = [
   "tests/ingestion/test_agent_event_domain.py",
   "tests/ingestion/test_adp003_capability_domain.py",
   "tests/ingestion/test_adp003_capability_application.py",
+  "tests/ingestion/test_adp004_generic_domain.py",
+  "tests/ingestion/test_adp004_transcript_and_application.py",
+  "tests/ingestion/test_adp004_observers_and_wrapper.py",
   "tests/ingestion/test_agent_event_admission.py",
   "tests/ingestion/test_agent_event_schema.py",
   "tests/ingestion/test_adp002_envelope_crypto.py",

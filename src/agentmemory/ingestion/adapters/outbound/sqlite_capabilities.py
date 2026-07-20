@@ -307,17 +307,21 @@ class SqliteAdapterCapabilityRepository:
         now: int,
     ) -> None:
         row = (
-            await self._connection.execute(
-                text(
-                    "SELECT manifest_sha256, manifest_format FROM agent_adapter_manifests "
-                    "WHERE adapter_id=:adapter_id AND adapter_version=:adapter_version"
-                ),
-                {
-                    "adapter_id": manifest.adapter_id,
-                    "adapter_version": manifest.adapter_version,
-                },
+            (
+                await self._connection.execute(
+                    text(
+                        "SELECT manifest_sha256, manifest_format FROM agent_adapter_manifests "
+                        "WHERE adapter_id=:adapter_id AND adapter_version=:adapter_version"
+                    ),
+                    {
+                        "adapter_id": manifest.adapter_id,
+                        "adapter_version": manifest.adapter_version,
+                    },
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is not None:
             exact = (
                 _bytes(row["manifest_sha256"]) == bytes.fromhex(manifest.manifest_sha256)
@@ -377,9 +381,7 @@ class SqliteAdapterCapabilityRepository:
                 "adapter_digest": bytes.fromhex(observation.adapter_digest),
                 "manifest_sha256": bytes.fromhex(observation.capability_manifest_digest),
                 "revision": observation.revision,
-                "availability_json": _encode_availability(
-                    observation.evidence_availability
-                ),
+                "availability_json": _encode_availability(observation.evidence_availability),
                 "observed_at": _unix_microseconds(observation.observed_at),
                 "created_at": now,
             },
@@ -465,9 +467,7 @@ class SqliteAdapterCapabilityRepository:
             sort_keys=True,
         ).encode()
         after = hashlib.sha256(
-            _encode_availability(
-                registration.observation.evidence_availability
-            ).encode()
+            _encode_availability(registration.observation.evidence_availability).encode()
         ).digest()
         await self._connection.execute(
             text(
@@ -480,8 +480,7 @@ class SqliteAdapterCapabilityRepository:
             {
                 "action": f"agent_adapter.{result.disposition.value}",
                 "target": (
-                    f"{registration.manifest.adapter_id}@"
-                    f"{registration.manifest.adapter_version}"
+                    f"{registration.manifest.adapter_id}@{registration.manifest.adapter_version}"
                 ),
                 "key": f"adapter-capability:{operation_id}",
                 "before": previous_hash,
@@ -693,10 +692,7 @@ def _decode_manifest(value: str) -> AdapterCapabilityManifest:
 
 def _encode_availability(value: tuple[EvidenceAvailability, ...]) -> str:
     return json.dumps(
-        [
-            {"capability": item.capability.value, "status": item.status.value}
-            for item in value
-        ],
+        [{"capability": item.capability.value, "status": item.status.value} for item in value],
         separators=(",", ":"),
         sort_keys=True,
     )

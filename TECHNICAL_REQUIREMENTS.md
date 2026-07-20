@@ -1994,6 +1994,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ADP-004 — Support hosts without lifecycle hooks
 
+**Implementation record:** [`docs/implementation/ADP-004.md`](docs/implementation/ADP-004.md) and
+[`docs/runbooks/ADP-004-GENERIC-ADAPTER.md`](docs/runbooks/ADP-004-GENERIC-ADAPTER.md).
+
 **User story:** As a developer, I can use AgentMemory with an agent that exposes no native lifecycle API.
 
 **Acceptance criteria**

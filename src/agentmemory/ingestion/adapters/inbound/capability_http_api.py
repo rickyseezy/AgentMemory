@@ -88,9 +88,7 @@ class AdapterCapabilityManifestModel(_StrictModel):
             adapter_digest=self.adapter_digest,
             schema_major=self.schema_major,
             supported_families=tuple(_family(item) for item in self.supported_families),
-            evidence_availability=tuple(
-                item.to_domain() for item in self.evidence_availability
-            ),
+            evidence_availability=tuple(item.to_domain() for item in self.evidence_availability),
         )
 
 
@@ -270,9 +268,7 @@ def create_adapter_capability_router(  # noqa: C901 -- explicit routes retain lo
         try:
             await authenticator.authenticate(authorization)
             _validate_idempotency(idempotency_key, request.operation_id)
-            result = await observe.execute(
-                request.to_command(adapter_id, adapter_version)
-            )
+            result = await observe.execute(request.to_command(adapter_id, adapter_version))
         except IngestionValidationError as error:
             return _validation_problem(error)
         except IngestionAuthorizationError:
@@ -294,9 +290,7 @@ def create_adapter_capability_router(  # noqa: C901 -- explicit routes retain lo
         """Authenticate and display every active adapter capability matrix."""
         try:
             await authenticator.authenticate(authorization)
-            views = await list_handler.execute(
-                ListAdapterCapabilitiesQuery(warning_limit)
-            )
+            views = await list_handler.execute(ListAdapterCapabilitiesQuery(warning_limit))
         except IngestionValidationError as error:
             return _validation_problem(error)
         except IngestionAuthorizationError:
@@ -453,9 +447,7 @@ def _validation_problem(error: IngestionValidationError) -> JSONResponse:
     return _problem(
         "AM_VALIDATION",
         422,
-        fields=[
-            {"field": item.field, "code": item.code} for item in error.violations
-        ],
+        fields=[{"field": item.field, "code": item.code} for item in error.violations],
     )
 
 

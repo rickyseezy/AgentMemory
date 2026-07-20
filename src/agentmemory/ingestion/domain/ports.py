@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, Self, TypeVar
 
 if TYPE_CHECKING:
+    from datetime import datetime
+    from pathlib import Path
     from types import TracebackType
 
     from agentmemory.ingestion.domain.adapter_capability import (
@@ -24,6 +26,14 @@ if TYPE_CHECKING:
         AppendAgentEventResult,
         EncryptedAgentEvent,
     )
+    from agentmemory.ingestion.domain.generic_adapter import (
+        DecodedTranscriptRecord,
+        GitState,
+        ProcessExecutionResult,
+        TranscriptEncoding,
+        TranscriptFormat,
+        WorkspaceSnapshot,
+    )
 
 NativeEventT_contra = TypeVar("NativeEventT_contra", contravariant=True)
 
@@ -33,6 +43,66 @@ class NativeEventTranslator(Protocol[NativeEventT_contra]):
 
     def translate(self, observation: NativeEventT_contra) -> AgentEvent:
         """Return one fully validated immutable canonical event."""
+        ...
+
+
+class AgentAdapterPort(Protocol):
+    """Vendor-neutral daemon capture boundary used by every host adapter."""
+
+    async def execute(self, event: AgentEvent) -> AppendAgentEventResult:
+        """Admit and durably append one canonical adapter event."""
+        ...
+
+
+class TranscriptDecoder(Protocol):
+    """Decode one supported transcript without guessing its encoding or structure."""
+
+    def decode(
+        self,
+        source: bytes,
+        transcript_format: TranscriptFormat,
+        encoding: TranscriptEncoding,
+        default_occurred_at: datetime,
+    ) -> tuple[DecodedTranscriptRecord, ...]:
+        """Return stable byte ranges and explicit source fields."""
+        ...
+
+
+class SensitiveTextRedactor(Protocol):
+    """Remove configured sensitive tokens before canonical payload creation."""
+
+    def redact(self, value: str) -> str:
+        """Return safe text that contains no matched source secret."""
+        ...
+
+
+class WorkspaceObserver(Protocol):
+    """Read a privacy-filtered workspace snapshot without following links."""
+
+    def snapshot(self, root: Path) -> WorkspaceSnapshot:
+        """Return deterministic authorized file metadata and digests."""
+        ...
+
+
+class GitObserver(Protocol):
+    """Read directly observable Git state using fixed argv operations."""
+
+    async def observe(self, root: Path) -> GitState | None:
+        """Return repository state or None when the directory is not Git-backed."""
+        ...
+
+
+class ProcessExecutor(Protocol):
+    """Execute an argv vector without a command shell."""
+
+    async def execute(
+        self,
+        argv: tuple[str, ...],
+        cwd: Path,
+        stdin: bytes | None,
+        timeout_seconds: float | None,
+    ) -> ProcessExecutionResult:
+        """Return bounded output and explicit normal/abrupt completion."""
         ...
 
 

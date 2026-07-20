@@ -61,6 +61,7 @@ class EventFamily(StrEnum):
     FILE_CHANGED = "agentmemory.file.changed.v1"
     FILE_DELETED = "agentmemory.file.deleted.v1"
     FILE_RENAMED = "agentmemory.file.renamed.v1"
+    TRANSCRIPT_CHUNK_OBSERVED = "agentmemory.transcript.chunk.observed.v1"
     COMMAND_COMPLETED = "agentmemory.command.completed.v1"
     TEST_COMPLETED = "agentmemory.test.completed.v1"
     GIT_COMMIT_OBSERVED = "agentmemory.git.commit.observed.v1"
@@ -155,6 +156,7 @@ _REQUIRED_CAPABILITY = MappingProxyType(
         EventFamily.FILE_CHANGED: CaptureCapability.FILE_OBSERVATION,
         EventFamily.FILE_DELETED: CaptureCapability.FILE_OBSERVATION,
         EventFamily.FILE_RENAMED: CaptureCapability.FILE_OBSERVATION,
+        EventFamily.TRANSCRIPT_CHUNK_OBSERVED: CaptureCapability.ARTIFACT_OBSERVATION,
         EventFamily.COMMAND_COMPLETED: CaptureCapability.COMMAND_OBSERVATION,
         EventFamily.TEST_COMPLETED: CaptureCapability.TEST_OBSERVATION,
         EventFamily.GIT_COMMIT_OBSERVED: CaptureCapability.VCS_OBSERVATION,

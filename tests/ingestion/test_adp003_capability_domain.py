@@ -216,20 +216,13 @@ def test_every_availability_transition_has_explicit_semantics_and_stable_order()
         CaptureCapability.SESSION_LIFECYCLE,
     ]
     assert all(item.code == "signal_added" for item in warnings)
-    assert all(
-        item.impact is CapabilityCompatibilityImpact.INFORMATIONAL
-        for item in warnings
-    )
+    assert all(item.impact is CapabilityCompatibilityImpact.INFORMATIONAL for item in warnings)
 
     removed = compare_capability_availability(added, unavailable)
     assert all(item.code == "signal_removed" for item in removed)
-    assert all(
-        item.impact is CapabilityCompatibilityImpact.BREAKING for item in removed
-    )
+    assert all(item.impact is CapabilityCompatibilityImpact.BREAKING for item in removed)
 
-    denied = availability(
-        {CaptureCapability.SESSION_LIFECYCLE: CaptureMethod.PERMISSION_DENIED}
-    )
+    denied = availability({CaptureCapability.SESSION_LIFECYCLE: CaptureMethod.PERMISSION_DENIED})
     restored = compare_capability_availability(denied, manifest().evidence_availability)
     assert restored[0].code == "permission_restored"
     assert restored[0].impact is CapabilityCompatibilityImpact.INFORMATIONAL

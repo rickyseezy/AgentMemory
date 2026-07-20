@@ -105,6 +105,18 @@ approval on a managed device.
 This zero-knowledge installer is a **specified product requirement**, not currently available
 software.
 
+### Generic hookless-host integration
+
+The repository now includes the production implementation of the generic adapter for agents without
+native lifecycle hooks. The `agentmemory-generic` executable can wrap an argv-only agent process,
+import explicitly encoded transcripts, observe privacy-authorized file/Git changes, and expose an
+explicit checkpoint tool over stable MCP stdio. It registers an honest immutable capability matrix,
+labels unavailable prompt/turn/tool provenance `unknown`, redacts sensitive input before canonical
+persistence, and uses session ID, source digest, and byte offsets for idempotent transcript reimport.
+Installation still owns protected context/credential creation; ordinary users are not expected to
+invoke this command manually. See the
+[ADP-004 runbook](docs/runbooks/ADP-004-GENERIC-ADAPTER.md).
+
 ## High-level architecture
 
 ```mermaid

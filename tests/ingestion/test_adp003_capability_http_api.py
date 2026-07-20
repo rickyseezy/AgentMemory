@@ -244,9 +244,7 @@ async def test_observe_displays_permission_loss_and_compatibility_warning() -> N
 
 @pytest.mark.asyncio
 async def test_list_get_not_found_and_invalid_idempotency_are_safe() -> None:
-    client, _auth, register, _observe, list_handler, _get = await _client(
-        get_handler=_Get(None)
-    )
+    client, _auth, register, _observe, list_handler, _get = await _client(get_handler=_Get(None))
     try:
         listed = await client.get("/v1/agent-adapters/capabilities")
         missing = await client.get(
@@ -275,9 +273,7 @@ async def test_list_get_not_found_and_invalid_idempotency_are_safe() -> None:
 async def test_unknown_capability_is_field_rejected_before_command_handler() -> None:
     client, _auth, register, _observe, _list, _get = await _client()
     document = _manifest_document()
-    availability = list(
-        cast("list[dict[str, str]]", document["evidence_availability"])
-    )
+    availability = list(cast("list[dict[str, str]]", document["evidence_availability"]))
     availability[0] = {"capability": "hidden_reasoning", "status": "native"}
     document["evidence_availability"] = availability
     try:
@@ -292,9 +288,7 @@ async def test_unknown_capability_is_field_rejected_before_command_handler() -> 
     finally:
         await client.aclose()
     assert response.status_code == 422
-    assert response.json()["fields"] == [
-        {"field": "capability", "code": "unsupported"}
-    ]
+    assert response.json()["fields"] == [{"field": "capability", "code": "unsupported"}]
     assert register.commands == []
 
 
@@ -305,9 +299,6 @@ def test_contract_openapi_exposes_all_command_and_display_routes() -> None:
     assert "/v1/agent-adapters:register" in paths
     assert "/v1/agent-adapters/{adapter_id}/versions/{adapter_version}:observe" in paths
     assert "/v1/agent-adapters/capabilities" in paths
-    assert (
-        "/v1/agent-adapters/{adapter_id}/versions/{adapter_version}/capabilities"
-        in paths
-    )
+    assert "/v1/agent-adapters/{adapter_id}/versions/{adapter_version}/capabilities" in paths
     core_paths = cast("dict[str, object]", export_core_openapi_schema()["paths"])
     assert set(paths).issubset(core_paths)

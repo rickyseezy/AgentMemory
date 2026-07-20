@@ -327,9 +327,7 @@ class SqliteAgentEventRepository:
                 "adapter_id": event.provenance.adapter_id,
                 "adapter_version": event.provenance.adapter_version,
                 "adapter_digest": bytes.fromhex(event.provenance.adapter_digest),
-                "capability_manifest": bytes.fromhex(
-                    event.provenance.capability_manifest_digest
-                ),
+                "capability_manifest": bytes.fromhex(event.provenance.capability_manifest_digest),
                 "capture_method": event.provenance.capture_method.value,
                 "created_at": now,
             },

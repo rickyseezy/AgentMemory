@@ -10,10 +10,10 @@ from uuid import uuid7
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from agentmemory.ingestion.adapters.outbound.sqlite_capabilities import (
+    SqliteAdapterCapabilityQueryRepository,
+)
 from agentmemory.ingestion.domain.agent_event import (
-    AdapterCapabilityDescriptor,
-    CaptureCapability,
-    EventFamily,
     ResolvedAgentEventIdentity,
 )
 from agentmemory.ingestion.domain.capture import AppendAgentEventResult, AppendDisposition
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+    from agentmemory.ingestion.domain.adapter_capability import RegisteredAdapterCapabilities
     from agentmemory.ingestion.domain.agent_event import AgentEventIdentity, AgentEventProvenance
     from agentmemory.ingestion.domain.capture import AdmittedAgentEvent, EncryptedAgentEvent
     from agentmemory.ingestion.domain.ports import AgentEventRepository, AgentEventUnitOfWork
@@ -57,8 +58,6 @@ WHERE grant.principal_id = :principal_id AND grant.brain_id = :brain_id
 """
 _ERR_REGISTRY_UNAVAILABLE = "Adapter descriptor registry is unavailable"
 _ERR_ADAPTER_UNREGISTERED = "Agent adapter is not registered"
-_ERR_REGISTRY_MALFORMED = "Adapter descriptor registry was malformed"
-_ERR_REGISTRY_INTEGRITY = "Adapter descriptor registry integrity failed"
 _ERR_SCOPE_UNAVAILABLE = "AgentEvent scope resolution is unavailable"
 _ERR_SCOPE_DENIED = "AgentEvent scope is not authorized"
 _ERR_ALREADY_COMMITTED = "AgentEvent transaction was already committed"
@@ -69,71 +68,29 @@ _ERR_ENQUEUE = "AgentEvent durable enqueue failed"
 _ERR_STORAGE_MALFORMED = "AgentEvent storage was malformed"
 
 
-class SqliteAdapterDescriptorRegistry:
+class SqliteAdapterCapabilityRegistry:
     """Read exact active adapter capability manifests from canonical daemon state."""
 
     def __init__(self, engine: AsyncEngine) -> None:
         """Bind the sole canonical read engine."""
-        self._engine = engine
+        self._capabilities = SqliteAdapterCapabilityQueryRepository(engine)
 
     async def get(
         self,
         adapter_id: str,
         adapter_version: str,
         adapter_digest: str,
-    ) -> AdapterCapabilityDescriptor:
-        """Load and independently revalidate one exact immutable descriptor."""
+    ) -> RegisteredAdapterCapabilities:
+        """Load exact immutable declaration and latest effective evidence."""
         try:
-            async with self._engine.connect() as connection:
-                row = (
-                    (
-                        await connection.execute(
-                            text(
-                                "SELECT descriptor_json, manifest_sha256 "
-                                "FROM agent_adapter_manifests WHERE adapter_id = :adapter_id "
-                                "AND adapter_version = :adapter_version "
-                                "AND adapter_digest = :adapter_digest AND status = 'active'"
-                            ),
-                            {
-                                "adapter_id": adapter_id,
-                                "adapter_version": adapter_version,
-                                "adapter_digest": bytes.fromhex(adapter_digest),
-                            },
-                        )
-                    )
-                    .mappings()
-                    .one_or_none()
-                )
-        except (SQLAlchemyError, ValueError) as error:
+            registration = await self._capabilities.get(adapter_id, adapter_version)
+        except (IngestionDependencyError, ValueError) as error:
             raise IngestionDependencyError(_ERR_REGISTRY_UNAVAILABLE) from error
-        if row is None:
+        if registration is None:
             raise IngestionAuthorizationError(_ERR_ADAPTER_UNREGISTERED)
-        try:
-            document = json.loads(str(row["descriptor_json"]))
-            descriptor = AdapterCapabilityDescriptor.create(
-                adapter_id=str(document["adapter_id"]),
-                adapter_version=str(document["adapter_version"]),
-                adapter_digest=str(document["adapter_digest"]),
-                schema_major=int(document["schema_major"]),
-                supported_families=tuple(
-                    EventFamily(value) for value in document["supported_families"]
-                ),
-                capture_capabilities=tuple(
-                    CaptureCapability(value) for value in document["capture_capabilities"]
-                ),
-            )
-        except (KeyError, TypeError, ValueError) as error:
-            raise IngestionDependencyError(_ERR_REGISTRY_MALFORMED) from error
-        stored_manifest = _bytes(row["manifest_sha256"])
-        exact = (
-            descriptor.adapter_id == adapter_id
-            and descriptor.adapter_version == adapter_version
-            and descriptor.adapter_digest == adapter_digest
-            and bytes.fromhex(descriptor.manifest_sha256) == stored_manifest
-        )
-        if not exact:
-            raise IngestionDependencyError(_ERR_REGISTRY_INTEGRITY)
-        return descriptor
+        if registration.manifest.adapter_digest != adapter_digest:
+            raise IngestionAuthorizationError(_ERR_ADAPTER_UNREGISTERED)
+        return registration
 
 
 class SqliteAgentEventScopeResolver:
@@ -335,12 +292,15 @@ class SqliteAgentEventRepository:
                 "ordering_key, sequence, correlation_id, causation_id, retention_policy_id, "
                 "canonical_sha256, envelope_version, algorithm, brain_key_id, data_key_id, "
                 "payload_nonce, ciphertext, wrapped_data_key_nonce, wrapped_data_key, "
-                "aad_sha256, clock_skew_microseconds, created_at, schema_version) VALUES "
+                "aad_sha256, clock_skew_microseconds, adapter_id, adapter_version, "
+                "adapter_digest, capability_manifest_sha256, capture_method, created_at, "
+                "schema_version) VALUES "
                 "(:event_id, :principal_id, :project_id, :repository_id, :checkout_id, "
                 ":ordering_key, :sequence, :correlation_id, :causation_id, :retention, "
                 ":canonical_sha256, :envelope_version, :algorithm, :brain_key_id, :data_key_id, "
                 ":payload_nonce, :ciphertext, :wrapped_nonce, :wrapped_key, :aad, :clock_skew, "
-                ":created_at, 1)"
+                ":adapter_id, :adapter_version, :adapter_digest, :capability_manifest, "
+                ":capture_method, :created_at, 1)"
             ),
             {
                 "event_id": event.event_id,
@@ -364,6 +324,13 @@ class SqliteAgentEventRepository:
                 "wrapped_key": encrypted.wrapped_data_key,
                 "aad": bytes.fromhex(encrypted.aad_sha256),
                 "clock_skew": admitted.clock_skew_microseconds,
+                "adapter_id": event.provenance.adapter_id,
+                "adapter_version": event.provenance.adapter_version,
+                "adapter_digest": bytes.fromhex(event.provenance.adapter_digest),
+                "capability_manifest": bytes.fromhex(
+                    event.provenance.capability_manifest_digest
+                ),
+                "capture_method": event.provenance.capture_method.value,
                 "created_at": now,
             },
         )

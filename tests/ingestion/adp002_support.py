@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
+from agentmemory.ingestion.domain.adapter_capability import AdapterCapabilityManifest
 from agentmemory.ingestion.domain.agent_event import (
-    AdapterCapabilityDescriptor,
     AgentEvent,
     AgentEventData,
     AgentEventIdentity,
@@ -16,6 +16,7 @@ from agentmemory.ingestion.domain.agent_event import (
     Classification,
     EventFamily,
 )
+from tests.ingestion.capability_support import complete_availability
 
 EVENT_ID = "018f0000-0000-7000-8000-000000000101"
 BRAIN_ID = "018f0000-0000-7000-8000-000000000004"
@@ -30,14 +31,16 @@ DIGEST = "a" * 64
 PAYLOAD = b'{"secret":"redacted","status":"observed"}'
 
 
-def descriptor() -> AdapterCapabilityDescriptor:
-    return AdapterCapabilityDescriptor.create(
+def descriptor() -> AdapterCapabilityManifest:
+    return AdapterCapabilityManifest.create(
         adapter_id="agentmemory.codex",
         adapter_version="1.0.0",
         adapter_digest=DIGEST,
         schema_major=1,
         supported_families=(EventFamily.SESSION_STARTED,),
-        capture_capabilities=(CaptureCapability.SESSION_LIFECYCLE,),
+        evidence_availability=complete_availability(
+            session_lifecycle=CaptureMethod.NATIVE,
+        ),
     )
 
 

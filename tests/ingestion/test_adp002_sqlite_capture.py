@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import multiprocessing
 import os
 import sqlite3
@@ -23,10 +22,18 @@ from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
     SqliteWrappedBrainKeyProvider,
 )
 from agentmemory.ingestion.adapters.outbound.payload_reader import InlineOnlyPayloadReader
+from agentmemory.ingestion.adapters.outbound.sqlite_capabilities import (
+    SqliteAdapterCapabilityUnitOfWorkFactory,
+    SystemIngestionIdentityGenerator,
+)
 from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
-    SqliteAdapterDescriptorRegistry,
+    SqliteAdapterCapabilityRegistry,
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
+)
+from agentmemory.ingestion.application.adapter_capabilities import (
+    RegisterAgentAdapterCommand,
+    RegisterAgentAdapterHandler,
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
@@ -43,7 +50,6 @@ from agentmemory.operations.application.commands.bootstrap_local_brain import (
 from tests.core.support import FixedClock, bootstrap_request, migrated_store, write_secret
 from tests.ingestion.adp002_support import (
     BRAIN_ID,
-    DIGEST,
     EVENT_ID,
     NOW,
     PROJECT_ID,
@@ -61,18 +67,6 @@ async def _seed_capture_authority(store: SqliteCoreStore) -> None:
         bootstrap_request()
     )
     configured = descriptor()
-    document = json.dumps(
-        {
-            "adapter_digest": configured.adapter_digest,
-            "adapter_id": configured.adapter_id,
-            "adapter_version": configured.adapter_version,
-            "capture_capabilities": [value.value for value in configured.capture_capabilities],
-            "schema_major": configured.schema_major,
-            "supported_families": [value.value for value in configured.supported_families],
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
     now = round(NOW.timestamp() * 1_000_000)
     async with store.engine.begin() as connection:
         await connection.execute(
@@ -101,28 +95,22 @@ async def _seed_capture_authority(store: SqliteCoreStore) -> None:
             ),
             {"project": PROJECT_ID, "repository": REPOSITORY_ID, "now": now},
         )
-        await connection.execute(
-            text(
-                "INSERT INTO agent_adapter_manifests "
-                "(adapter_id, adapter_version, adapter_digest, manifest_sha256, descriptor_json, "
-                "status, created_at, schema_version) VALUES "
-                "(:id, :version, :digest, :manifest, :document, 'active', :now, 1)"
-            ),
-            {
-                "id": configured.adapter_id,
-                "version": configured.adapter_version,
-                "digest": bytes.fromhex(DIGEST),
-                "manifest": bytes.fromhex(configured.manifest_sha256),
-                "document": document,
-                "now": now,
-            },
-        )
+    identities = SystemIngestionIdentityGenerator()
+    await RegisterAgentAdapterHandler(
+        SqliteAdapterCapabilityUnitOfWorkFactory(
+            store,
+            FixedClock(NOW),
+            identities,
+        ),
+        identities,
+        FixedClock(NOW),
+    ).execute(RegisterAgentAdapterCommand("test-adp002-register", configured))
 
 
 def _handler(store: SqliteCoreStore, key_file: Path) -> CaptureAgentEventHandler:
     clock = FixedClock(NOW)
     return CaptureAgentEventHandler(
-        SqliteAdapterDescriptorRegistry(store.engine),
+        SqliteAdapterCapabilityRegistry(store.engine),
         SqliteAgentEventScopeResolver(store.engine, clock),
         InlineOnlyPayloadReader(),
         AppendAgentEventHandler(
@@ -183,6 +171,23 @@ async def test_event_envelope_outbox_and_audit_commit_atomically_and_retry_exact
                 await connection.execute(text("SELECT ciphertext FROM agent_event_envelopes"))
             ).scalar_one()
             assert b"secret" not in ciphertext
+            provenance = (
+                await connection.execute(
+                    text(
+                        "SELECT adapter_id, adapter_version, adapter_digest, "
+                        "capability_manifest_sha256, capture_method "
+                        "FROM agent_event_envelopes"
+                    )
+                )
+            ).one()
+            configured = descriptor()
+            assert tuple(provenance) == (
+                configured.adapter_id,
+                configured.adapter_version,
+                bytes.fromhex(configured.adapter_digest),
+                bytes.fromhex(configured.manifest_sha256),
+                "native",
+            )
             wrapped_brain_key = (
                 await connection.execute(text("SELECT ciphertext FROM brain_encryption_keys"))
             ).scalar_one()

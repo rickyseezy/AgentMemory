@@ -13,8 +13,8 @@ from agentmemory.ingestion.adapters.native_event_translator import (
     NativeEventObservation,
 )
 from agentmemory.ingestion.application.admit_agent_event import AgentEventAdmissionHandler
+from agentmemory.ingestion.domain.adapter_capability import AdapterCapabilityManifest
 from agentmemory.ingestion.domain.agent_event import (
-    AdapterCapabilityDescriptor,
     AgentEvent,
     AgentEventData,
     AgentEventIdentity,
@@ -30,6 +30,7 @@ from agentmemory.ingestion.domain.errors import (
     IngestionAuthorizationError,
     IngestionValidationError,
 )
+from tests.ingestion.capability_support import complete_availability, registered
 
 EVENT_ID = "018f0000-0000-7000-8000-000000000101"
 BRAIN_ID = "018f0000-0000-7000-8000-000000000001"
@@ -42,19 +43,19 @@ NOW = datetime(2026, 7, 20, 10, 12, tzinfo=UTC)
 DIGEST = "a" * 64
 
 
-def _descriptor(adapter_id: str = "agentmemory.codex") -> AdapterCapabilityDescriptor:
-    return AdapterCapabilityDescriptor.create(
+def _descriptor(adapter_id: str = "agentmemory.codex") -> AdapterCapabilityManifest:
+    return AdapterCapabilityManifest.create(
         adapter_id=adapter_id,
         adapter_version="1.0.0",
         adapter_digest=DIGEST,
         schema_major=1,
         supported_families=tuple(EventFamily),
-        capture_capabilities=tuple(CaptureCapability),
+        evidence_availability=complete_availability(CaptureMethod.NATIVE),
     )
 
 
 def _observation(
-    descriptor: AdapterCapabilityDescriptor,
+    descriptor: AdapterCapabilityManifest,
     *,
     occurred_at: datetime = NOW,
 ) -> NativeEventObservation:
@@ -131,7 +132,7 @@ class _PayloadReader:
 
 
 def _translate(
-    descriptor: AdapterCapabilityDescriptor,
+    descriptor: AdapterCapabilityManifest,
     *,
     occurred_at: datetime = NOW,
 ) -> AgentEvent:
@@ -160,13 +161,15 @@ def test_cross_adapter_equivalent_observations_have_same_semantic_digest() -> No
 
 
 def test_translator_rejects_observation_outside_descriptor() -> None:
-    descriptor = AdapterCapabilityDescriptor.create(
+    descriptor = AdapterCapabilityManifest.create(
         adapter_id="agentmemory.codex",
         adapter_version="1.0.0",
         adapter_digest=DIGEST,
         schema_major=1,
         supported_families=(EventFamily.TOOL_STARTED,),
-        capture_capabilities=(CaptureCapability.TOOL_LIFECYCLE,),
+        evidence_availability=complete_availability(
+            tool_lifecycle=CaptureMethod.NATIVE,
+        ),
     )
     with pytest.raises(IngestionAuthorizationError):
         CanonicalNativeEventTranslator(descriptor).translate(_observation(_descriptor()))
@@ -177,7 +180,7 @@ async def test_daemon_recalculates_hash_and_resolves_scope_before_admission() ->
     descriptor = _descriptor()
     resolver = _ScopeResolver()
     admitted = await AgentEventAdmissionHandler(
-        descriptor=descriptor,
+        capabilities=registered(descriptor, observed_at=NOW),
         scope_resolver=resolver,
         payload_reader=_PayloadReader(),
         clock=_Clock(),
@@ -197,7 +200,10 @@ async def test_admission_rejects_transit_hash_tampering() -> None:
     object.__setattr__(event.payload, "value", b'{"tampered":true}')
     with pytest.raises(IngestionValidationError) as raised:
         await AgentEventAdmissionHandler(
-            descriptor, _ScopeResolver(), _PayloadReader(), _Clock()
+            registered(descriptor, observed_at=NOW),
+            _ScopeResolver(),
+            _PayloadReader(),
+            _Clock(),
         ).execute(event)
     assert raised.value.code_for("content_sha256") == "hash_mismatch"
 
@@ -214,7 +220,10 @@ async def test_dataref_content_is_rehashed_at_daemon_boundary() -> None:
     )
     with pytest.raises(IngestionValidationError) as raised:
         await AgentEventAdmissionHandler(
-            descriptor, _ScopeResolver(), _PayloadReader(b"different"), _Clock()
+            registered(descriptor, observed_at=NOW),
+            _ScopeResolver(),
+            _PayloadReader(b"different"),
+            _Clock(),
         ).execute(event)
     assert raised.value.code_for("content_sha256") == "hash_mismatch"
 
@@ -224,7 +233,10 @@ async def test_delayed_event_keeps_occurrence_time_and_records_skew() -> None:
     descriptor = _descriptor()
     occurred_at = NOW - timedelta(days=2)
     admitted = await AgentEventAdmissionHandler(
-        descriptor, _ScopeResolver(), _PayloadReader(), _Clock()
+        registered(descriptor, observed_at=NOW),
+        _ScopeResolver(),
+        _PayloadReader(),
+        _Clock(),
     ).execute(_translate(descriptor, occurred_at=occurred_at))
     assert admitted.event.occurred_at == occurred_at
     assert admitted.clock_skew_microseconds == 172_800_000_000
@@ -235,7 +247,10 @@ async def test_unbounded_future_timestamp_is_rejected() -> None:
     descriptor = _descriptor()
     with pytest.raises(IngestionValidationError) as raised:
         await AgentEventAdmissionHandler(
-            descriptor, _ScopeResolver(), _PayloadReader(), _Clock()
+            registered(descriptor, observed_at=NOW),
+            _ScopeResolver(),
+            _PayloadReader(),
+            _Clock(),
         ).execute(_translate(descriptor, occurred_at=NOW + timedelta(minutes=5, microseconds=1)))
     assert raised.value.code_for("time") == "future_clock_skew"
 
@@ -246,7 +261,10 @@ async def test_daemon_clock_must_be_aware_utc() -> None:
     naive = NOW.replace(tzinfo=None)
     with pytest.raises(IngestionValidationError) as raised:
         await AgentEventAdmissionHandler(
-            descriptor, _ScopeResolver(), _PayloadReader(), _Clock(naive)
+            registered(descriptor, observed_at=NOW),
+            _ScopeResolver(),
+            _PayloadReader(),
+            _Clock(naive),
         ).execute(_translate(descriptor))
     assert raised.value.code_for("ingested_at") == "clock_not_utc"
 
@@ -263,7 +281,10 @@ async def test_dataref_size_is_verified_after_a_matching_hash() -> None:
     )
     with pytest.raises(IngestionValidationError) as raised:
         await AgentEventAdmissionHandler(
-            descriptor, _ScopeResolver(), _PayloadReader(value), _Clock()
+            registered(descriptor, observed_at=NOW),
+            _ScopeResolver(),
+            _PayloadReader(value),
+            _Clock(),
         ).execute(event)
     assert raised.value.code_for("dataref") == "size_mismatch"
 
@@ -271,17 +292,22 @@ async def test_dataref_size_is_verified_after_a_matching_hash() -> None:
 @pytest.mark.asyncio
 async def test_missing_descriptor_capability_is_rejected_before_scope_resolution() -> None:
     full = _descriptor()
-    limited = AdapterCapabilityDescriptor.create(
+    limited = AdapterCapabilityManifest.create(
         adapter_id=full.adapter_id,
         adapter_version=full.adapter_version,
         adapter_digest=full.adapter_digest,
         schema_major=1,
         supported_families=(EventFamily.TOOL_STARTED,),
-        capture_capabilities=(CaptureCapability.TOOL_LIFECYCLE,),
+        evidence_availability=complete_availability(
+            tool_lifecycle=CaptureMethod.NATIVE,
+        ),
     )
     resolver = _ScopeResolver()
     with pytest.raises(IngestionAuthorizationError):
-        await AgentEventAdmissionHandler(limited, resolver, _PayloadReader(), _Clock()).execute(
-            _translate(full)
-        )
+        await AgentEventAdmissionHandler(
+            registered(limited, observed_at=NOW),
+            resolver,
+            _PayloadReader(),
+            _Clock(),
+        ).execute(_translate(full))
     assert resolver.claim is None

@@ -46,6 +46,10 @@ from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
 )
+from agentmemory.ingestion.adapters.inbound.capability_http_api import (
+    create_adapter_capability_router,
+    create_contract_adapter_capability_router,
+)
 from agentmemory.ingestion.adapters.inbound.http_api import (
     create_agent_event_router,
     create_contract_agent_event_router,
@@ -56,10 +60,21 @@ from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
     SqliteWrappedBrainKeyProvider,
 )
 from agentmemory.ingestion.adapters.outbound.payload_reader import InlineOnlyPayloadReader
+from agentmemory.ingestion.adapters.outbound.sqlite_capabilities import (
+    SqliteAdapterCapabilityQueryRepository,
+    SqliteAdapterCapabilityUnitOfWorkFactory,
+    SystemIngestionIdentityGenerator,
+)
 from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
-    SqliteAdapterDescriptorRegistry,
+    SqliteAdapterCapabilityRegistry,
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
+)
+from agentmemory.ingestion.application.adapter_capabilities import (
+    GetAdapterCapabilitiesHandler,
+    ListAdapterCapabilitiesHandler,
+    ObserveAdapterCapabilitiesHandler,
+    RegisterAgentAdapterHandler,
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
@@ -123,8 +138,9 @@ from agentmemory.shared.clock import SystemClock
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
-    from fastapi import FastAPI
+    from fastapi import APIRouter, FastAPI
 
 
 @dataclass(slots=True)
@@ -349,11 +365,65 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             ),
         )
     )
+    _include_ingestion_runtime_routers(
+        application,
+        store,
+        clock,
+        authenticator,
+        resolved.installation_root_key_file,
+    )
+    return application
+
+
+def export_core_openapi_schema() -> dict[str, object]:
+    """Build the deterministic complete Core contract across bounded contexts."""
+    return export_openapi_schema(
+        (
+            create_contract_identity_router(),
+            create_contract_agent_event_router(),
+            create_contract_adapter_capability_router(),
+        )
+    )
+
+
+def _create_adapter_capability_runtime_router(
+    store: SqliteCoreStore,
+    clock: SystemClock,
+    authenticator: ApiAuthenticator,
+) -> APIRouter:
+    """Compose ADP-003 commands and queries outside the application factory body."""
+    identities = SystemIngestionIdentityGenerator()
+    unit_of_work = SqliteAdapterCapabilityUnitOfWorkFactory(
+        store,
+        clock,
+        identities,
+    )
+    queries = SqliteAdapterCapabilityQueryRepository(store.engine)
+    return create_adapter_capability_router(
+        authenticator,
+        RegisterAgentAdapterHandler(unit_of_work, identities, clock),
+        ObserveAdapterCapabilitiesHandler(unit_of_work, identities, clock),
+        ListAdapterCapabilitiesHandler(queries),
+        GetAdapterCapabilitiesHandler(queries),
+    )
+
+
+def _include_ingestion_runtime_routers(
+    application: FastAPI,
+    store: SqliteCoreStore,
+    clock: SystemClock,
+    authenticator: ApiAuthenticator,
+    installation_root_key_file: Path,
+) -> None:
+    """Compose and install all ingestion routers at the outermost boundary."""
+    application.include_router(
+        _create_adapter_capability_runtime_router(store, clock, authenticator)
+    )
     application.include_router(
         create_agent_event_router(
             authenticator,
             CaptureAgentEventHandler(
-                SqliteAdapterDescriptorRegistry(store.engine),
+                SqliteAdapterCapabilityRegistry(store.engine),
                 SqliteAgentEventScopeResolver(store.engine, clock),
                 InlineOnlyPayloadReader(),
                 AppendAgentEventHandler(
@@ -361,7 +431,7 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
                     AesGcmAgentEventEncryptor(
                         SqliteWrappedBrainKeyProvider(
                             store,
-                            resolved.installation_root_key_file,
+                            installation_root_key_file,
                             clock,
                         )
                     ),
@@ -370,12 +440,4 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
                 clock,
             ),
         )
-    )
-    return application
-
-
-def export_core_openapi_schema() -> dict[str, object]:
-    """Build the deterministic complete Core contract across bounded contexts."""
-    return export_openapi_schema(
-        (create_contract_identity_router(), create_contract_agent_event_router())
     )

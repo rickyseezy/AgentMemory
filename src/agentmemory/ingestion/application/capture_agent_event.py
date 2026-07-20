@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from agentmemory.ingestion.domain.agent_event import AgentEvent
     from agentmemory.ingestion.domain.capture import AppendAgentEventResult
     from agentmemory.ingestion.domain.ports import (
-        AdapterDescriptorRegistry,
+        AdapterCapabilityRegistry,
         AgentEventScopeResolver,
         PayloadContentReader,
     )
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 class CaptureAgentEventHandler:
     """Resolve adapter authority, admit untrusted content, then durably append."""
 
-    descriptors: AdapterDescriptorRegistry
+    capabilities: AdapterCapabilityRegistry
     scope_resolver: AgentEventScopeResolver
     payload_reader: PayloadContentReader
     appender: AppendAgentEventHandler
@@ -33,13 +33,13 @@ class CaptureAgentEventHandler:
     async def execute(self, event: AgentEvent) -> AppendAgentEventResult:
         """Execute the complete minimal local capture boundary."""
         provenance = event.provenance
-        descriptor = await self.descriptors.get(
+        registration = await self.capabilities.get(
             provenance.adapter_id,
             provenance.adapter_version,
             provenance.adapter_digest,
         )
         admitted = await AgentEventAdmissionHandler(
-            descriptor,
+            registration,
             self.scope_resolver,
             self.payload_reader,
             self.clock,

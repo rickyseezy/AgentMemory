@@ -12,7 +12,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from agentmemory.ingestion.domain.agent_event import (
-    AdapterCapabilityDescriptor,
     AgentEvent,
     AgentEventData,
     AgentEventIdentity,
@@ -289,43 +288,6 @@ def test_provenance_failure_matrix(changes: dict[str, str], field: str) -> None:
     with pytest.raises(IngestionValidationError) as raised:
         replace(_provenance(), **cast("Any", changes))
     assert raised.value.has_field(field)
-
-
-@pytest.mark.parametrize(
-    ("changes", "field", "code"),
-    [
-        ({"adapter_version": "latest"}, "adapter_version", "invalid_semver"),
-        ({"adapter_digest": "0" * 64}, "adapter_digest", "invalid_digest"),
-        ({"schema_major": 2}, "schema_major", "unsupported_major"),
-        ({"supported_families": ()}, "supported_families", "empty"),
-        ({"capture_capabilities": ()}, "capture_capabilities", "empty"),
-        (
-            {
-                "supported_families": (EventFamily.SESSION_STARTED,),
-                "capture_capabilities": (CaptureCapability.TOOL_LIFECYCLE,),
-            },
-            "capture_capabilities",
-            "missing_family_capability",
-        ),
-    ],
-)
-def test_adapter_descriptor_failure_matrix(
-    changes: dict[str, object],
-    field: str,
-    code: str,
-) -> None:
-    values: dict[str, object] = {
-        "adapter_id": "agentmemory.reference",
-        "adapter_version": "1.0.0",
-        "adapter_digest": DIGEST,
-        "schema_major": 1,
-        "supported_families": (EventFamily.SESSION_STARTED,),
-        "capture_capabilities": (CaptureCapability.SESSION_LIFECYCLE,),
-    }
-    values.update(changes)
-    with pytest.raises(IngestionValidationError) as raised:
-        AdapterCapabilityDescriptor(**cast("Any", values))
-    assert raised.value.code_for(field) == code
 
 
 @pytest.mark.parametrize(

@@ -1938,7 +1938,7 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Technical approach**
 
-- Each adapter implements NativeEventTranslator and AdapterCapabilityDescriptor.
+- Each adapter implements NativeEventTranslator and publishes an immutable AdapterCapabilityManifest.
 - Generated schema types validate at the adapter and daemon boundary. The daemon recalculates payload hash and distrusts adapter-supplied scope until identity resolution.
 - Event IDs are adapter-generated UUIDv7 and stable across retries.
 
@@ -1970,6 +1970,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 **Why:** Fast durable capture separates user interaction latency from expensive enrichment.
 
 #### ADP-003 — Declare host capabilities honestly
+
+**Implementation record:** [`docs/implementation/ADP-003.md`](docs/implementation/ADP-003.md) and
+[`docs/runbooks/ADP-003-ADAPTER-CAPABILITIES.md`](docs/runbooks/ADP-003-ADAPTER-CAPABILITIES.md).
 
 **User story:** As an operator, I can see exactly which lifecycle signals an adapter observes.
 

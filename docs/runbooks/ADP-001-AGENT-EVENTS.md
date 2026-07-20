@@ -11,8 +11,8 @@ at a `NativeEventTranslator`; all outputs use the public AgentEvent contract.
 1. Identify only host activity that is actually observable. Never capture hidden reasoning or infer a
    lifecycle signal that the host does not expose.
 2. Define the exact supported family and evidence-capability sets for one immutable adapter version.
-   Construct `AdapterCapabilityDescriptor` with the signed adapter binary digest. A version's
-   descriptor must never change in place.
+   Construct `AdapterCapabilityManifest` with the signed adapter binary digest. A version's
+   manifest must never change in place.
 3. Before the first send, allocate one UUIDv7 event ID and UUIDv7 ordering stream key, assign the next
    unsigned sequence, canonicalize/redact the payload, calculate its SHA-256, and durably retain the
    complete typed native observation. Retry must reuse these values and exact bytes.
@@ -52,13 +52,13 @@ Use only the returned safe field/code pairs:
 | `content_sha256` mismatch | Quarantine the spool record; compare retained bytes without logging them |
 | noncanonical/duplicate/non-finite JSON | Fix canonical serialization before retrying with the same ID only if bytes never reached Core |
 | schema/type mismatch | Select the exact immutable schema for the event major |
-| missing/unauthorized capability | Correct the descriptor/version; do not fabricate the signal |
+| missing/unauthorized capability | Correct the manifest/version; do not fabricate the signal |
 | future clock skew | Repair the host clock; preserve the original quarantined observation |
 | identity authorization | Re-establish the authenticated session/workspace mapping; never overwrite claimed IDs to bypass resolution |
 
 An ID retried with different content is an integrity incident handled by ADP-002. Preserve the native
 spool record, event ID, safe hashes, adapter/version/digest, manifest digest, ordering coordinates, and
-daemon audit reference. Never manually insert an event or edit a descriptor/hash to force acceptance.
+daemon audit reference. Never manually insert an event or edit a manifest/hash to force acceptance.
 
 ## Contract verification
 

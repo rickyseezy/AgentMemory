@@ -7,12 +7,6 @@ from dataclasses import dataclass
 from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 
-from agentmemory.ingestion.domain.agent_event import (
-    AdapterCapabilityDescriptor,
-    AgentEvent,
-    CaptureMethod,
-    required_capability,
-)
 from agentmemory.ingestion.domain.capture import AdmittedAgentEvent
 from agentmemory.ingestion.domain.errors import (
     IngestionAuthorizationError,
@@ -20,6 +14,8 @@ from agentmemory.ingestion.domain.errors import (
 )
 
 if TYPE_CHECKING:
+    from agentmemory.ingestion.domain.adapter_capability import RegisteredAdapterCapabilities
+    from agentmemory.ingestion.domain.agent_event import AgentEvent
     from agentmemory.ingestion.domain.ports import AgentEventScopeResolver, PayloadContentReader
     from agentmemory.shared.clock import Clock
 
@@ -30,14 +26,14 @@ _MAX_FUTURE_SKEW = timedelta(minutes=5)
 class AgentEventAdmissionHandler:
     """Verify adapter evidence, content, time, and scope before persistence exists."""
 
-    descriptor: AdapterCapabilityDescriptor
+    capabilities: RegisteredAdapterCapabilities
     scope_resolver: AgentEventScopeResolver
     payload_reader: PayloadContentReader
     clock: Clock
 
     async def execute(self, event: AgentEvent) -> AdmittedAgentEvent:
         """Return a trusted admission object without performing persistence."""
-        self._verify_descriptor(event)
+        self._verify_capabilities(event)
         await self._verify_payload(event)
         ingested_at = self.clock.now()
         if ingested_at.tzinfo is None or ingested_at.utcoffset() != UTC.utcoffset(None):
@@ -51,23 +47,24 @@ class AgentEventAdmissionHandler:
         skew = round((ingested_at - event.occurred_at).total_seconds() * 1_000_000)
         return AdmittedAgentEvent(event, identity, ingested_at, skew)
 
-    def _verify_descriptor(self, event: AgentEvent) -> None:
+    def _verify_capabilities(self, event: AgentEvent) -> None:
         provenance = event.provenance
+        manifest = self.capabilities.manifest
         identity_matches = (
-            provenance.adapter_id == self.descriptor.adapter_id
-            and provenance.adapter_version == self.descriptor.adapter_version
-            and provenance.adapter_digest == self.descriptor.adapter_digest
-            and provenance.capability_manifest_digest == self.descriptor.manifest_sha256
+            provenance.adapter_id == manifest.adapter_id
+            and provenance.adapter_version == manifest.adapter_version
+            and provenance.adapter_digest == manifest.adapter_digest
+            and provenance.capability_manifest_digest == manifest.manifest_sha256
         )
-        supported = (
-            event.event_type in self.descriptor.supported_families
-            and required_capability(event.event_type) in self.descriptor.capture_capabilities
-            and set(event.capture_capabilities).issubset(self.descriptor.capture_capabilities)
-            and provenance.capture_method
-            not in {CaptureMethod.UNSUPPORTED, CaptureMethod.PERMISSION_DENIED}
+        exact_method = self.capabilities.authorizes(
+            event.event_type,
+            provenance.capture_method,
+        )
+        supported = exact_method and set(event.capture_capabilities).issubset(
+            manifest.capture_capabilities
         )
         if not identity_matches or not supported:
-            msg = "adapter descriptor does not authorize the canonical event"
+            msg = "adapter capabilities do not authorize the canonical event"
             raise IngestionAuthorizationError(msg)
 
     async def _verify_payload(self, event: AgentEvent) -> None:

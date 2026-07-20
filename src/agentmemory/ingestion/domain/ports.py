@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING, Protocol, Self, TypeVar
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from agentmemory.ingestion.domain.adapter_capability import (
+        CapabilityChangeResult,
+        CapabilityCompatibilityWarning,
+        RegisteredAdapterCapabilities,
+    )
     from agentmemory.ingestion.domain.agent_event import (
-        AdapterCapabilityDescriptor,
         AgentEvent,
         AgentEventIdentity,
         AgentEventProvenance,
@@ -44,16 +48,114 @@ class AgentEventScopeResolver(Protocol):
         ...
 
 
-class AdapterDescriptorRegistry(Protocol):
-    """Resolve an active immutable adapter descriptor from daemon-owned state."""
+class AdapterCapabilityRegistry(Protocol):
+    """Resolve immutable declaration and effective evidence from daemon-owned state."""
 
     async def get(
         self,
         adapter_id: str,
         adapter_version: str,
         adapter_digest: str,
-    ) -> AdapterCapabilityDescriptor:
-        """Return an exact active descriptor or deny capture."""
+    ) -> RegisteredAdapterCapabilities:
+        """Return exact declared and effective capability evidence or deny capture."""
+        ...
+
+
+class AdapterCapabilityRepository(Protocol):
+    """Persist immutable manifests, observations, warnings, and command receipts."""
+
+    async def replay(
+        self,
+        operation_id: str,
+        request_sha256: str,
+    ) -> CapabilityChangeResult | None:
+        """Return an exact prior result, None, or reject conflicting operation reuse."""
+        ...
+
+    async def get(
+        self,
+        adapter_id: str,
+        adapter_version: str,
+    ) -> RegisteredAdapterCapabilities | None:
+        """Return the exact version with its latest effective observation."""
+        ...
+
+    async def latest(self, adapter_id: str) -> RegisteredAdapterCapabilities | None:
+        """Return the most recently registered version for compatibility comparison."""
+        ...
+
+    async def persist(
+        self,
+        result: CapabilityChangeResult,
+        operation_id: str,
+        request_sha256: str,
+    ) -> None:
+        """Atomically append new facts and a content-free idempotency receipt."""
+        ...
+
+
+class AdapterCapabilityUnitOfWork(Protocol):
+    """Transaction for adapter manifest/observation command persistence."""
+
+    capabilities: AdapterCapabilityRepository
+
+    async def __aenter__(self) -> Self:
+        """Open one serialized capability transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Roll back unless explicitly committed."""
+        ...
+
+    async def commit(self) -> None:
+        """Durably commit once."""
+        ...
+
+
+class AdapterCapabilityUnitOfWorkFactory(Protocol):
+    """Create one fresh adapter capability command transaction."""
+
+    def __call__(self) -> AdapterCapabilityUnitOfWork:
+        """Return an unopened transaction."""
+        ...
+
+
+class AdapterCapabilityQueryRepository(Protocol):
+    """Read-only capability matrix projection for policies and operator display."""
+
+    async def get(
+        self,
+        adapter_id: str,
+        adapter_version: str,
+    ) -> RegisteredAdapterCapabilities | None:
+        """Return current effective evidence for one exact registered version."""
+        ...
+
+    async def list_active(self) -> tuple[RegisteredAdapterCapabilities, ...]:
+        """Return every active version in deterministic display order."""
+        ...
+
+    async def warnings(
+        self,
+        adapter_id: str,
+        adapter_version: str,
+        *,
+        maximum: int = 100,
+    ) -> tuple[CapabilityCompatibilityWarning, ...]:
+        """Return bounded newest warnings for one exact adapter version."""
+        ...
+
+
+class IngestionIdentityGenerator(Protocol):
+    """Generate opaque UUIDv7 identities for append-only ingestion facts."""
+
+    def new(self) -> str:
+        """Return a lowercase UUIDv7 string."""
         ...
 
 

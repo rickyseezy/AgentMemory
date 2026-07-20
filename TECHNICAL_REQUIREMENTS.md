@@ -2064,6 +2064,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-001 — Never lose acknowledged events
 
+**Implementation record:** [`docs/implementation/ING-001.md`](docs/implementation/ING-001.md) and
+[`docs/runbooks/ING-001-DURABLE-ACKNOWLEDGEMENT.md`](docs/runbooks/ING-001-DURABLE-ACKNOWLEDGEMENT.md).
+
 **User story:** As a user, an acknowledged event survives supported process or machine failure.
 
 **Acceptance criteria**

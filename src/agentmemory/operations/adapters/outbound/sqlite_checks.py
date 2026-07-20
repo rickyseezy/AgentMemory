@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0008_adp003_adapter_capabilities"
+EXPECTED_MIGRATION_HEAD = "0009_ing001_durable_processing"
 
 
 class SqliteActiveBrainResolver:
@@ -345,9 +345,10 @@ class SqliteSemanticSmokeStore:
             await connection.execute(
                 text(
                     "INSERT INTO outbox_messages "
-                    "(id, source_event_id, topic, message_key, payload, status, created_at, "
-                    "schema_version) VALUES "
-                    "(:id, :source, :topic, :key, :payload, 'ready', :now, 1) "
+                    "(id, source_event_id, topic, message_key, payload, status, priority, "
+                    "not_before, attempts, payload_sha256, created_at, schema_version) VALUES "
+                    "(:id, :source, :topic, :key, :payload, 'ready', 100, :now, 0, "
+                    ":payload_sha256, :now, 1) "
                     "ON CONFLICT(source_event_id, topic) DO NOTHING"
                 ),
                 {
@@ -356,6 +357,7 @@ class SqliteSemanticSmokeStore:
                     "topic": f"am.local.{brain}.indexing.readiness-canary.v1",
                     "key": canary_id,
                     "payload": outbox_payload,
+                    "payload_sha256": hashlib.sha256(outbox_payload.encode()).digest(),
                     "now": now,
                 },
             )

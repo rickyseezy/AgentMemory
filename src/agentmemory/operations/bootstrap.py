@@ -70,6 +70,10 @@ from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
     SqliteAgentEventScopeResolver,
     SqliteAgentEventUnitOfWorkFactory,
 )
+from agentmemory.ingestion.adapters.outbound.sqlite_durable_processing import (
+    SqliteCanonicalEventProjectionVerifier,
+    SqliteDurableEventProcessingRepository,
+)
 from agentmemory.ingestion.application.adapter_capabilities import (
     GetAdapterCapabilitiesHandler,
     ListAdapterCapabilitiesHandler,
@@ -78,6 +82,10 @@ from agentmemory.ingestion.application.adapter_capabilities import (
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
+from agentmemory.ingestion.application.durable_processing import (
+    DurableEventProcessingHandler,
+    DurableIngestionWorker,
+)
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
     ApiDependencies,
@@ -285,6 +293,11 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             projection_adapter,
         ),
     )
+    durable_ingestion_worker = _create_durable_ingestion_worker(
+        store,
+        clock,
+        resolved.installation_root_key_file,
+    )
     runtime_probes = (
         FunctionalReadinessProbe(
             ReadinessProbe.SQLITE_INTEGRITY,
@@ -336,15 +349,18 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         del application
         stop = asyncio.Event()
-        task: asyncio.Task[None] | None = None
+        tasks: tuple[asyncio.Task[None], ...] = ()
         try:
             await store.observe_and_enforce_policy()
-            task = asyncio.create_task(projection_worker.run(stop))
+            tasks = (
+                asyncio.create_task(projection_worker.run(stop)),
+                asyncio.create_task(durable_ingestion_worker.run(stop)),
+            )
             yield
         finally:
             stop.set()
-            if task is not None:
-                await task
+            if tasks:
+                await asyncio.gather(*tasks)
             await container.close()
 
     application = create_app(dependencies, lifespan)
@@ -363,6 +379,24 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
         resolved.installation_root_key_file,
     )
     return application
+
+
+def _create_durable_ingestion_worker(
+    store: SqliteCoreStore,
+    clock: SystemClock,
+    installation_root_key_file: Path,
+) -> DurableIngestionWorker:
+    """Compose the canonical verifier and durable SQLite queue behind ingestion ports."""
+    repository = SqliteDurableEventProcessingRepository(store)
+    verifier = SqliteCanonicalEventProjectionVerifier(
+        store.engine,
+        SqliteWrappedBrainKeyProvider(store, installation_root_key_file, clock),
+    )
+    return DurableIngestionWorker(
+        repository,
+        DurableEventProcessingHandler(repository, verifier, clock, "core-ingestion-v1"),
+        clock,
+    )
 
 
 def export_core_openapi_schema() -> dict[str, object]:

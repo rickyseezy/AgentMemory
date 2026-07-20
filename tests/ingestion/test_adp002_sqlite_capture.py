@@ -122,6 +122,16 @@ def _handler(store: SqliteCoreStore, key_file: Path) -> CaptureAgentEventHandler
     )
 
 
+async def seed_capture_authority(store: SqliteCoreStore) -> None:
+    """Public test support wrapper for the complete canonical capture authority."""
+    await _seed_capture_authority(store)
+
+
+def capture_handler(store: SqliteCoreStore, key_file: Path) -> CaptureAgentEventHandler:
+    """Public test support wrapper for the production capture composition."""
+    return _handler(store, key_file)
+
+
 def _append_then_exit(database_path: str, key_path: str, sender: Connection) -> None:
     async def execute() -> None:
         store = SqliteCoreStore.create(

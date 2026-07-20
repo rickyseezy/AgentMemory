@@ -53,3 +53,7 @@ class IngestionConflictError(RuntimeError):
 
 class IngestionDependencyError(RuntimeError):
     """Hide unavailable adapter or identity dependencies behind a typed failure."""
+
+
+class IngestionIntegrityError(RuntimeError):
+    """Fail closed when persisted canonical ingestion state cannot be authenticated."""

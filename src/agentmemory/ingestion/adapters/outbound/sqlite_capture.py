@@ -32,7 +32,13 @@ if TYPE_CHECKING:
     from agentmemory.ingestion.domain.adapter_capability import RegisteredAdapterCapabilities
     from agentmemory.ingestion.domain.agent_event import AgentEventIdentity, AgentEventProvenance
     from agentmemory.ingestion.domain.capture import AdmittedAgentEvent, EncryptedAgentEvent
-    from agentmemory.ingestion.domain.ports import AgentEventRepository, AgentEventUnitOfWork
+    from agentmemory.ingestion.domain.ports import (
+        AgentEventRepository,
+        AgentEventUnitOfWork,
+        ArtifactRepository,
+        IngestionAuditRepository,
+        OutboxRepository,
+    )
     from agentmemory.operations.adapters.outbound.sqlite_store import SqliteCoreStore
     from agentmemory.shared.clock import Clock
 
@@ -146,6 +152,9 @@ class SqliteAgentEventUnitOfWork:
         self._connection: AsyncConnection | None = None
         self._committed = False
         self.events: AgentEventRepository
+        self.artifacts: ArtifactRepository
+        self.outbox: OutboxRepository
+        self.audit: IngestionAuditRepository
 
     async def __aenter__(self) -> Self:
         """Acquire the sole writer and begin before exposing the repository."""
@@ -153,10 +162,23 @@ class SqliteAgentEventUnitOfWork:
         try:
             self._connection = await self._store.engine.connect()
             await self._connection.exec_driver_sql("BEGIN IMMEDIATE")
+        except SQLAlchemyError as error:
+            if self._connection is not None:
+                await self._connection.close()
+                self._connection = None
+            self._store.write_lock.release()
+            raise IngestionDependencyError(_ERR_COMMIT) from error
         except BaseException:
+            if self._connection is not None:
+                await self._connection.close()
+                self._connection = None
             self._store.write_lock.release()
             raise
-        self.events = SqliteAgentEventRepository(self._require_connection(), self._clock)
+        connection = self._require_connection()
+        self.events = SqliteAgentEventRepository(connection)
+        self.artifacts = SqliteArtifactRepository(connection)
+        self.outbox = SqliteOutboxRepository(connection)
+        self.audit = SqliteIngestionAuditRepository(connection)
         return self
 
     async def __aexit__(
@@ -167,13 +189,21 @@ class SqliteAgentEventUnitOfWork:
     ) -> bool | None:
         """Roll back uncommitted state and release the single-writer lock."""
         connection = self._require_connection()
+        storage_error = exc if isinstance(exc, SQLAlchemyError) else None
         try:
             if not self._committed:
-                await connection.rollback()
+                try:
+                    await connection.rollback()
+                except SQLAlchemyError as error:
+                    storage_error = error
         finally:
-            await connection.close()
-            self._connection = None
-            self._store.write_lock.release()
+            try:
+                await connection.close()
+            finally:
+                self._connection = None
+                self._store.write_lock.release()
+        if storage_error is not None:
+            raise IngestionDependencyError(_ERR_COMMIT) from storage_error
         return None
 
     async def commit(self) -> None:
@@ -209,19 +239,19 @@ class SqliteAgentEventUnitOfWorkFactory:
 
 
 class SqliteAgentEventRepository:
-    """Persist event index, encrypted envelope, outbox, and chained audit fact."""
+    """Persist only the canonical event index and authenticated envelope."""
 
-    def __init__(self, connection: AsyncConnection, clock: Clock) -> None:
-        """Bind repositories to their owning transaction and policy clock."""
+    def __init__(self, connection: AsyncConnection) -> None:
+        """Bind this aggregate repository to its owning transaction."""
         self._connection = connection
-        self._clock = clock
 
     async def append(
         self,
         admitted: AdmittedAgentEvent,
         encrypted: EncryptedAgentEvent,
+        artifact_id: str | None,
     ) -> AppendAgentEventResult:
-        """Insert all facts or return only a byte-identical idempotent retry."""
+        """Insert canonical facts or identify a byte-identical idempotent retry."""
         event = admitted.event
         existing = (
             (
@@ -252,9 +282,7 @@ class SqliteAgentEventRepository:
             )
         now = _unix_microseconds(admitted.ingested_at)
         try:
-            await self._insert_event(admitted, encrypted, now)
-            await self._insert_outbox(admitted, now)
-            await self._insert_audit(admitted, encrypted, now)
+            await self._insert_event(admitted, encrypted, artifact_id, now)
         except IntegrityError as error:
             raise IngestionConflictError(_ERR_EVENT_CONFLICT) from error
         except SQLAlchemyError as error:
@@ -270,6 +298,7 @@ class SqliteAgentEventRepository:
         self,
         admitted: AdmittedAgentEvent,
         encrypted: EncryptedAgentEvent,
+        artifact_id: str | None,
         now: int,
     ) -> None:
         event = admitted.event
@@ -278,9 +307,9 @@ class SqliteAgentEventRepository:
             text(
                 "INSERT INTO agent_events "
                 "(event_id, brain_id, type, payload_hash, classification, occurred_at, "
-                "ingested_at, schema_version) VALUES "
+                "ingested_at, payload_ref, schema_version) VALUES "
                 "(:event_id, :brain_id, :type, :payload_hash, :classification, "
-                ":occurred_at, :ingested_at, 1)"
+                ":occurred_at, :ingested_at, :payload_ref, 1)"
             ),
             {
                 "event_id": event.event_id,
@@ -290,8 +319,19 @@ class SqliteAgentEventRepository:
                 "classification": event.classification.value,
                 "occurred_at": _unix_microseconds(event.occurred_at),
                 "ingested_at": now,
+                "payload_ref": artifact_id,
             },
         )
+        await self._insert_envelope(admitted, encrypted, now)
+
+    async def _insert_envelope(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+        now: int,
+    ) -> None:
+        event = admitted.event
+        identity = admitted.identity
         await self._connection.execute(
             text(
                 "INSERT INTO agent_event_envelopes "
@@ -340,8 +380,89 @@ class SqliteAgentEventRepository:
             },
         )
 
-    async def _insert_outbox(self, admitted: AdmittedAgentEvent, now: int) -> None:
+
+class SqliteArtifactRepository:
+    """Deduplicate Brain-scoped immutable CAS metadata inside the append UoW."""
+
+    def __init__(self, connection: AsyncConnection) -> None:
+        """Bind artifact persistence to its owning Unit of Work connection."""
+        self._connection = connection
+
+    async def ensure_reference(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+    ) -> str | None:
+        """Return one artifact identity, or None when canonical content is inline."""
+        reference = admitted.event.payload_reference
+        if reference is None:
+            return None
+        digest = bytes.fromhex(reference.content_sha256)
+        try:
+            existing = (
+                (
+                    await self._connection.execute(
+                        text(
+                            "SELECT id,media_type,byte_length,encryption_key_ref,blob_uri,"
+                            "classification FROM artifacts WHERE brain_id=:brain AND sha256=:digest"
+                        ),
+                        {"brain": admitted.identity.brain_id, "digest": digest},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
+        if existing is not None:
+            if (
+                str(existing["media_type"]) != admitted.event.datacontenttype
+                or int(str(existing["byte_length"])) != reference.size_bytes
+                or str(existing["encryption_key_ref"]) != encrypted.brain_key_id
+                or str(existing["blob_uri"]) != reference.uri
+                or str(existing["classification"]) != admitted.event.classification.value
+            ):
+                raise IngestionConflictError(_ERR_EVENT_CONFLICT)
+            return str(existing["id"])
+        artifact_id = str(uuid7())
+        now = _unix_microseconds(admitted.ingested_at)
+        try:
+            await self._connection.execute(
+                text(
+                    "INSERT INTO artifacts "
+                    "(id,brain_id,sha256,media_type,byte_length,encryption_key_ref,blob_uri,"
+                    "classification,created_at,updated_at,schema_version) VALUES "
+                    "(:id,:brain,:digest,:media_type,:byte_length,:key_ref,:uri,:classification,"
+                    ":now,:now,1)"
+                ),
+                {
+                    "brain": admitted.identity.brain_id,
+                    "byte_length": reference.size_bytes,
+                    "classification": admitted.event.classification.value,
+                    "digest": digest,
+                    "id": artifact_id,
+                    "key_ref": encrypted.brain_key_id,
+                    "media_type": admitted.event.datacontenttype,
+                    "now": now,
+                    "uri": reference.uri,
+                },
+            )
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
+        return artifact_id
+
+
+class SqliteOutboxRepository:
+    """Append one checksum-bound local dispatch intent without committing."""
+
+    def __init__(self, connection: AsyncConnection) -> None:
+        """Bind outbox persistence to its owning Unit of Work connection."""
+        self._connection = connection
+
+    async def enqueue(self, admitted: AdmittedAgentEvent) -> None:
+        """Create the ready message in the same transaction as its source event."""
         event = admitted.event
+        now = _unix_microseconds(admitted.ingested_at)
         payload = json.dumps(
             {
                 "brain_id": admitted.identity.brain_id,
@@ -352,37 +473,55 @@ class SqliteAgentEventRepository:
             separators=(",", ":"),
             sort_keys=True,
         )
-        await self._connection.execute(
-            text(
-                "INSERT INTO outbox_messages "
-                "(id, source_event_id, topic, message_key, payload, status, created_at, "
-                "schema_version) VALUES "
-                "(:id, :source_event_id, :topic, :message_key, :payload, 'ready', :created_at, 1)"
-            ),
-            {
-                "id": str(uuid7()),
-                "source_event_id": event.event_id,
-                "topic": (
-                    f"am.local.{admitted.identity.brain_id}.ingestion.agent-event-appended.v1"
+        payload_bytes = payload.encode("utf-8")
+        try:
+            await self._connection.execute(
+                text(
+                    "INSERT INTO outbox_messages "
+                    "(id, source_event_id, topic, message_key, payload, status, priority, "
+                    "not_before, attempts, payload_sha256, created_at, schema_version) VALUES "
+                    "(:id, :source_event_id, :topic, :message_key, :payload, 'ready', 100, "
+                    ":created_at, 0, :payload_sha256, :created_at, 1)"
                 ),
-                "message_key": event.ordering_key,
-                "payload": payload,
-                "created_at": now,
-            },
-        )
+                {
+                    "id": str(uuid7()),
+                    "source_event_id": event.event_id,
+                    "topic": (
+                        f"am.local.{admitted.identity.brain_id}.ingestion.agent-event-appended.v1"
+                    ),
+                    "message_key": event.ordering_key,
+                    "payload": payload,
+                    "payload_sha256": hashlib.sha256(payload_bytes).digest(),
+                    "created_at": now,
+                },
+            )
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
 
-    async def _insert_audit(
+
+class SqliteIngestionAuditRepository:
+    """Append event-acceptance facts to the canonical audit chain."""
+
+    def __init__(self, connection: AsyncConnection) -> None:
+        """Bind audit persistence to its owning Unit of Work connection."""
+        self._connection = connection
+
+    async def append_agent_event(
         self,
         admitted: AdmittedAgentEvent,
         encrypted: EncryptedAgentEvent,
-        now: int,
     ) -> None:
+        """Append one content-free acceptance fact without committing."""
         event = admitted.event
-        previous = (
-            await self._connection.execute(
-                text("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1")
-            )
-        ).scalar_one_or_none()
+        now = _unix_microseconds(admitted.ingested_at)
+        try:
+            previous = (
+                await self._connection.execute(
+                    text("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1")
+                )
+            ).scalar_one_or_none()
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
         previous_hash = previous if isinstance(previous, bytes) else bytes(32)
         fact = json.dumps(
             {
@@ -396,26 +535,29 @@ class SqliteAgentEventRepository:
             separators=(",", ":"),
             sort_keys=True,
         ).encode()
-        await self._connection.execute(
-            text(
-                "INSERT INTO audit_events "
-                "(brain_id, actor_id, action, target_ref, idempotency_key, before_hash, "
-                "after_hash, previous_hash, event_hash, occurred_at, schema_version) VALUES "
-                "(:brain_id, :actor_id, 'agent_event.appended', :target_ref, :key, :before, "
-                ":after, :previous, :event_hash, :occurred_at, 1)"
-            ),
-            {
-                "brain_id": admitted.identity.brain_id,
-                "actor_id": admitted.identity.principal_id,
-                "target_ref": event.event_id,
-                "key": f"agent-event:{event.event_id}",
-                "before": bytes(32),
-                "after": bytes.fromhex(encrypted.canonical_sha256),
-                "previous": previous_hash,
-                "event_hash": hashlib.sha256(previous_hash + fact).digest(),
-                "occurred_at": now,
-            },
-        )
+        try:
+            await self._connection.execute(
+                text(
+                    "INSERT INTO audit_events "
+                    "(brain_id, actor_id, action, target_ref, idempotency_key, before_hash, "
+                    "after_hash, previous_hash, event_hash, occurred_at, schema_version) VALUES "
+                    "(:brain_id, :actor_id, 'agent_event.appended', :target_ref, :key, :before, "
+                    ":after, :previous, :event_hash, :occurred_at, 1)"
+                ),
+                {
+                    "brain_id": admitted.identity.brain_id,
+                    "actor_id": admitted.identity.principal_id,
+                    "target_ref": event.event_id,
+                    "key": f"agent-event:{event.event_id}",
+                    "before": bytes(32),
+                    "after": bytes.fromhex(encrypted.canonical_sha256),
+                    "previous": previous_hash,
+                    "event_hash": hashlib.sha256(previous_hash + fact).digest(),
+                    "occurred_at": now,
+                },
+            )
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
 
 
 def _unix_microseconds(value: datetime) -> int:

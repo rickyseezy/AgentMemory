@@ -26,6 +26,10 @@ if TYPE_CHECKING:
         AppendAgentEventResult,
         EncryptedAgentEvent,
     )
+    from agentmemory.ingestion.domain.durable_processing import (
+        ClaimedOutboxMessage,
+        VerifiedEventProjection,
+    )
     from agentmemory.ingestion.domain.generic_adapter import (
         DecodedTranscriptRecord,
         GitState,
@@ -321,14 +325,47 @@ class AgentEventEnvelopeEncryptor(Protocol):
 
 
 class AgentEventRepository(Protocol):
-    """Append the canonical event and required derivative facts atomically."""
+    """Append only the canonical event index and authenticated envelope."""
 
     async def append(
         self,
         admitted: AdmittedAgentEvent,
         encrypted: EncryptedAgentEvent,
+        artifact_id: str | None,
     ) -> AppendAgentEventResult:
         """Insert or identify an exact idempotent retry."""
+        ...
+
+
+class ArtifactRepository(Protocol):
+    """Persist a content-addressed reference used by one canonical event."""
+
+    async def ensure_reference(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+    ) -> str | None:
+        """Return a Brain-scoped artifact identity or None for inline content."""
+        ...
+
+
+class OutboxRepository(Protocol):
+    """Persist immutable local dispatch intent for an accepted event."""
+
+    async def enqueue(self, admitted: AdmittedAgentEvent) -> None:
+        """Append one checksum-bound ready message without committing."""
+        ...
+
+
+class IngestionAuditRepository(Protocol):
+    """Append tamper-evident audit evidence for ingestion mutations."""
+
+    async def append_agent_event(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+    ) -> None:
+        """Append one content-free event acceptance fact without committing."""
         ...
 
 
@@ -336,6 +373,9 @@ class AgentEventUnitOfWork(Protocol):
     """Transaction containing event, outbox, and audit writes."""
 
     events: AgentEventRepository
+    artifacts: ArtifactRepository
+    outbox: OutboxRepository
+    audit: IngestionAuditRepository
 
     async def __aenter__(self) -> Self:
         """Open the transaction and bind its repositories."""
@@ -360,4 +400,60 @@ class AgentEventUnitOfWorkFactory(Protocol):
 
     def __call__(self) -> AgentEventUnitOfWork:
         """Return one unopened transaction."""
+        ...
+
+
+class CanonicalEventProjectionVerifier(Protocol):
+    """Authenticate one canonical event and derive its terminal processing digest."""
+
+    async def verify(self, message: ClaimedOutboxMessage) -> VerifiedEventProjection:
+        """Return verified receipt material or a typed dependency/integrity failure."""
+        ...
+
+
+class DurableEventProcessingRepository(Protocol):
+    """Lease and atomically finish acknowledged event processing."""
+
+    async def claim_next(
+        self,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+    ) -> ClaimedOutboxMessage | None:
+        """Claim the oldest ready or expired message in a short durable transaction."""
+        ...
+
+    async def complete(
+        self,
+        message: ClaimedOutboxMessage,
+        projection: VerifiedEventProjection,
+        completed_at_microseconds: int,
+    ) -> None:
+        """Commit the terminal receipt and completed outbox state atomically."""
+        ...
+
+    async def require_repair(
+        self,
+        message: ClaimedOutboxMessage,
+        reason_code: str,
+        detected_at_microseconds: int,
+    ) -> None:
+        """Commit a content-free repair alert and terminal queue state atomically."""
+        ...
+
+    async def release_retry(
+        self,
+        message: ClaimedOutboxMessage,
+        reason_code: str,
+        retry_at_microseconds: int,
+    ) -> None:
+        """Release only the exact lease for a later safe retry."""
+        ...
+
+    async def recover_expired_leases(self, now_microseconds: int) -> int:
+        """Return every expired processing lease to the ready state at startup."""
+        ...
+
+    async def alert_unprocessed_events(self, detected_at_microseconds: int) -> int:
+        """Alert on committed events whose atomic outbox intent is absent."""
         ...

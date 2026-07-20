@@ -175,12 +175,14 @@ only_mutate = [
   "*ingestion/domain/generic_adapter.py",
   "*ingestion/domain/capture.py",
   "*ingestion/domain/spool_reconciliation.py",
+  "*ingestion/domain/durable_processing.py",
   "*ingestion/application/adapter_capabilities.py",
   "*ingestion/application/generic_adapter.py",
   "*ingestion/application/append_agent_event.py",
   "*ingestion/application/capture_agent_event.py",
   "*ingestion/application/reconcile_spool.py",
   "*ingestion/application/spool_worker.py",
+  "*ingestion/application/durable_processing.py",
   "*retrieval/domain/continuity.py",
   "*retrieval/application/start_session_briefing.py",
 ]
@@ -205,6 +207,7 @@ pytest_add_cli_args_test_selection = [
   "tests/ingestion/test_adp002_append_application.py",
   "tests/ingestion/test_adp005_reconciliation_domain_application.py",
   "tests/ingestion/test_adp005_recovery_worker.py",
+  "tests/ingestion/test_ing001_durable_processing_domain_application.py",
   "tests/retrieval/test_adp006_continuity_domain.py",
   "tests/retrieval/test_adp006_cross_host_conformance.py",
 ]

@@ -2132,6 +2132,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-004 — Handle backpressure and dead letters
 
+**Implementation record:** [`docs/implementation/ING-004.md`](docs/implementation/ING-004.md) and
+[`docs/runbooks/ING-004-BACKPRESSURE-DLQ.md`](docs/runbooks/ING-004-BACKPRESSURE-DLQ.md).
+
 **User story:** As an operator, overload and poison jobs remain visible and recoverable.
 
 **Acceptance criteria**

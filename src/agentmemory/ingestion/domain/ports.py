@@ -21,6 +21,16 @@ if TYPE_CHECKING:
         PayloadReference,
         ResolvedAgentEventIdentity,
     )
+    from agentmemory.ingestion.domain.backpressure import (
+        CapacitySnapshot,
+        DeadLetter,
+        JobErrorCode,
+        JobRequest,
+        QueueLimits,
+        ReplayDeadLetterRequest,
+        RetryDecision,
+        ScheduledJob,
+    )
     from agentmemory.ingestion.domain.capture import (
         AdmittedAgentEvent,
         AppendAgentEventResult,
@@ -521,6 +531,120 @@ class DurableEventProcessingRepository(Protocol):
 
     async def alert_unprocessed_events(self, detected_at_microseconds: int) -> int:
         """Alert on committed events whose atomic outbox intent is absent."""
+        ...
+
+
+class JobSchedulerRepository(Protocol):
+    """Durable priority queues, leases, retries, and immutable dead letters."""
+
+    async def submit(
+        self,
+        request: JobRequest,
+        limits: QueueLimits,
+        now_microseconds: int,
+    ) -> ScheduledJob:
+        """Idempotently admit one authorized job or raise a typed capacity error."""
+        ...
+
+    async def get(self, job_id: str) -> ScheduledJob | None:
+        """Return one scheduler-owned job or None without exposing job input."""
+        ...
+
+    async def claim_next(
+        self,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+        limits: QueueLimits,
+    ) -> ScheduledJob | None:
+        """Fairly lease one due job from an independently prioritized queue."""
+        ...
+
+    async def succeed(
+        self,
+        job: ScheduledJob,
+        owner: str,
+        result_sha256: str,
+        completed_at_microseconds: int,
+    ) -> ScheduledJob:
+        """Atomically complete only the exact live lease."""
+        ...
+
+    async def fail(  # noqa: PLR0913 -- Lease CAS requires complete typed failure evidence.
+        self,
+        job: ScheduledJob,
+        owner: str,
+        error_code: JobErrorCode,
+        decision: RetryDecision,
+        diagnostic_code: str,
+        failed_at_microseconds: int,
+    ) -> ScheduledJob:
+        """Apply the typed retry policy or append an immutable dead letter."""
+        ...
+
+    async def recover_expired(self, now_microseconds: int) -> int:
+        """Release expired leases to deterministic retry state."""
+        ...
+
+    async def capacity_snapshot(
+        self,
+        *,
+        kind: str,
+        idempotency_key: str,
+    ) -> CapacitySnapshot:
+        """Return a content-free atomic view of scheduler and disk capacity."""
+        ...
+
+    async def list_dead_letters(
+        self,
+        brain_id: str,
+        *,
+        maximum: int,
+    ) -> tuple[DeadLetter, ...]:
+        """Return bounded newest immutable dead letters for one Brain."""
+        ...
+
+    async def get_dead_letter(self, dead_letter_id: str) -> DeadLetter | None:
+        """Return one immutable dead letter or None."""
+        ...
+
+    async def replay_dead_letter(
+        self,
+        request: ReplayDeadLetterRequest,
+        limits: QueueLimits,
+        now_microseconds: int,
+    ) -> ScheduledJob:
+        """Idempotently create a corrected job linked to immutable failure history."""
+        ...
+
+
+class JobSchedulerAccessPolicy(Protocol):
+    """Authorize current actor/grant access to scheduler state."""
+
+    async def authorize(
+        self,
+        actor_id: str,
+        grant_id: str,
+        brain_id: str,
+        now_microseconds: int,
+    ) -> None:
+        """Raise unless the exact current Brain grant is active."""
+        ...
+
+
+class ScheduledJobExecutor(Protocol):
+    """Execute one typed scheduler job behind an adapter-owned boundary."""
+
+    async def execute(self, job: ScheduledJob) -> str:
+        """Return the immutable result SHA-256 or raise a typed job failure."""
+        ...
+
+
+class LocalStorageCapacityProbe(Protocol):
+    """Read content-free free-space evidence for the canonical local volume."""
+
+    def free_bytes(self) -> int:
+        """Return currently available bytes or raise a typed dependency error."""
         ...
 
 

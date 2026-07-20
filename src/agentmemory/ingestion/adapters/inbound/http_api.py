@@ -17,6 +17,7 @@ from agentmemory.ingestion.adapters.inbound.agent_event_schema import (
 from agentmemory.ingestion.domain.capture import AppendDisposition
 from agentmemory.ingestion.domain.errors import (
     IngestionAuthorizationError,
+    IngestionCapacityError,
     IngestionConflictError,
     IngestionDependencyError,
     IngestionValidationError,
@@ -123,6 +124,8 @@ def create_agent_event_router(
             return _problem("AM_FORBIDDEN", 403)
         except IngestionConflictError:
             return _problem("AM_CONFLICT", 409)
+        except IngestionCapacityError:
+            return _problem("AM_CAPACITY_EXHAUSTED", 507, retryable=True)
         except IngestionDependencyError:
             return _problem("AM_DEPENDENCY_UNAVAILABLE", 503, retryable=True)
         response_status = (
@@ -242,7 +245,7 @@ async def _execute_batch_item(
         return _batch_item(event.event_id, SpoolUploadDisposition.REJECTED)
     except IngestionConflictError:
         return _batch_item(event.event_id, SpoolUploadDisposition.CONFLICT)
-    except IngestionDependencyError:
+    except IngestionCapacityError, IngestionDependencyError:
         return _batch_item(event.event_id, SpoolUploadDisposition.RETRYABLE)
     if receipt.disposition is AppendDisposition.ACCEPTED:
         disposition = SpoolUploadDisposition.ACCEPTED

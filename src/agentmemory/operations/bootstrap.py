@@ -46,6 +46,10 @@ from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
 )
+from agentmemory.ingestion.adapters.inbound.backpressure_http_api import (
+    create_backpressure_router,
+    create_contract_backpressure_router,
+)
 from agentmemory.ingestion.adapters.inbound.capability_http_api import (
     create_adapter_capability_router,
     create_contract_adapter_capability_router,
@@ -64,6 +68,12 @@ from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
     SqliteWrappedBrainKeyProvider,
 )
 from agentmemory.ingestion.adapters.outbound.payload_reader import InlineOnlyPayloadReader
+from agentmemory.ingestion.adapters.outbound.sqlite_backpressure import (
+    LocalDiskSpaceProbe,
+    SqliteCaptureCapacityEnforcer,
+    SqliteJobSchedulerAccessPolicy,
+    SqliteJobSchedulerRepository,
+)
 from agentmemory.ingestion.adapters.outbound.sqlite_capabilities import (
     SqliteAdapterCapabilityQueryRepository,
     SqliteAdapterCapabilityUnitOfWorkFactory,
@@ -89,6 +99,13 @@ from agentmemory.ingestion.application.adapter_capabilities import (
     RegisterAgentAdapterHandler,
 )
 from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
+from agentmemory.ingestion.application.backpressure import (
+    GetScheduledJobHandler,
+    JobSchedulerWorker,
+    ListDeadLettersHandler,
+    ReplayDeadLetterHandler,
+    ScheduledJobExecutorRegistry,
+)
 from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
 from agentmemory.ingestion.application.durable_processing import (
     DurableEventProcessingHandler,
@@ -100,6 +117,7 @@ from agentmemory.ingestion.application.ordered_replay import (
     OrderedReplayWorker,
     StartOrderedReplayHandler,
 )
+from agentmemory.ingestion.domain.backpressure import QueueLimits, RetryPolicy
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
     ApiDependencies,
@@ -315,6 +333,17 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.installation_root_key_file,
     )
     ordered_replay_worker = _create_ordered_replay_worker(store, clock)
+    queue_limits = resolved.queue_limits
+    storage_capacity = LocalDiskSpaceProbe(resolved.state_directory)
+    scheduler_repository = SqliteJobSchedulerRepository(store, storage_capacity)
+    scheduler_worker = JobSchedulerWorker(
+        scheduler_repository,
+        ScheduledJobExecutorRegistry({}),
+        RetryPolicy.default(),
+        queue_limits,
+        clock,
+        "core-scheduler-v1",
+    )
     runtime_probes = (
         FunctionalReadinessProbe(
             ReadinessProbe.SQLITE_INTEGRITY,
@@ -373,6 +402,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(projection_worker.run(stop)),
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
                 asyncio.create_task(ordered_replay_worker.run(stop)),
+                asyncio.create_task(scheduler_worker.run(stop)),
             )
             yield
         finally:
@@ -395,6 +425,8 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         clock,
         authenticator,
         resolved.installation_root_key_file,
+        queue_limits,
+        storage_capacity,
     )
     return application
 
@@ -440,6 +472,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
             create_contract_ordered_replay_router(),
+            create_contract_backpressure_router(),
         )
     )
 
@@ -538,12 +571,14 @@ def _create_retrieval_runtime_router(
     )
 
 
-def _include_ingestion_runtime_routers(
+def _include_ingestion_runtime_routers(  # noqa: PLR0913 -- Outer composition is explicit.
     application: FastAPI,
     store: SqliteCoreStore,
     clock: SystemClock,
     authenticator: ApiAuthenticator,
     installation_root_key_file: Path,
+    queue_limits: QueueLimits,
+    storage_capacity: LocalDiskSpaceProbe,
 ) -> None:
     """Compose and install all ingestion routers at the outermost boundary."""
     replay_repository = SqliteOrderedReplayRepository(store)
@@ -553,6 +588,21 @@ def _include_ingestion_runtime_routers(
             authenticator,
             StartOrderedReplayHandler(replay_access, replay_repository, clock),
             GetOrderedReplayHandler(replay_access, replay_repository, clock),
+        )
+    )
+    scheduler_repository = SqliteJobSchedulerRepository(store, storage_capacity)
+    scheduler_access = SqliteJobSchedulerAccessPolicy(store)
+    application.include_router(
+        create_backpressure_router(
+            authenticator,
+            GetScheduledJobHandler(scheduler_access, scheduler_repository, clock),
+            ListDeadLettersHandler(scheduler_access, scheduler_repository, clock),
+            ReplayDeadLetterHandler(
+                scheduler_access,
+                scheduler_repository,
+                queue_limits,
+                clock,
+            ),
         )
     )
     application.include_router(
@@ -574,7 +624,11 @@ def _include_ingestion_runtime_routers(
                             clock,
                         )
                     ),
-                    SqliteAgentEventUnitOfWorkFactory(store, clock),
+                    SqliteAgentEventUnitOfWorkFactory(
+                        store,
+                        clock,
+                        SqliteCaptureCapacityEnforcer(storage_capacity, queue_limits),
+                    ),
                 ),
                 clock,
             ),

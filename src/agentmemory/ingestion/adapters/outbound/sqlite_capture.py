@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from agentmemory.operations.adapters.outbound.sqlite_store import SqliteCoreStore
     from agentmemory.shared.clock import Clock
 
+    from .sqlite_backpressure import SqliteCaptureCapacityEnforcer
+
 _SCOPE_QUERY = """
 SELECT p.id AS principal_id, b.id AS brain_id, project.id AS project_id,
        repository.id AS repository_id, checkout.id AS checkout_id
@@ -145,10 +147,16 @@ class SqliteAgentEventScopeResolver:
 class SqliteAgentEventUnitOfWork:
     """Own one serialized FULL-durability event/outbox/audit transaction."""
 
-    def __init__(self, store: SqliteCoreStore, clock: Clock) -> None:
+    def __init__(
+        self,
+        store: SqliteCoreStore,
+        clock: Clock,
+        capacity: SqliteCaptureCapacityEnforcer | None = None,
+    ) -> None:
         """Bind the single-writer store and policy clock."""
         self._store = store
         self._clock = clock
+        self._capacity = capacity
         self._connection: AsyncConnection | None = None
         self._committed = False
         self.events: AgentEventRepository
@@ -175,7 +183,7 @@ class SqliteAgentEventUnitOfWork:
             self._store.write_lock.release()
             raise
         connection = self._require_connection()
-        self.events = SqliteAgentEventRepository(connection)
+        self.events = SqliteAgentEventRepository(connection, self._capacity)
         self.artifacts = SqliteArtifactRepository(connection)
         self.outbox = SqliteOutboxRepository(connection)
         self.audit = SqliteIngestionAuditRepository(connection)
@@ -228,22 +236,33 @@ class SqliteAgentEventUnitOfWork:
 class SqliteAgentEventUnitOfWorkFactory:
     """Create a fresh append transaction per command."""
 
-    def __init__(self, store: SqliteCoreStore, clock: Clock) -> None:
+    def __init__(
+        self,
+        store: SqliteCoreStore,
+        clock: Clock,
+        capacity: SqliteCaptureCapacityEnforcer | None = None,
+    ) -> None:
         """Retain stable dependencies only; transactions are created per call."""
         self._store = store
         self._clock = clock
+        self._capacity = capacity
 
     def __call__(self) -> AgentEventUnitOfWork:
         """Return one unopened transaction."""
-        return SqliteAgentEventUnitOfWork(self._store, self._clock)
+        return SqliteAgentEventUnitOfWork(self._store, self._clock, self._capacity)
 
 
 class SqliteAgentEventRepository:
     """Persist only the canonical event index and authenticated envelope."""
 
-    def __init__(self, connection: AsyncConnection) -> None:
+    def __init__(
+        self,
+        connection: AsyncConnection,
+        capacity: SqliteCaptureCapacityEnforcer | None = None,
+    ) -> None:
         """Bind this aggregate repository to its owning transaction."""
         self._connection = connection
+        self._capacity = capacity
 
     async def append(
         self,
@@ -253,6 +272,8 @@ class SqliteAgentEventRepository:
     ) -> AppendAgentEventResult:
         """Insert canonical facts or identify a byte-identical idempotent retry."""
         event = admitted.event
+        if self._capacity is not None:
+            await self._capacity.assert_admissible(self._connection, event.event_id)
         existing = (
             (
                 await self._connection.execute(

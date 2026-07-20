@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agentmemory.ingestion.domain.backpressure import JobErrorCode
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -53,6 +57,26 @@ class IngestionConflictError(RuntimeError):
 
 class IngestionDependencyError(RuntimeError):
     """Hide unavailable adapter or identity dependencies behind a typed failure."""
+
+
+class IngestionCapacityError(RuntimeError):
+    """Reject new work before persistence when a configured local limit is reached."""
+
+    def __init__(self, reason_code: str, *, retryable: bool) -> None:
+        """Retain only a stable content-free limit reason and retryability."""
+        self.reason_code = reason_code
+        self.retryable = retryable
+        super().__init__("Local AgentMemory capacity is unavailable")
+
+
+class ScheduledJobExecutionError(RuntimeError):
+    """Carry a typed worker outcome without persisting an arbitrary exception."""
+
+    def __init__(self, error_code: JobErrorCode, diagnostic_code: str) -> None:
+        """Retain only closed error and diagnostic codes."""
+        self.error_code = error_code
+        self.diagnostic_code = diagnostic_code
+        super().__init__("Scheduled AgentMemory work failed")
 
 
 class IngestionIntegrityError(RuntimeError):

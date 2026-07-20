@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Literal, Self, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agentmemory.ingestion.domain.backpressure import QueueLimits
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -53,6 +55,13 @@ class CoreSettings(BaseSettings):
     reranking_model_revision: str = Field(min_length=7, max_length=128)
     extraction_model_revision: str = Field(min_length=7, max_length=128)
     egress_enabled: Literal[False] = False
+    scheduler_soft_pending: int = Field(default=10_000, ge=10, le=10_000_000)
+    scheduler_hard_pending: int = Field(default=20_000, ge=20, le=20_000_000)
+    scheduler_reserved_interactive: int = Field(default=2_000, ge=1)
+    scheduler_reserved_capture: int = Field(default=4_000, ge=1)
+    scheduler_soft_free_bytes: int = Field(default=2 * 1024**3, ge=1)
+    scheduler_hard_free_bytes: int = Field(default=512 * 1024**2, ge=0)
+    scheduler_background_stride: int = Field(default=16, ge=2, le=1024)
 
     @classmethod
     def from_environment(cls) -> Self:
@@ -64,6 +73,20 @@ class CoreSettings(BaseSettings):
     def database_path(self) -> Path:
         """Return the only active canonical SQLite file."""
         return self.state_directory / "agentmemory.sqlite3"
+
+    @property
+    def queue_limits(self) -> QueueLimits:
+        """Return one validated immutable production scheduling policy."""
+        return QueueLimits(
+            self.scheduler_soft_pending,
+            self.scheduler_hard_pending,
+            self.scheduler_reserved_interactive,
+            self.scheduler_reserved_capture,
+            self.scheduler_soft_free_bytes,
+            self.scheduler_hard_free_bytes,
+            self.scheduler_background_stride,
+            (70, 85, 100),
+        )
 
     @property
     def allowed_hosts(self) -> tuple[str, str, str]:

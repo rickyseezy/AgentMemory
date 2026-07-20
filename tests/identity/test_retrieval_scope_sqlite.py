@@ -56,7 +56,7 @@ def test_id004_migration_expands_grants_and_round_trips(tmp_path: Path) -> None:
     database = tmp_path / "migration.sqlite3"
     configuration = _config(database)
     alembic_command.upgrade(configuration, "0005_id003_repository_topology")
-    alembic_command.upgrade(configuration, "head")
+    alembic_command.upgrade(configuration, "0006_id004_retrieval_scope")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "0006_id004_retrieval_scope",

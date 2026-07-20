@@ -51,6 +51,9 @@ def load_score(directory: Path) -> MutationScore:
                 msg = "mutation result identity is duplicated"
                 raise MutationEvidenceError(msg)
             results[mutant] = exit_code
+    if not results:
+        msg = "mutation evidence contains no completed results"
+        raise MutationEvidenceError(msg)
     killed = sum(exit_code != 0 for exit_code in results.values())
     return MutationScore(killed=killed, survived=len(results) - killed)
 
@@ -96,12 +99,31 @@ def _load_metadata(path: Path) -> dict[str, int]:
         msg = "mutation metadata root is invalid"
         raise MutationEvidenceError(msg)
     mapping = cast("dict[object, object]", document)
+    raw, durations, estimates = _validated_mappings(mapping)
+    if not raw:
+        return {}
+    results: dict[str, int] = {}
+    if set(raw) != set(durations) or set(raw) != set(estimates):
+        msg = "mutation metadata is incomplete"
+        raise MutationEvidenceError(msg)
+    for mutant, exit_code in raw.items():
+        if not isinstance(mutant, str) or not mutant or not isinstance(exit_code, int):
+            msg = "mutation result is malformed"
+            raise MutationEvidenceError(msg)
+        results[mutant] = exit_code
+    return results
+
+
+def _validated_mappings(
+    mapping: dict[object, object],
+) -> tuple[dict[object, object], dict[object, object], dict[object, object]]:
+    """Validate complete Mutmut result/duration mapping shapes, including empty files."""
     raw = mapping.get("exit_code_by_key")
     durations = mapping.get("durations_by_key")
     estimates = mapping.get("estimated_durations_by_key")
     type_errors = mapping.get("type_check_error_by_key")
-    if not isinstance(raw, dict) or not raw:
-        msg = "mutation metadata has no completed results"
+    if not isinstance(raw, dict):
+        msg = "mutation metadata has no result mapping"
         raise MutationEvidenceError(msg)
     if (
         not isinstance(durations, dict)
@@ -111,19 +133,14 @@ def _load_metadata(path: Path) -> dict[str, int]:
     ):
         msg = "mutation metadata is incomplete"
         raise MutationEvidenceError(msg)
-    duration_values = cast("dict[object, object]", durations)
-    estimate_values = cast("dict[object, object]", estimates)
-    results: dict[str, int] = {}
-    raw_results = cast("dict[object, object]", raw)
-    if set(raw_results) != set(duration_values) or set(raw_results) != set(estimate_values):
-        msg = "mutation metadata is incomplete"
+    if not raw and (durations or estimates or type_errors):
+        msg = "empty mutation metadata is inconsistent"
         raise MutationEvidenceError(msg)
-    for mutant, exit_code in raw_results.items():
-        if not isinstance(mutant, str) or not mutant or not isinstance(exit_code, int):
-            msg = "mutation result is malformed"
-            raise MutationEvidenceError(msg)
-        results[mutant] = exit_code
-    return results
+    return (
+        cast("dict[object, object]", raw),
+        cast("dict[object, object]", durations),
+        cast("dict[object, object]", estimates),
+    )
 
 
 if __name__ == "__main__":

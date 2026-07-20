@@ -13,6 +13,7 @@ authors = [{ name = "AgentMemory contributors" }]
 dependencies = [
   "aiosqlite==0.22.1",
   "alembic==1.18.5",
+  "cryptography==49.0.0",
   "fastapi==0.138.0",
   "greenlet==3.5.3",
   "httpx==0.28.1",
@@ -168,6 +169,9 @@ only_mutate = [
   "*identity/domain/checkout.py",
   "*identity/domain/topology.py",
   "*ingestion/domain/agent_event.py",
+  "*ingestion/domain/capture.py",
+  "*ingestion/application/append_agent_event.py",
+  "*ingestion/application/capture_agent_event.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
@@ -181,6 +185,8 @@ pytest_add_cli_args_test_selection = [
   "tests/ingestion/test_agent_event_domain.py",
   "tests/ingestion/test_agent_event_admission.py",
   "tests/ingestion/test_agent_event_schema.py",
+  "tests/ingestion/test_adp002_envelope_crypto.py",
+  "tests/ingestion/test_adp002_append_application.py",
 ]
-mutate_only_covered_lines = true
+mutate_only_covered_lines = false
 use_setproctitle = false

@@ -1948,6 +1948,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ADP-002 — Capture without slowing the host
 
+**Implementation record:** [`docs/implementation/ADP-002.md`](docs/implementation/ADP-002.md) and
+[`docs/runbooks/ADP-002-DURABLE-CAPTURE.md`](docs/runbooks/ADP-002-DURABLE-CAPTURE.md).
+
 **User story:** As a developer, AgentMemory hooks do not materially delay my coding agent.
 
 **Acceptance criteria**

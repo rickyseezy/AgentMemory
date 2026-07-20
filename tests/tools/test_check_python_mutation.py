@@ -55,3 +55,22 @@ def test_mutation_gate_rejects_malformed_or_duplicate_evidence(tmp_path: Path) -
     _evidence(duplicate / "one", {"same": 1})
     _evidence(duplicate / "two", {"same": 1})
     assert main([str(duplicate)]) == 1
+
+
+def test_mutation_gate_allows_generator_metadata_for_files_without_mutants(
+    tmp_path: Path,
+) -> None:
+    directory = _evidence(tmp_path, {"killed": 1})
+    empty = directory / "src" / "no_mutants.py.meta"
+    empty.write_text(
+        json.dumps(
+            {
+                "exit_code_by_key": {},
+                "durations_by_key": {},
+                "estimated_durations_by_key": {},
+                "type_check_error_by_key": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load_score(directory).killed == 1

@@ -46,6 +46,23 @@ from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
 )
+from agentmemory.ingestion.adapters.inbound.http_api import (
+    create_agent_event_router,
+    create_contract_agent_event_router,
+)
+from agentmemory.ingestion.adapters.outbound.canonical_encoder import CanonicalAgentEventEncoder
+from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
+    AesGcmAgentEventEncryptor,
+    SqliteWrappedBrainKeyProvider,
+)
+from agentmemory.ingestion.adapters.outbound.payload_reader import InlineOnlyPayloadReader
+from agentmemory.ingestion.adapters.outbound.sqlite_capture import (
+    SqliteAdapterDescriptorRegistry,
+    SqliteAgentEventScopeResolver,
+    SqliteAgentEventUnitOfWorkFactory,
+)
+from agentmemory.ingestion.application.append_agent_event import AppendAgentEventHandler
+from agentmemory.ingestion.application.capture_agent_event import CaptureAgentEventHandler
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
 from agentmemory.operations.adapters.inbound.http_api import (
     ApiDependencies,
@@ -332,9 +349,33 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             ),
         )
     )
+    application.include_router(
+        create_agent_event_router(
+            authenticator,
+            CaptureAgentEventHandler(
+                SqliteAdapterDescriptorRegistry(store.engine),
+                SqliteAgentEventScopeResolver(store.engine, clock),
+                InlineOnlyPayloadReader(),
+                AppendAgentEventHandler(
+                    CanonicalAgentEventEncoder(),
+                    AesGcmAgentEventEncryptor(
+                        SqliteWrappedBrainKeyProvider(
+                            store,
+                            resolved.installation_root_key_file,
+                            clock,
+                        )
+                    ),
+                    SqliteAgentEventUnitOfWorkFactory(store, clock),
+                ),
+                clock,
+            ),
+        )
+    )
     return application
 
 
 def export_core_openapi_schema() -> dict[str, object]:
     """Build the deterministic complete Core contract across bounded contexts."""
-    return export_openapi_schema((create_contract_identity_router(),))
+    return export_openapi_schema(
+        (create_contract_identity_router(), create_contract_agent_event_router())
+    )

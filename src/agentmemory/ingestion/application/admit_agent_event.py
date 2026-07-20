@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, timedelta
 from typing import TYPE_CHECKING
 
 from agentmemory.ingestion.domain.agent_event import (
     AdapterCapabilityDescriptor,
     AgentEvent,
     CaptureMethod,
-    ResolvedAgentEventIdentity,
     required_capability,
 )
+from agentmemory.ingestion.domain.capture import AdmittedAgentEvent
 from agentmemory.ingestion.domain.errors import (
     IngestionAuthorizationError,
     IngestionValidationError,
@@ -24,16 +24,6 @@ if TYPE_CHECKING:
     from agentmemory.shared.clock import Clock
 
 _MAX_FUTURE_SKEW = timedelta(minutes=5)
-
-
-@dataclass(frozen=True, slots=True)
-class AdmittedAgentEvent:
-    """Validated event paired with authoritative scope and daemon time evidence."""
-
-    event: AgentEvent
-    identity: ResolvedAgentEventIdentity
-    ingested_at: datetime
-    clock_skew_microseconds: int
 
 
 @dataclass(frozen=True, slots=True)

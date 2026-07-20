@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import runpy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -182,6 +182,7 @@ class _Driver:
 
 @dataclass(slots=True)
 class _Store:
+    engine: object = field(default_factory=object)
     observed: bool = False
     closed: bool = False
     fail_start: bool = False

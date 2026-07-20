@@ -1,1 +1,1 @@
-"""Core domain, application, adapter, and integration tests."""
+"""Core operations acceptance and infrastructure tests."""

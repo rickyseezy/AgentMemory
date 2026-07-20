@@ -1,1 +1,1 @@
-"""AgentMemory automated tests."""
+"""AgentMemory test package and shared acceptance fixtures."""

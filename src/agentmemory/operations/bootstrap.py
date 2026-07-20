@@ -10,8 +10,26 @@ from typing import TYPE_CHECKING
 import httpx
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
+from agentmemory.identity.adapters.inbound.http_api import (
+    create_contract_identity_router,
+    create_identity_router,
+)
+from agentmemory.identity.adapters.outbound.sqlite_identity import (
+    SqliteCheckoutRepository,
+    SqliteIdentityAuthorizationPolicy,
+    SqliteProjectRepository,
+    SqliteRepositoryIdentityRepository,
+)
+from agentmemory.identity.application.queries.resolve_workspace import (
+    IdentityResolutionDependencies,
+    ResolveWorkspaceHandler,
+)
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
-from agentmemory.operations.adapters.inbound.http_api import ApiDependencies, create_app
+from agentmemory.operations.adapters.inbound.http_api import (
+    ApiDependencies,
+    create_app,
+    export_openapi_schema,
+)
 from agentmemory.operations.adapters.outbound.egress_attestation import (
     AuthenticatedEgressAttestationCheck,
 )
@@ -227,8 +245,9 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             clock,
         ),
     )
+    authenticator = ApiAuthenticator(resolved.api_credential_file)
     dependencies = ApiDependencies(
-        authenticator=ApiAuthenticator(resolved.api_credential_file),
+        authenticator=authenticator,
         bootstrap=BootstrapLocalBrainHandler(unit_of_work),
         readiness=readiness,
         active_release=ActiveReleaseTransactionHandler(unit_of_work),
@@ -259,4 +278,23 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
                 await task
             await container.close()
 
-    return create_app(dependencies, lifespan)
+    application = create_app(dependencies, lifespan)
+    application.include_router(
+        create_identity_router(
+            authenticator,
+            ResolveWorkspaceHandler(
+                IdentityResolutionDependencies(
+                    SqliteIdentityAuthorizationPolicy(store.engine),
+                    SqliteProjectRepository(store.engine),
+                    SqliteCheckoutRepository(store.engine),
+                    SqliteRepositoryIdentityRepository(store.engine),
+                )
+            ),
+        )
+    )
+    return application
+
+
+def export_core_openapi_schema() -> dict[str, object]:
+    """Build the deterministic complete Core contract across bounded contexts."""
+    return export_openapi_schema((create_contract_identity_router(),))

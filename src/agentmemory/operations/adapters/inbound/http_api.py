@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 from uuid import uuid7
 
-from fastapi import Depends, FastAPI, Header, Request, Response, Security, status
+from fastapi import APIRouter, Depends, FastAPI, Header, Request, Response, Security, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
@@ -529,7 +529,9 @@ def create_app(
     return application
 
 
-def export_openapi_schema() -> dict[str, object]:
+def export_openapi_schema(
+    additional_routers: tuple[APIRouter, ...] = (),
+) -> dict[str, object]:
     """Build the deterministic launcher-client contract without runtime secrets."""
     application = create_app(
         ApiDependencies(
@@ -544,6 +546,8 @@ def export_openapi_schema() -> dict[str, object]:
             allowed_hosts=frozenset({"127.0.0.1:9411"}),
         )
     )
+    for router in additional_routers:
+        application.include_router(router)
     return cast("dict[str, object]", application.openapi())
 
 

@@ -12,13 +12,12 @@ from alembic import command
 from alembic.config import Config
 from neo4j import AsyncGraphDatabase
 
-from agentmemory.operations.adapters.inbound.http_api import export_openapi_schema
 from agentmemory.operations.adapters.outbound.protected_file import (
     read_protected_file,
     require_private_directory,
     zero_secret,
 )
-from agentmemory.operations.bootstrap import create_core_app
+from agentmemory.operations.bootstrap import create_core_app, export_core_openapi_schema
 from agentmemory.operations.infrastructure.configuration import CoreSettings
 from agentmemory.operations.infrastructure.neo4j_migrations import migrate_neo4j
 
@@ -61,7 +60,7 @@ def healthcheck() -> None:
 def export_openapi() -> None:
     """Write deterministic canonical OpenAPI JSON for launcher client generation."""
     payload = json.dumps(
-        export_openapi_schema(), ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        export_core_openapi_schema(), ensure_ascii=False, separators=(",", ":"), sort_keys=True
     )
     sys.stdout.write(f"{payload}\n")
 

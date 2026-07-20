@@ -122,7 +122,7 @@ jobs:
             --branch 80 \
             --changed 80
 
-      - name: Enforce PF-002 critical-domain mutation score
+      - name: Enforce critical-domain mutation score
         run: |
           rm -rf mutants
           uv run mutmut run

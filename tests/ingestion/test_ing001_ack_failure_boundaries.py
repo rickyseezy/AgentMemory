@@ -192,6 +192,11 @@ class _Audit:
         if self.fail:
             raise IngestionDependencyError(_ERR_AUDIT)
 
+    async def append_agent_event_conflict(self, source: object, encrypted: object) -> None:
+        del source, encrypted
+        if self.fail:
+            raise IngestionDependencyError(_ERR_AUDIT)
+
 
 class _UnitOfWork:
     def __init__(self, fail_at: str) -> None:

@@ -18,6 +18,7 @@ from agentmemory.ingestion.domain.capture import (
     AppendDisposition,
     EncryptedAgentEvent,
 )
+from agentmemory.ingestion.domain.errors import IngestionConflictError
 from tests.ingestion.adp002_support import (
     BRAIN_ID,
     EVENT_ID,
@@ -64,8 +65,13 @@ class _Encryptor:
 
 
 class _Repository:
-    def __init__(self, disposition: AppendDisposition) -> None:
+    def __init__(
+        self,
+        disposition: AppendDisposition,
+        error: Exception | None = None,
+    ) -> None:
         self.disposition = disposition
+        self.error = error
 
     async def append(
         self,
@@ -75,6 +81,8 @@ class _Repository:
     ) -> AppendAgentEventResult:
         del admitted, encrypted
         assert artifact_id is None
+        if self.error is not None:
+            raise self.error
         return AppendAgentEventResult(EVENT_ID, self.disposition, 42)
 
 
@@ -95,21 +103,31 @@ class _Outbox:
 class _Audit:
     def __init__(self) -> None:
         self.appended = 0
+        self.conflicts = 0
 
     async def append_agent_event(self, admitted: object, encrypted: object) -> None:
         del admitted, encrypted
         self.appended += 1
 
+    async def append_agent_event_conflict(self, admitted: object, encrypted: object) -> None:
+        del admitted, encrypted
+        self.conflicts += 1
+
 
 class _UnitOfWork:
-    def __init__(self, disposition: AppendDisposition) -> None:
-        self.events: AgentEventRepository = _Repository(disposition)
+    def __init__(
+        self,
+        disposition: AppendDisposition,
+        error: Exception | None = None,
+    ) -> None:
+        self.events: AgentEventRepository = _Repository(disposition, error)
         self.artifacts: ArtifactRepository = _Artifacts()
         self.outbox_fake = _Outbox()
         self.outbox: OutboxRepository = self.outbox_fake
         self.audit_fake = _Audit()
         self.audit: IngestionAuditRepository = self.audit_fake
         self.commits = 0
+        self.exit_errors: list[type[BaseException] | None] = []
 
     async def __aenter__(self) -> Self:
         return self
@@ -120,7 +138,8 @@ class _UnitOfWork:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        del exc_type, exc, traceback
+        del exc, traceback
+        self.exit_errors.append(exc_type)
         return None
 
     async def commit(self) -> None:
@@ -133,6 +152,14 @@ class _Factory:
 
     def __call__(self) -> AgentEventUnitOfWork:
         return self.current
+
+
+@dataclass
+class _SequenceFactory:
+    remaining: list[_UnitOfWork]
+
+    def __call__(self) -> AgentEventUnitOfWork:
+        return self.remaining.pop(0)
 
 
 def _admitted() -> AdmittedAgentEvent:
@@ -160,3 +187,23 @@ async def test_ack_occurs_only_after_new_event_commit(
     assert uow.commits == commits
     assert uow.outbox_fake.enqueued == commits
     assert uow.audit_fake.appended == commits
+
+
+@pytest.mark.asyncio
+async def test_identity_conflict_rolls_back_then_audits_in_fresh_transaction() -> None:
+    conflicting = _UnitOfWork(
+        AppendDisposition.ACCEPTED,
+        IngestionConflictError("same identity, different content"),
+    )
+    conflict_audit = _UnitOfWork(AppendDisposition.DUPLICATE)
+    factory = _SequenceFactory([conflicting, conflict_audit])
+    handler = AppendAgentEventHandler(_Encoder(), _Encryptor(), factory)
+
+    with pytest.raises(IngestionConflictError, match="different content"):
+        await handler.execute(AppendAgentEventCommand(_admitted()))
+
+    assert conflicting.commits == 0
+    assert conflicting.exit_errors == [IngestionConflictError]
+    assert conflict_audit.audit_fake.conflicts == 1
+    assert conflict_audit.commits == 1
+    assert factory.remaining == []

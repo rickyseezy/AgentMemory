@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentmemory.ingestion.domain.capture import AppendDisposition
+from agentmemory.ingestion.domain.errors import IngestionConflictError
 
 if TYPE_CHECKING:
     from agentmemory.ingestion.domain.capture import AdmittedAgentEvent, AppendAgentEventResult
@@ -41,11 +42,17 @@ class AppendAgentEventHandler:
             classification=admitted.event.classification.value,
             plaintext=canonical,
         )
-        async with self.unit_of_work() as unit_of_work:
-            artifact_id = await unit_of_work.artifacts.ensure_reference(admitted, encrypted)
-            result = await unit_of_work.events.append(admitted, encrypted, artifact_id)
-            if result.disposition is AppendDisposition.ACCEPTED:
-                await unit_of_work.outbox.enqueue(admitted)
-                await unit_of_work.audit.append_agent_event(admitted, encrypted)
-                await unit_of_work.commit()
-            return result
+        try:
+            async with self.unit_of_work() as unit_of_work:
+                artifact_id = await unit_of_work.artifacts.ensure_reference(admitted, encrypted)
+                result = await unit_of_work.events.append(admitted, encrypted, artifact_id)
+                if result.disposition is AppendDisposition.ACCEPTED:
+                    await unit_of_work.outbox.enqueue(admitted)
+                    await unit_of_work.audit.append_agent_event(admitted, encrypted)
+                    await unit_of_work.commit()
+                return result
+        except IngestionConflictError:
+            async with self.unit_of_work() as conflict_unit_of_work:
+                await conflict_unit_of_work.audit.append_agent_event_conflict(admitted, encrypted)
+                await conflict_unit_of_work.commit()
+            raise

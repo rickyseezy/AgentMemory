@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0009_ing001_durable_processing"
+EXPECTED_MIGRATION_HEAD = "0010_ing002_idempotent_delivery"
 
 
 class SqliteActiveBrainResolver:
@@ -248,13 +248,21 @@ class SqliteReadinessChecks:
                 text(
                     "INSERT INTO jobs "
                     "(id, brain_id, kind, idempotency_key, state, attempts, lease_owner, "
-                    "lease_until, next_attempt_at, created_at, updated_at, schema_version) VALUES "
+                    "lease_until, next_attempt_at, request_sha256, created_at, updated_at, "
+                    "schema_version) VALUES "
                     "(:id, :brain, 'readiness', :id, 'leased', 1, 'interrupted-worker', :expired, "
-                    ":now, :now, :now, 1) ON CONFLICT(kind, idempotency_key) DO UPDATE SET "
+                    ":now, :request_hash, :now, :now, 1) "
+                    "ON CONFLICT(kind, idempotency_key) DO UPDATE SET "
                     "state = 'leased', attempts = 1, lease_owner = 'interrupted-worker', "
                     "lease_until = excluded.lease_until, updated_at = excluded.updated_at"
                 ),
-                {"id": job_id, "brain": brain, "expired": now - 1, "now": now},
+                {
+                    "id": job_id,
+                    "brain": brain,
+                    "expired": now - 1,
+                    "now": now,
+                    "request_hash": hashlib.sha256(job_id.encode()).digest(),
+                },
             )
             recovered = await connection.execute(
                 text(

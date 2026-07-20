@@ -559,6 +559,100 @@ class SqliteIngestionAuditRepository:
         except SQLAlchemyError as error:
             raise IngestionDependencyError(_ERR_ENQUEUE) from error
 
+    async def append_agent_event_conflict(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+    ) -> None:
+        """Persist one deduplicated ID/order conflict and hash-chained audit fact."""
+        event = admitted.event
+        now = _unix_microseconds(admitted.ingested_at)
+        try:
+            existing = (
+                (
+                    await self._connection.execute(
+                        text(
+                            "SELECT e.event_id,x.canonical_sha256 FROM agent_events e "
+                            "JOIN agent_event_envelopes x ON x.event_id=e.event_id "
+                            "WHERE e.event_id=:event OR "
+                            "(x.ordering_key=:ordering_key AND x.sequence=:sequence) "
+                            "ORDER BY CASE WHEN e.event_id=:event THEN 0 ELSE 1 END LIMIT 1"
+                        ),
+                        {
+                            "event": event.event_id,
+                            "ordering_key": event.ordering_key,
+                            "sequence": event.sequence,
+                        },
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            expected = bytes(32) if existing is None else _bytes(existing["canonical_sha256"])
+            identity_source = (
+                f"event:{event.event_id}"
+                if existing is not None and str(existing["event_id"]) == event.event_id
+                else f"order:{event.ordering_key}:{event.sequence}"
+            )
+            identity_hash = hashlib.sha256(identity_source.encode()).hexdigest()
+            actual = bytes.fromhex(encrypted.canonical_sha256)
+            inserted = await self._connection.execute(
+                text(
+                    "INSERT INTO idempotency_conflicts "
+                    "(id,brain_id,namespace,identity_key,expected_sha256,actual_sha256,"
+                    "source_message_id,detected_at,schema_version) VALUES "
+                    "(:id,:brain,'agent_event',:identity,:expected,:actual,NULL,:now,1) "
+                    "ON CONFLICT(namespace,identity_key,actual_sha256) DO NOTHING"
+                ),
+                {
+                    "actual": actual,
+                    "brain": admitted.identity.brain_id,
+                    "expected": expected,
+                    "id": str(uuid7()),
+                    "identity": identity_hash,
+                    "now": now,
+                },
+            )
+            if inserted.rowcount != 1:
+                return
+            previous = (
+                await self._connection.execute(
+                    text("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1")
+                )
+            ).scalar_one_or_none()
+            previous_hash = previous if isinstance(previous, bytes) else bytes(32)
+            fact = json.dumps(
+                {
+                    "action": "agent_event.idempotency_conflict",
+                    "brain_id": admitted.identity.brain_id,
+                    "identity_hash": identity_hash,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+            await self._connection.execute(
+                text(
+                    "INSERT INTO audit_events "
+                    "(brain_id,actor_id,action,target_ref,idempotency_key,before_hash,after_hash,"
+                    "previous_hash,event_hash,occurred_at,schema_version) VALUES "
+                    "(:brain,:actor,'agent_event.idempotency_conflict',:target,:key,:before,"
+                    ":after,:previous,:event_hash,:now,1)"
+                ),
+                {
+                    "actor": admitted.identity.principal_id,
+                    "after": actual,
+                    "before": expected,
+                    "brain": admitted.identity.brain_id,
+                    "event_hash": hashlib.sha256(previous_hash + fact).digest(),
+                    "key": f"agent-event-conflict:{identity_hash}:{encrypted.canonical_sha256}",
+                    "now": now,
+                    "previous": previous_hash,
+                    "target": f"agent-event:{identity_hash}",
+                },
+            )
+        except SQLAlchemyError as error:
+            raise IngestionDependencyError(_ERR_ENQUEUE) from error
+
 
 def _unix_microseconds(value: datetime) -> int:
     return round(value.timestamp() * 1_000_000)

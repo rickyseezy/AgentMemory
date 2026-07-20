@@ -354,13 +354,28 @@ async def test_retry_release_is_due_time_safe_and_rejects_wrong_lease_owner(tmp_
         now = round(NOW.timestamp() * 1_000_000)
         message = await repository.claim_next("worker-a", now, now + 20)
         assert message is not None
-        await repository.release_retry(message, "dependency_unavailable", now + 10)
+        inbox = await repository.claim_inbox(
+            message,
+            "canonical-event-projection-v1",
+            "worker-a",
+            now,
+            now + 20,
+        )
+        await repository.release_retry(message, inbox, "dependency_unavailable", now + 10)
         assert await repository.claim_next("worker-a", now + 9, now + 30) is None
         retried = await repository.claim_next("worker-a", now + 10, now + 30)
         assert retried is not None
+        retried_inbox = await repository.claim_inbox(
+            retried,
+            "canonical-event-projection-v1",
+            "worker-a",
+            now + 10,
+            now + 30,
+        )
         with pytest.raises(IngestionIntegrityError, match="lease diverged"):
             await repository.release_retry(
                 replace(retried, lease_owner="wrong-worker"),
+                retried_inbox,
                 "dependency_unavailable",
                 now + 40,
             )
@@ -415,10 +430,18 @@ async def test_missing_envelope_and_projection_identity_mismatch_fail_closed(
         now = round(NOW.timestamp() * 1_000_000)
         message = await repository.claim_next("worker-a", now, now + 10)
         assert message is not None
+        inbox = await repository.claim_inbox(
+            message,
+            "canonical-event-projection-v1",
+            "worker-a",
+            now,
+            now + 10,
+        )
         wrong_event = "018f0000-0000-7000-8000-000000000102"
         with pytest.raises(IngestionIntegrityError, match="integrity verification"):
             await repository.complete(
                 message,
+                inbox,
                 VerifiedEventProjection(wrong_event, "a" * 64, "b" * 64),
                 now,
             )

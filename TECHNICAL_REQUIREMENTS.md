@@ -2087,6 +2087,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ING-002 — Make at-least-once delivery idempotent
 
+**Implementation record:** [`docs/implementation/ING-002.md`](docs/implementation/ING-002.md) and
+[`docs/runbooks/ING-002-IDEMPOTENT-DELIVERY.md`](docs/runbooks/ING-002-IDEMPOTENT-DELIVERY.md).
+
 **User story:** As an operator, retries do not duplicate memories, graph facts, provider charges, or audit outcomes.
 
 **Acceptance criteria**

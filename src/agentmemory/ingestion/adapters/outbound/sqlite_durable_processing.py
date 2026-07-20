@@ -18,9 +18,12 @@ from agentmemory.ingestion.adapters.outbound.envelope_crypto import (
 from agentmemory.ingestion.domain.capture import EncryptedAgentEvent
 from agentmemory.ingestion.domain.durable_processing import (
     ClaimedOutboxMessage,
+    InboxClaimDisposition,
+    InboxReceiptClaim,
     VerifiedEventProjection,
 )
 from agentmemory.ingestion.domain.errors import (
+    IngestionConflictError,
     IngestionDependencyError,
     IngestionIntegrityError,
     IngestionValidationError,
@@ -38,9 +41,11 @@ if TYPE_CHECKING:
 _ERR_STORAGE = "Durable event processing storage is unavailable"
 _ERR_INTEGRITY = "Canonical event integrity verification failed"
 _ERR_LEASE = "Durable event processing lease diverged"
+_ERR_INBOX_CONFLICT = "Inbox message identity conflicts with committed input"
 _REPAIR_DETAILS = "Canonical event integrity verification failed"
 _OUTBOX_KEYS = frozenset({"brain_id", "event_id", "event_type", "schema_version"})
 _STARTUP_SCAN_LIMIT = 100
+_PROJECTION_GENERATION = "canonical-event-projection-v1"
 
 _VERIFY_QUERY = """
 SELECT o.id AS message_id, o.source_event_id, o.topic, o.payload, o.payload_sha256,
@@ -120,11 +125,16 @@ class SqliteDurableEventProcessingRepository:
     async def complete(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         projection: VerifiedEventProjection,
         completed_at_microseconds: int,
     ) -> None:
         """Commit exactly one terminal receipt together with lease completion."""
-        if projection.event_id != message.event_id:
+        if (
+            projection.event_id != message.event_id
+            or inbox.disposition is not InboxClaimDisposition.CLAIMED
+            or inbox.owner is None
+        ):
             raise IngestionIntegrityError(_ERR_INTEGRITY)
         async with _WriteTransaction(self._store) as transaction:
             await transaction.connection.execute(
@@ -151,11 +161,249 @@ class SqliteDurableEventProcessingRepository:
                 completed_at_microseconds,
                 None,
             )
+            await transaction.connection.execute(
+                text(
+                    "INSERT INTO projection_idempotency_receipts "
+                    "(projection_name,idempotency_key,brain_id,source_message_id,"
+                    "projection_generation,request_sha256,result_sha256,completed_at,"
+                    "created_at,schema_version) VALUES "
+                    "(:projection,:key,:brain,:message,:generation,:request,:result,:now,:now,1)"
+                ),
+                {
+                    "brain": message.brain_id,
+                    "generation": _PROJECTION_GENERATION,
+                    "key": message.event_id,
+                    "message": message.message_id,
+                    "now": completed_at_microseconds,
+                    "projection": inbox.consumer,
+                    "request": bytes.fromhex(inbox.request_sha256),
+                    "result": bytes.fromhex(projection.projection_sha256),
+                },
+            )
+            inbox_updated = await transaction.connection.execute(
+                text(
+                    "UPDATE inbox_receipts SET state='completed',lease_owner=NULL,"
+                    "lease_until=NULL,result_sha256=:result,processed_at=:now,updated_at=:now "
+                    "WHERE consumer=:consumer AND idempotency_key=:key AND state='processing' "
+                    "AND lease_owner=:owner"
+                ),
+                {
+                    "consumer": inbox.consumer,
+                    "key": message.event_id,
+                    "now": completed_at_microseconds,
+                    "owner": inbox.owner,
+                    "result": bytes.fromhex(projection.projection_sha256),
+                },
+            )
+            if inbox_updated.rowcount != 1:
+                raise IngestionIntegrityError(_ERR_LEASE)
+            await _append_projection_audit(
+                transaction.connection,
+                message,
+                projection,
+                completed_at_microseconds,
+            )
+            await transaction.commit()
+
+    async def claim_inbox(
+        self,
+        message: ClaimedOutboxMessage,
+        consumer: str,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+    ) -> InboxReceiptClaim:
+        """Claim one consumer identity or replay its exact committed result."""
+        conflict = False
+        repair_required = False
+        async with _WriteTransaction(self._store) as transaction:
+            row = (
+                (
+                    await transaction.connection.execute(
+                        text(
+                            "SELECT * FROM inbox_receipts WHERE consumer=:consumer "
+                            "AND (message_id=:message OR idempotency_key=:key) "
+                            "ORDER BY CASE WHEN message_id=:message THEN 0 ELSE 1 END LIMIT 1"
+                        ),
+                        {
+                            "consumer": consumer,
+                            "key": message.event_id,
+                            "message": message.message_id,
+                        },
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                await transaction.connection.execute(
+                    text(
+                        "INSERT INTO inbox_receipts "
+                        "(consumer,message_id,idempotency_key,brain_id,request_sha256,state,"
+                        "attempts,lease_owner,lease_until,created_at,updated_at,schema_version) "
+                        "VALUES (:consumer,:message,:key,:brain,:request,'processing',1,:owner,"
+                        ":lease,:now,:now,1)"
+                    ),
+                    {
+                        "brain": message.brain_id,
+                        "consumer": consumer,
+                        "key": message.event_id,
+                        "lease": lease_until_microseconds,
+                        "message": message.message_id,
+                        "now": now_microseconds,
+                        "owner": owner,
+                        "request": bytes.fromhex(message.payload_sha256),
+                    },
+                )
+                claim = InboxReceiptClaim(
+                    consumer,
+                    message.message_id,
+                    message.event_id,
+                    message.payload_sha256,
+                    InboxClaimDisposition.CLAIMED,
+                    owner,
+                    lease_until_microseconds,
+                    1,
+                    None,
+                )
+            elif _bytes(row["request_sha256"]).hex() != message.payload_sha256:
+                await _append_inbox_conflict(
+                    transaction.connection,
+                    message,
+                    consumer,
+                    _bytes(row["request_sha256"]),
+                    now_microseconds,
+                )
+                if str(row["state"]) != "repair_required":
+                    await _upsert_repair_alert(
+                        transaction.connection,
+                        message,
+                        "idempotency_conflict",
+                        now_microseconds,
+                    )
+                    await _finish_lease(
+                        transaction.connection,
+                        message,
+                        "repair_required",
+                        None,
+                        "idempotency_conflict",
+                    )
+                    await transaction.connection.execute(
+                        text(
+                            "UPDATE inbox_receipts SET state='repair_required',lease_owner=NULL,"
+                            "lease_until=NULL,processed_at=:now,updated_at=:now "
+                            "WHERE consumer=:consumer AND idempotency_key=:key "
+                            "AND state='processing'"
+                        ),
+                        {
+                            "consumer": consumer,
+                            "key": message.event_id,
+                            "now": now_microseconds,
+                        },
+                    )
+                conflict = True
+                claim = _inbox_wait_claim(message, consumer, int(str(row["attempts"])))
+            elif str(row["state"]) == "completed":
+                claim = InboxReceiptClaim(
+                    consumer,
+                    message.message_id,
+                    message.event_id,
+                    message.payload_sha256,
+                    InboxClaimDisposition.REPLAY,
+                    None,
+                    None,
+                    int(str(row["attempts"])),
+                    _bytes(row["result_sha256"]).hex(),
+                )
+            elif str(row["state"]) == "repair_required":
+                repair_required = True
+                claim = _inbox_wait_claim(message, consumer, int(str(row["attempts"])))
+            elif int(str(row["lease_until"])) > now_microseconds:
+                claim = _inbox_wait_claim(message, consumer, int(str(row["attempts"])))
+            else:
+                updated = await transaction.connection.execute(
+                    text(
+                        "UPDATE inbox_receipts SET lease_owner=:owner,lease_until=:lease,"
+                        "attempts=attempts+1,updated_at=:now WHERE consumer=:consumer "
+                        "AND idempotency_key=:key AND state='processing' AND lease_until<=:now"
+                    ),
+                    {
+                        "consumer": consumer,
+                        "key": message.event_id,
+                        "lease": lease_until_microseconds,
+                        "now": now_microseconds,
+                        "owner": owner,
+                    },
+                )
+                if updated.rowcount != 1:
+                    claim = _inbox_wait_claim(message, consumer, int(str(row["attempts"])))
+                else:
+                    claim = InboxReceiptClaim(
+                        consumer,
+                        message.message_id,
+                        message.event_id,
+                        message.payload_sha256,
+                        InboxClaimDisposition.CLAIMED,
+                        owner,
+                        lease_until_microseconds,
+                        int(str(row["attempts"])) + 1,
+                        None,
+                    )
+            await transaction.commit()
+        if conflict:
+            raise IngestionConflictError(_ERR_INBOX_CONFLICT)
+        if repair_required:
+            raise IngestionIntegrityError(_ERR_INTEGRITY)
+        return claim
+
+    async def complete_replay(
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        completed_at_microseconds: int,
+    ) -> None:
+        """Validate exact terminal evidence before ACKing a repeated delivery."""
+        if inbox.disposition is not InboxClaimDisposition.REPLAY or inbox.result_sha256 is None:
+            raise IngestionIntegrityError(_ERR_INTEGRITY)
+        async with _WriteTransaction(self._store) as transaction:
+            row = (
+                (
+                    await transaction.connection.execute(
+                        text(
+                            "SELECT i.result_sha256,p.result_sha256 AS projection_sha256,"
+                            "p.request_sha256 "
+                            "FROM inbox_receipts i JOIN projection_idempotency_receipts p "
+                            "ON p.projection_name=i.consumer AND "
+                            "p.idempotency_key=i.idempotency_key "
+                            "WHERE i.consumer=:consumer AND i.idempotency_key=:key "
+                            "AND i.state='completed'"
+                        ),
+                        {"consumer": inbox.consumer, "key": message.event_id},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                row is None
+                or _bytes(row["result_sha256"]).hex() != inbox.result_sha256
+                or _bytes(row["projection_sha256"]).hex() != inbox.result_sha256
+                or _bytes(row["request_sha256"]).hex() != message.payload_sha256
+            ):
+                raise IngestionIntegrityError(_ERR_INTEGRITY)
+            await _finish_lease(
+                transaction.connection,
+                message,
+                "completed",
+                completed_at_microseconds,
+                None,
+            )
             await transaction.commit()
 
     async def require_repair(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         reason_code: str,
         detected_at_microseconds: int,
     ) -> None:
@@ -175,11 +423,17 @@ class SqliteDurableEventProcessingRepository:
                 reason_code,
             )
             await _append_repair_audit(transaction.connection, message, detected_at_microseconds)
+            await _finish_inbox_repair(
+                transaction.connection,
+                inbox,
+                detected_at_microseconds,
+            )
             await transaction.commit()
 
     async def release_retry(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         reason_code: str,
         retry_at_microseconds: int,
     ) -> None:
@@ -200,6 +454,22 @@ class SqliteDurableEventProcessingRepository:
             )
             if updated.rowcount != 1:
                 raise IngestionIntegrityError(_ERR_LEASE)
+            if inbox.disposition is InboxClaimDisposition.CLAIMED:
+                inbox_updated = await transaction.connection.execute(
+                    text(
+                        "UPDATE inbox_receipts SET lease_until=:retry,updated_at=:retry "
+                        "WHERE consumer=:consumer AND idempotency_key=:key "
+                        "AND state='processing' AND lease_owner=:owner"
+                    ),
+                    {
+                        "consumer": inbox.consumer,
+                        "key": message.event_id,
+                        "owner": inbox.owner,
+                        "retry": retry_at_microseconds,
+                    },
+                )
+                if inbox_updated.rowcount != 1:
+                    raise IngestionIntegrityError(_ERR_LEASE)
             await transaction.commit()
 
     async def recover_expired_leases(self, now_microseconds: int) -> int:
@@ -494,6 +764,150 @@ def _verify_event_index(event: object, row: RowMapping, message: ClaimedOutboxMe
         or str(row["artifact_classification"]) != event.classification.value
     ):
         raise IngestionIntegrityError(_ERR_INTEGRITY)
+
+
+def _inbox_wait_claim(
+    message: ClaimedOutboxMessage,
+    consumer: str,
+    attempt: int,
+) -> InboxReceiptClaim:
+    return InboxReceiptClaim(
+        consumer,
+        message.message_id,
+        message.event_id,
+        message.payload_sha256,
+        InboxClaimDisposition.WAIT,
+        None,
+        None,
+        attempt,
+        None,
+    )
+
+
+async def _finish_inbox_repair(
+    connection: AsyncConnection,
+    inbox: InboxReceiptClaim,
+    detected_at: int,
+) -> None:
+    if inbox.disposition is not InboxClaimDisposition.CLAIMED or inbox.owner is None:
+        raise IngestionIntegrityError(_ERR_LEASE)
+    result = await connection.execute(
+        text(
+            "UPDATE inbox_receipts SET state='repair_required',lease_owner=NULL,"
+            "lease_until=NULL,processed_at=:now,updated_at=:now WHERE consumer=:consumer "
+            "AND message_id=:message AND state='processing' AND lease_owner=:owner"
+        ),
+        {
+            "consumer": inbox.consumer,
+            "message": inbox.message_id,
+            "now": detected_at,
+            "owner": inbox.owner,
+        },
+    )
+    if result.rowcount != 1:
+        raise IngestionIntegrityError(_ERR_LEASE)
+
+
+async def _append_inbox_conflict(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    consumer: str,
+    expected_sha256: bytes,
+    detected_at: int,
+) -> None:
+    identity_hash = hashlib.sha256(f"{consumer}\x00{message.message_id}".encode()).hexdigest()
+    actual = bytes.fromhex(message.payload_sha256)
+    inserted = await connection.execute(
+        text(
+            "INSERT INTO idempotency_conflicts "
+            "(id,brain_id,namespace,identity_key,expected_sha256,actual_sha256,"
+            "source_message_id,detected_at,schema_version) VALUES "
+            "(:id,:brain,'inbox',:identity,:expected,:actual,:message,:now,1) "
+            "ON CONFLICT(namespace,identity_key,actual_sha256) DO NOTHING"
+        ),
+        {
+            "actual": actual,
+            "brain": message.brain_id,
+            "expected": expected_sha256,
+            "id": str(uuid7()),
+            "identity": identity_hash,
+            "message": message.message_id,
+            "now": detected_at,
+        },
+    )
+    if inserted.rowcount != 1:
+        return
+    previous_hash = await _previous_audit_hash(connection)
+    fact = _audit_fact(
+        "ingestion.idempotency_conflict",
+        message.brain_id,
+        identity_hash,
+    )
+    await connection.execute(
+        text(
+            "INSERT INTO audit_events "
+            "(brain_id,actor_id,action,target_ref,idempotency_key,before_hash,after_hash,"
+            "previous_hash,event_hash,occurred_at,schema_version) VALUES "
+            "(:brain,'system:ingestion-idempotency','ingestion.idempotency_conflict',:target,"
+            ":key,:before,:after,:previous,:event_hash,:now,1)"
+        ),
+        {
+            "after": actual,
+            "before": expected_sha256,
+            "brain": message.brain_id,
+            "event_hash": hashlib.sha256(previous_hash + fact).digest(),
+            "key": f"inbox-conflict:{identity_hash}:{message.payload_sha256}",
+            "now": detected_at,
+            "previous": previous_hash,
+            "target": f"inbox:{identity_hash}",
+        },
+    )
+
+
+async def _append_projection_audit(
+    connection: AsyncConnection,
+    message: ClaimedOutboxMessage,
+    projection: VerifiedEventProjection,
+    completed_at: int,
+) -> None:
+    previous_hash = await _previous_audit_hash(connection)
+    fact = _audit_fact("ingestion.event_projected", message.brain_id, message.event_id)
+    await connection.execute(
+        text(
+            "INSERT INTO audit_events "
+            "(brain_id,actor_id,action,target_ref,idempotency_key,before_hash,after_hash,"
+            "previous_hash,event_hash,occurred_at,schema_version) VALUES "
+            "(:brain,'system:ingestion-projection','ingestion.event_projected',:event,:key,"
+            ":before,:after,:previous,:event_hash,:now,1)"
+        ),
+        {
+            "after": bytes.fromhex(projection.projection_sha256),
+            "before": bytes.fromhex(projection.canonical_sha256),
+            "brain": message.brain_id,
+            "event": message.event_id,
+            "event_hash": hashlib.sha256(previous_hash + fact).digest(),
+            "key": f"ingestion-projected:{message.event_id}",
+            "now": completed_at,
+            "previous": previous_hash,
+        },
+    )
+
+
+async def _previous_audit_hash(connection: AsyncConnection) -> bytes:
+    value = (
+        await connection.execute(
+            text("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1")
+        )
+    ).scalar_one_or_none()
+    return value if isinstance(value, bytes) else bytes(32)
+
+
+def _audit_fact(action: str, brain_id: str, target: str) -> bytes:
+    return json.dumps(
+        {"action": action, "brain_id": brain_id, "target": target},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
 
 
 async def _finish_lease(

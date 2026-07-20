@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from agentmemory.ingestion.domain.durable_processing import (
     DurableProcessingResult,
+    InboxClaimDisposition,
     ProcessingDisposition,
 )
 from agentmemory.ingestion.domain.errors import IngestionDependencyError, IngestionIntegrityError
@@ -24,6 +25,7 @@ _RETRY_MICROSECONDS = 1 * 1_000_000
 _DEFAULT_POLL_SECONDS = 0.5
 _MAX_POLL_SECONDS = 10.0
 _MAX_OWNER_LENGTH = 128
+_CONSUMER = "canonical-event-projection-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +53,38 @@ class DurableEventProcessingHandler:
         )
         if message is None:
             return DurableProcessingResult.idle()
+        inbox = await self.repository.claim_inbox(
+            message,
+            _CONSUMER,
+            self.owner,
+            now,
+            now + _LEASE_MICROSECONDS,
+        )
+        if inbox.disposition is InboxClaimDisposition.REPLAY:
+            await self.repository.complete_replay(message, inbox, now)
+            return DurableProcessingResult(
+                message.message_id,
+                message.event_id,
+                ProcessingDisposition.COMPLETED,
+            )
+        if inbox.disposition is InboxClaimDisposition.WAIT:
+            await self.repository.release_retry(
+                message,
+                inbox,
+                "consumer_claim_busy",
+                now + _RETRY_MICROSECONDS,
+            )
+            return DurableProcessingResult(
+                message.message_id,
+                message.event_id,
+                ProcessingDisposition.RETRY_SCHEDULED,
+            )
         try:
             projection = await self.verifier.verify(message)
         except IngestionIntegrityError:
             await self.repository.require_repair(
                 message,
+                inbox,
                 "canonical_integrity_violation",
                 now,
             )
@@ -63,12 +92,13 @@ class DurableEventProcessingHandler:
         except IngestionDependencyError:
             await self.repository.release_retry(
                 message,
+                inbox,
                 "dependency_unavailable",
                 now + _RETRY_MICROSECONDS,
             )
             disposition = ProcessingDisposition.RETRY_SCHEDULED
         else:
-            await self.repository.complete(message, projection, now)
+            await self.repository.complete(message, inbox, projection, now)
             disposition = ProcessingDisposition.COMPLETED
         return DurableProcessingResult(message.message_id, message.event_id, disposition)
 

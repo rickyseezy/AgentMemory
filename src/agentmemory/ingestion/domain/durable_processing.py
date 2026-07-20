@@ -23,6 +23,14 @@ class ProcessingDisposition(StrEnum):
     RETRY_SCHEDULED = "retry_scheduled"
 
 
+class InboxClaimDisposition(StrEnum):
+    """Closed arbitration result for one consumer/message idempotency receipt."""
+
+    CLAIMED = "claimed"
+    REPLAY = "replay"
+    WAIT = "wait"
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimedOutboxMessage:
     """One bounded message owned by an exact, unexpired processing lease."""
@@ -86,6 +94,50 @@ class VerifiedEventProjection:
         ):
             if _DIGEST.fullmatch(value) is None:
                 raise IngestionValidationError.single(field_name, "invalid_digest")
+
+
+@dataclass(frozen=True, slots=True)
+class InboxReceiptClaim:
+    """Exact consumer claim or committed replay evidence for one message."""
+
+    consumer: str
+    message_id: str
+    event_id: str
+    request_sha256: str
+    disposition: InboxClaimDisposition
+    owner: str | None
+    lease_until_microseconds: int | None
+    attempt: int
+    result_sha256: str | None
+
+    def __post_init__(self) -> None:
+        """Reject ambiguous claim/replay state before any side effect executes."""
+        if _OWNER.fullmatch(self.consumer) is None:
+            field_name = "consumer"
+            raise IngestionValidationError.single(field_name, "invalid")
+        for value, field_name in (
+            (self.message_id, "message_id"),
+            (self.event_id, "event_id"),
+        ):
+            if _UUID7.fullmatch(value) is None:
+                raise IngestionValidationError.single(field_name, "invalid_id")
+        if _DIGEST.fullmatch(self.request_sha256) is None:
+            field_name = "request_sha256"
+            raise IngestionValidationError.single(field_name, "invalid_digest")
+        claimed = self.disposition is InboxClaimDisposition.CLAIMED
+        replay = self.disposition is InboxClaimDisposition.REPLAY
+        if claimed != (self.owner is not None and self.lease_until_microseconds is not None):
+            field_name = "inbox_claim"
+            raise IngestionValidationError.single(field_name, "invalid_lease")
+        if replay != (self.result_sha256 is not None):
+            field_name = "inbox_claim"
+            raise IngestionValidationError.single(field_name, "invalid_result")
+        if self.result_sha256 is not None and _DIGEST.fullmatch(self.result_sha256) is None:
+            field_name = "result_sha256"
+            raise IngestionValidationError.single(field_name, "invalid_digest")
+        if self.attempt < 1:
+            field_name = "attempt"
+            raise IngestionValidationError.single(field_name, "out_of_range")
 
 
 @dataclass(frozen=True, slots=True)

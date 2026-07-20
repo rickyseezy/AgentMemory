@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     )
     from agentmemory.ingestion.domain.durable_processing import (
         ClaimedOutboxMessage,
+        InboxReceiptClaim,
         VerifiedEventProjection,
     )
     from agentmemory.ingestion.domain.generic_adapter import (
@@ -368,6 +369,14 @@ class IngestionAuditRepository(Protocol):
         """Append one content-free event acceptance fact without committing."""
         ...
 
+    async def append_agent_event_conflict(
+        self,
+        admitted: AdmittedAgentEvent,
+        encrypted: EncryptedAgentEvent,
+    ) -> None:
+        """Append one deduplicated content-free identity conflict without committing."""
+        ...
+
 
 class AgentEventUnitOfWork(Protocol):
     """Transaction containing event, outbox, and audit writes."""
@@ -423,18 +432,40 @@ class DurableEventProcessingRepository(Protocol):
         """Claim the oldest ready or expired message in a short durable transaction."""
         ...
 
+    async def claim_inbox(
+        self,
+        message: ClaimedOutboxMessage,
+        consumer: str,
+        owner: str,
+        now_microseconds: int,
+        lease_until_microseconds: int,
+    ) -> InboxReceiptClaim:
+        """Claim/replay the consumer receipt or reject divergent message content."""
+        ...
+
     async def complete(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         projection: VerifiedEventProjection,
         completed_at_microseconds: int,
     ) -> None:
         """Commit the terminal receipt and completed outbox state atomically."""
         ...
 
+    async def complete_replay(
+        self,
+        message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
+        completed_at_microseconds: int,
+    ) -> None:
+        """Finish a repeated outbox delivery only after validating its committed receipt."""
+        ...
+
     async def require_repair(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         reason_code: str,
         detected_at_microseconds: int,
     ) -> None:
@@ -444,6 +475,7 @@ class DurableEventProcessingRepository(Protocol):
     async def release_retry(
         self,
         message: ClaimedOutboxMessage,
+        inbox: InboxReceiptClaim,
         reason_code: str,
         retry_at_microseconds: int,
     ) -> None:

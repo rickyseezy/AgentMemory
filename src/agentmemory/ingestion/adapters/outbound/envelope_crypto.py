@@ -229,7 +229,7 @@ class SqliteWrappedBrainKeyProvider:
         return BrainEncryptionKey(key_id, material)
 
 
-def decrypt_agent_event_for_test(
+def decrypt_agent_event(
     encrypted: EncryptedAgentEvent,
     brain_key: BrainEncryptionKey,
     *,
@@ -237,7 +237,7 @@ def decrypt_agent_event_for_test(
     brain_id: str,
     classification: str,
 ) -> bytes:
-    """Authenticate/decrypt an envelope for conformance and recovery tests."""
+    """Authenticate and decrypt one canonical event for an authorized local reader."""
     aad = _canonical_json(
         {
             "algorithm": encrypted.algorithm,
@@ -278,6 +278,24 @@ def decrypt_agent_event_for_test(
             raise IngestionDependencyError(_ERR_EVENT_INTEGRITY) from error
     finally:
         zero_secret(data_key)
+
+
+def decrypt_agent_event_for_test(
+    encrypted: EncryptedAgentEvent,
+    brain_key: BrainEncryptionKey,
+    *,
+    event_id: str,
+    brain_id: str,
+    classification: str,
+) -> bytes:
+    """Compatibility wrapper retained for the encrypted-envelope conformance suite."""
+    return decrypt_agent_event(
+        encrypted,
+        brain_key,
+        event_id=event_id,
+        brain_id=brain_id,
+        classification=classification,
+    )
 
 
 def _brain_key_aad(brain_id: str, key_id: str, wrapping_key_id: str) -> bytes:

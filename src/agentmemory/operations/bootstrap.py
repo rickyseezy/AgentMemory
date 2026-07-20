@@ -134,6 +134,20 @@ from agentmemory.operations.application.projection_worker import ProjectionRebui
 from agentmemory.operations.application.runtime_readiness import RuntimeReadinessCoordinator
 from agentmemory.operations.domain.readiness import ReadinessProbe
 from agentmemory.operations.infrastructure.configuration import CoreSettings
+from agentmemory.retrieval.adapters.inbound.host_delivery import (
+    CertifiedDeliveryAdapterRegistry,
+)
+from agentmemory.retrieval.adapters.inbound.http_api import (
+    create_contract_retrieval_router,
+    create_retrieval_router,
+)
+from agentmemory.retrieval.adapters.outbound.sqlite_continuity import (
+    EmptyProcedureReadRepository,
+    SqliteContinuityReadRepository,
+)
+from agentmemory.retrieval.application.start_session_briefing import (
+    StartSessionBriefingHandler,
+)
 from agentmemory.shared.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -334,36 +348,12 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
             await container.close()
 
     application = create_app(dependencies, lifespan)
-    identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
-    application.include_router(
-        create_identity_router(
-            authenticator,
-            ResolveWorkspaceHandler(
-                IdentityResolutionDependencies(
-                    identity_authorization,
-                    SqliteProjectRepository(store.engine),
-                    SqliteCheckoutRepository(store.engine),
-                    SqliteRepositoryIdentityRepository(store.engine),
-                )
-            ),
-            ObserveCheckoutHandler(
-                SqliteCheckoutObservationUnitOfWorkFactory(store, clock),
-                SystemUuid7IdentityGenerator(),
-            ),
-            DiscoverRepositoryTopologyHandler(
-                identity_authorization,
-                SqliteRepositoryTopologyReadRepository(store.engine),
-            ),
-            ConfirmRepositoryLinkHandler(
-                SqliteRepositoryLinkUnitOfWorkFactory(store, clock),
-                SystemUuid7IdentityGenerator(),
-                clock,
-            ),
-            ResolveRetrievalScopeHandler(
-                SqliteRetrievalScopeAuthorizationRepository(store.engine),
-                SqliteRelatedProjectGraph(store.engine),
-            ),
-        )
+    _include_identity_and_retrieval_runtime_routers(
+        application,
+        store,
+        clock,
+        authenticator,
+        resolved.installation_root_key_file,
     )
     _include_ingestion_runtime_routers(
         application,
@@ -382,6 +372,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_identity_router(),
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
+            create_contract_retrieval_router(),
         )
     )
 
@@ -405,6 +396,78 @@ def _create_adapter_capability_runtime_router(
         ObserveAdapterCapabilitiesHandler(unit_of_work, identities, clock),
         ListAdapterCapabilitiesHandler(queries),
         GetAdapterCapabilitiesHandler(queries),
+    )
+
+
+def _include_identity_and_retrieval_runtime_routers(
+    application: FastAPI,
+    store: SqliteCoreStore,
+    clock: SystemClock,
+    authenticator: ApiAuthenticator,
+    installation_root_key_file: Path,
+) -> None:
+    """Compose identity authorization once for identity and continuity query boundaries."""
+    identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
+    retrieval_scope = ResolveRetrievalScopeHandler(
+        SqliteRetrievalScopeAuthorizationRepository(store.engine),
+        SqliteRelatedProjectGraph(store.engine),
+    )
+    identity_router = create_identity_router(
+        authenticator,
+        ResolveWorkspaceHandler(
+            IdentityResolutionDependencies(
+                identity_authorization,
+                SqliteProjectRepository(store.engine),
+                SqliteCheckoutRepository(store.engine),
+                SqliteRepositoryIdentityRepository(store.engine),
+            )
+        ),
+        ObserveCheckoutHandler(
+            SqliteCheckoutObservationUnitOfWorkFactory(store, clock),
+            SystemUuid7IdentityGenerator(),
+        ),
+        DiscoverRepositoryTopologyHandler(
+            identity_authorization,
+            SqliteRepositoryTopologyReadRepository(store.engine),
+        ),
+        ConfirmRepositoryLinkHandler(
+            SqliteRepositoryLinkUnitOfWorkFactory(store, clock),
+            SystemUuid7IdentityGenerator(),
+            clock,
+        ),
+        retrieval_scope,
+    )
+    application.include_router(identity_router)
+    application.include_router(
+        _create_retrieval_runtime_router(
+            store,
+            clock,
+            authenticator,
+            retrieval_scope,
+            installation_root_key_file,
+        )
+    )
+
+
+def _create_retrieval_runtime_router(
+    store: SqliteCoreStore,
+    clock: SystemClock,
+    authenticator: ApiAuthenticator,
+    retrieval_scope: ResolveRetrievalScopeHandler,
+    installation_root_key_file: Path,
+) -> APIRouter:
+    """Compose the host-neutral query and host delivery adapters at the outer boundary."""
+    continuity = SqliteContinuityReadRepository(
+        store.engine,
+        SqliteWrappedBrainKeyProvider(store, installation_root_key_file, clock),
+        clock,
+    )
+    handler = StartSessionBriefingHandler(continuity, EmptyProcedureReadRepository())
+    return create_retrieval_router(
+        authenticator,
+        retrieval_scope,
+        CertifiedDeliveryAdapterRegistry(handler),
+        clock,
     )
 
 

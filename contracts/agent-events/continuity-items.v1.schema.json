@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentmemory:schema:continuity-items:v1",
+  "title": "AgentMemory continuity item event payload fragment v1",
+  "type": "object",
+  "required": ["continuity"],
+  "properties": {
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "items"],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic_id", "kind", "content"],
+      "properties": {
+        "semantic_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+        },
+        "kind": {
+          "enum": ["fact", "decision", "change", "failure", "next_step"]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        }
+      }
+    }
+  }
+}

@@ -2040,6 +2040,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ADP-006 — Provide cross-agent continuity
 
+**Implementation record:** [`docs/implementation/ADP-006.md`](docs/implementation/ADP-006.md) and
+[`docs/runbooks/ADP-006-CROSS-AGENT-CONTINUITY.md`](docs/runbooks/ADP-006-CROSS-AGENT-CONTINUITY.md).
+
 **User story:** As a developer, work captured in one certified agent is recalled correctly in another.
 
 **Acceptance criteria**

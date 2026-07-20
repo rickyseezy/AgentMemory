@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "scenario_id": "user-api-frontend-continuity",
+  "producer_hosts": [
+    "claude_code",
+    "codex",
+    "gemini_cli",
+    "cursor_compatible",
+    "generic"
+  ],
+  "consumer_hosts": [
+    "claude_code",
+    "codex",
+    "gemini_cli",
+    "cursor_compatible",
+    "generic"
+  ],
+  "items": [
+    {
+      "semantic_id": "user-api-consumer-fact",
+      "kind": "fact",
+      "content": "The web frontend consumes the user API through the generated UserApi client.",
+      "event_family": "agentmemory.task.checkpointed.v1"
+    },
+    {
+      "semantic_id": "user-api-auth-decision",
+      "kind": "decision",
+      "content": "Keep authentication in the shared API client instead of individual pages.",
+      "event_family": "agentmemory.task.checkpointed.v1"
+    },
+    {
+      "semantic_id": "user-api-client-change",
+      "kind": "change",
+      "content": "Updated frontend/src/api/user-client.ts to call GET /users/{id}.",
+      "event_family": "agentmemory.file.changed.v1"
+    },
+    {
+      "semantic_id": "user-api-timeout-failure",
+      "kind": "failure",
+      "content": "The first integration test failed because the local user API timed out.",
+      "event_family": "agentmemory.tool.failed.v1"
+    },
+    {
+      "semantic_id": "user-api-next-step",
+      "kind": "next_step",
+      "content": "Next, verify the generated client against the user API contract fixture.",
+      "event_family": "agentmemory.task.checkpointed.v1"
+    }
+  ],
+  "capability_gap": {
+    "missing_native_capability": "file_observation",
+    "fallback_capture_method": "explicit_tool_only",
+    "required_semantic_ids": [
+      "user-api-consumer-fact",
+      "user-api-auth-decision",
+      "user-api-client-change",
+      "user-api-timeout-failure",
+      "user-api-next-step"
+    ]
+  }
+}

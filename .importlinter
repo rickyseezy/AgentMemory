@@ -155,3 +155,42 @@ forbidden_modules =
     agentmemory.identity
     agentmemory.operations
     agentmemory.providers
+
+[importlinter:contract:retrieval layers]
+name = Retrieval clean architecture layers
+type = layers
+layers =
+    agentmemory.retrieval.adapters
+    agentmemory.retrieval.application
+    agentmemory.retrieval.domain
+
+[importlinter:contract:retrieval domain independence]
+name = Retrieval domain is framework and adapter independent
+type = forbidden
+source_modules =
+    agentmemory.retrieval.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.retrieval.application
+    agentmemory.retrieval.adapters
+
+[importlinter:contract:retrieval application independence]
+name = Retrieval application is framework and adapter independent
+type = forbidden
+source_modules =
+    agentmemory.retrieval.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.retrieval.adapters

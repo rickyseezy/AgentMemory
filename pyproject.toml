@@ -129,7 +129,7 @@ addopts = ["--strict-config", "--strict-markers", "-ra"]
 asyncio_mode = "strict"
 xfail_strict = true
 filterwarnings = ["error"]
-norecursedirs = ["mutants"]
+norecursedirs = [".git", ".hypothesis", ".mypy_cache", ".pytest_cache", ".venv", "mutants"]
 markers = [
   "contract: public/repository contract suite",
   "integration: real supported infrastructure",
@@ -167,6 +167,7 @@ only_mutate = [
   "*identity/domain/services.py",
   "*identity/domain/checkout.py",
   "*identity/domain/topology.py",
+  "*ingestion/domain/agent_event.py",
 ]
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
@@ -177,6 +178,9 @@ pytest_add_cli_args_test_selection = [
   "tests/identity/test_observe_checkout_application.py",
   "tests/identity/test_repository_topology_domain.py",
   "tests/identity/test_repository_topology_application.py",
+  "tests/ingestion/test_agent_event_domain.py",
+  "tests/ingestion/test_agent_event_admission.py",
+  "tests/ingestion/test_agent_event_schema.py",
 ]
 mutate_only_covered_lines = true
 use_setproctitle = false

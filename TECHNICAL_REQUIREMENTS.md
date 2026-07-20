@@ -1926,6 +1926,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ADP-001 — Emit canonical AgentEvents
 
+**Implementation record:** [`docs/implementation/ADP-001.md`](docs/implementation/ADP-001.md) and
+[`docs/runbooks/ADP-001-AGENT-EVENTS.md`](docs/runbooks/ADP-001-AGENT-EVENTS.md).
+
 **User story:** As an adapter author, I can translate native host activity into the canonical versioned event contract.
 
 **Acceptance criteria**

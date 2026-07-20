@@ -110,3 +110,48 @@ forbidden_modules =
     agentmemory.identity.infrastructure
     agentmemory.operations
     agentmemory.providers
+
+[importlinter:contract:ingestion layers]
+name = Ingestion clean architecture layers
+type = layers
+layers =
+    agentmemory.ingestion.adapters
+    agentmemory.ingestion.application
+    agentmemory.ingestion.domain
+
+[importlinter:contract:ingestion domain independence]
+name = Ingestion domain is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.ingestion.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.ingestion.application
+    agentmemory.ingestion.adapters
+    agentmemory.identity
+    agentmemory.operations
+    agentmemory.providers
+
+[importlinter:contract:ingestion application independence]
+name = Ingestion application is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.ingestion.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.ingestion.adapters
+    agentmemory.identity
+    agentmemory.operations
+    agentmemory.providers

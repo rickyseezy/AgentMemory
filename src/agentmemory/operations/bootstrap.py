@@ -27,6 +27,10 @@ from agentmemory.identity.adapters.outbound.sqlite_repository_topology import (
     SqliteRepositoryLinkUnitOfWorkFactory,
     SqliteRepositoryTopologyReadRepository,
 )
+from agentmemory.identity.adapters.outbound.sqlite_retrieval_scope import (
+    SqliteRelatedProjectGraph,
+    SqliteRetrievalScopeAuthorizationRepository,
+)
 from agentmemory.identity.adapters.outbound.uuid7_identity import SystemUuid7IdentityGenerator
 from agentmemory.identity.application.commands.confirm_repository_link import (
     ConfirmRepositoryLinkHandler,
@@ -34,6 +38,9 @@ from agentmemory.identity.application.commands.confirm_repository_link import (
 from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutHandler
 from agentmemory.identity.application.queries.discover_repository_topology import (
     DiscoverRepositoryTopologyHandler,
+)
+from agentmemory.identity.application.queries.resolve_retrieval_scope import (
+    ResolveRetrievalScopeHandler,
 )
 from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
@@ -318,6 +325,10 @@ def create_core_app(settings: CoreSettings | None = None) -> FastAPI:
                 SqliteRepositoryLinkUnitOfWorkFactory(store, clock),
                 SystemUuid7IdentityGenerator(),
                 clock,
+            ),
+            ResolveRetrievalScopeHandler(
+                SqliteRetrievalScopeAuthorizationRepository(store.engine),
+                SqliteRelatedProjectGraph(store.engine),
             ),
         )
     )

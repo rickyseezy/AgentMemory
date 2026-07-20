@@ -1901,6 +1901,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### ID-004 — Select and enforce retrieval scope
 
+**Implementation record:** [`docs/implementation/ID-004.md`](docs/implementation/ID-004.md) and
+[`docs/runbooks/ID-004-RETRIEVAL-SCOPE.md`](docs/runbooks/ID-004-RETRIEVAL-SCOPE.md).
+
 **User story:** As a user, I can recall from current, related, selected, or global authorized projects.
 
 **Acceptance criteria**

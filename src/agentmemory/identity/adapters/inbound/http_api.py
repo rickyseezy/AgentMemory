@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 
 from fastapi import APIRouter, Header, Security
 from fastapi.responses import JSONResponse
@@ -17,11 +17,18 @@ from agentmemory.identity.application.queries.discover_repository_topology impor
     DiscoverRepositoryTopologyQuery,
     RepositoryTopologyDiscovery,
 )
+from agentmemory.identity.application.queries.resolve_retrieval_scope import (
+    ResolveRetrievalScopeQuery,
+)
 from agentmemory.identity.domain.errors import (
     IdentityAuthorizationError,
     IdentityConflictError,
     IdentityDependencyError,
     IdentityValidationError,
+)
+from agentmemory.identity.domain.retrieval_scope import (
+    RetrievalScopeMode,
+    RetrievalScopeResolution,
 )
 from agentmemory.identity.domain.topology import (
     ProjectRepositoryLink,
@@ -354,6 +361,65 @@ class ConfirmRepositoryLinkResponseModel(_StrictModel):
     version: int
 
 
+class ResolveRetrievalScopeRequestModel(_StrictModel):
+    """Explicit retrieval scope request; omission can never imply global scope."""
+
+    operation_id: str = Field(min_length=1, max_length=128)
+    brain_id: str
+    actor_id: str
+    grant_id: str
+    mode: Literal["current", "related", "selected", "global"]
+    current_project_id: str | None = None
+    current_repository_id: str | None = None
+    current_checkout_id: str | None = None
+    selected_project_ids: list[str] = Field(default_factory=list, max_length=500)
+    at: int = Field(ge=1)
+    max_related_depth: int = Field(default=3, ge=1, le=3)
+    max_related_cost: int = Field(default=10, ge=1, le=100)
+    temporal_from: int | None = Field(default=None, ge=0)
+    temporal_to: int | None = Field(default=None, ge=1)
+
+    def query(self) -> ResolveRetrievalScopeQuery:
+        """Translate strict explicit IDs into the immutable application query."""
+        return ResolveRetrievalScopeQuery(
+            self.operation_id,
+            StableId(self.brain_id),
+            StableId(self.actor_id),
+            StableId(self.grant_id),
+            RetrievalScopeMode(self.mode),
+            _optional_stable_id(self.current_project_id),
+            _optional_stable_id(self.current_repository_id),
+            _optional_stable_id(self.current_checkout_id),
+            tuple(StableId(value) for value in self.selected_project_ids),
+            self.at,
+            self.max_related_depth,
+            self.max_related_cost,
+            self.temporal_from,
+            self.temporal_to,
+        )
+
+
+class ResolveRetrievalScopeResponseModel(_StrictModel):
+    """Content-free scope receipt consumed by subsequent retrieval operations."""
+
+    brain_id: str
+    principal_id: str
+    role: Literal["owner", "admin", "editor", "reader"]
+    mode: Literal["current", "related", "selected", "global"]
+    included_projects: tuple[str, ...]
+    included_repositories: tuple[str, ...]
+    included_checkouts: tuple[str, ...]
+    classification_ceiling: Literal[
+        "public", "internal", "confidential", "restricted", "local_only"
+    ]
+    temporal_from: int | None
+    temporal_to: int | None
+    policy_version: int
+    security_epoch: int
+    scope_fingerprint: str
+    explanation: tuple[str, ...]
+
+
 class AuthenticatorPort(Protocol):
     """Authenticate a local capability before identity authorization."""
 
@@ -403,6 +469,14 @@ class ConfirmRepositoryLinkPort(Protocol):
         ...
 
 
+class ResolveRetrievalScopePort(Protocol):
+    """Resolve an authorization-first retrieval scope."""
+
+    async def execute(self, query: ResolveRetrievalScopeQuery) -> RetrievalScopeResolution:
+        """Return immutable explicit scope and a content-free explanation."""
+        ...
+
+
 class _ContractAuthenticator:
     async def authenticate(self, authorization: str | None) -> None:
         del authorization
@@ -447,18 +521,27 @@ class _ContractLinkConfirmer:
         raise RuntimeError(msg)
 
 
-def create_identity_router(  # noqa: C901 -- Two closed endpoints share one router composition.
+class _ContractRetrievalScopeResolver:
+    async def execute(self, query: ResolveRetrievalScopeQuery) -> RetrievalScopeResolution:
+        del query
+        msg = "contract-only dependency cannot resolve retrieval scope"
+        raise RuntimeError(msg)
+
+
+def create_identity_router(  # noqa: C901, PLR0913, PLR0915 -- Closed router composition.
     authenticator: AuthenticatorPort,
     resolver: ResolveObservedWorkspacePort,
     observer: ObserveCheckoutPort | None = None,
     topology_discovery: DiscoverRepositoryTopologyPort | None = None,
     link_confirmer: ConfirmRepositoryLinkPort | None = None,
+    retrieval_scope_resolver: ResolveRetrievalScopePort | None = None,
 ) -> APIRouter:
     """Create the identity router with only constructor-supplied capabilities."""
     router = APIRouter(prefix="/v1")
     checkout_observer = observer or _ContractObserver()
     topology_query = topology_discovery or _ContractTopologyDiscovery()
     topology_command = link_confirmer or _ContractLinkConfirmer()
+    scope_query = retrieval_scope_resolver or _ContractRetrievalScopeResolver()
 
     @router.post(
         "/projects:resolve",
@@ -592,11 +675,60 @@ def create_identity_router(  # noqa: C901 -- Two closed endpoints share one rout
             )
         return _repository_link_response(result)
 
+    @router.post(
+        "/retrieval-scopes:resolve",
+        operation_id="ResolveRetrievalScopeQuery",
+        response_model=ResolveRetrievalScopeResponseModel,
+    )
+    async def resolve_retrieval_scope(
+        request: ResolveRetrievalScopeRequestModel,
+        authorization: Annotated[str | None, Security(_AUTHORIZATION)],
+    ) -> ResolveRetrievalScopeResponseModel | JSONResponse:
+        """Authorize exact scope IDs before any retrieval, cache, or graph search."""
+        try:
+            await authenticator.authenticate(authorization)
+            result = await scope_query.execute(request.query())
+        except IdentityAuthorizationError:
+            return _problem("AM_FORBIDDEN", 403, "retrieval scope is not authorized", request)
+        except IdentityConflictError:
+            return _problem("AM_CONFLICT", 409, "retrieval scope is ambiguous", request)
+        except IdentityValidationError:
+            return _problem("AM_VALIDATION", 422, "retrieval scope is invalid", request)
+        except IdentityDependencyError:
+            return _problem(
+                "AM_DEPENDENCY_UNAVAILABLE",
+                503,
+                "identity dependency is unavailable",
+                request,
+                retryable=True,
+            )
+        scope = result.scope
+        return ResolveRetrievalScopeResponseModel(
+            brain_id=scope.brain_id.value,
+            principal_id=scope.principal_id.value,
+            role=cast(
+                "Literal['owner', 'admin', 'editor', 'reader']",
+                scope.role.value,
+            ),
+            mode=scope.mode.value,
+            included_projects=tuple(value.value for value in scope.project_ids),
+            included_repositories=tuple(value.value for value in scope.repository_ids),
+            included_checkouts=tuple(value.value for value in scope.checkout_ids),
+            classification_ceiling=scope.classification_ceiling.value,
+            temporal_from=scope.temporal_scope.valid_from,
+            temporal_to=scope.temporal_scope.valid_to,
+            policy_version=scope.policy_version,
+            security_epoch=scope.security_epoch,
+            scope_fingerprint=scope.scope_fingerprint,
+            explanation=result.explanation.entries,
+        )
+
     _registered_routes = (
         resolve_workspace,
         observe_checkout,
         discover_repository_topology,
         confirm_repository_link,
+        resolve_retrieval_scope,
     )
     del _registered_routes
     return router
@@ -610,6 +742,7 @@ def create_contract_identity_router() -> APIRouter:
         _ContractObserver(),
         _ContractTopologyDiscovery(),
         _ContractLinkConfirmer(),
+        _ContractRetrievalScopeResolver(),
     )
 
 
@@ -684,6 +817,10 @@ def _optional_fingerprint(value: str | None) -> Fingerprint | None:
     return None if value is None else Fingerprint(value)
 
 
+def _optional_stable_id(value: str | None) -> StableId | None:
+    return None if value is None else StableId(value)
+
+
 def _require_idempotency_key(value: str | None, operation_id: str) -> None:
     if value != operation_id:
         msg = "Idempotency-Key must equal operation_id"
@@ -699,6 +836,7 @@ def _problem(
         | ObserveCheckoutRequestModel
         | DiscoverRepositoryTopologyRequestModel
         | ConfirmRepositoryLinkRequestModel
+        | ResolveRetrievalScopeRequestModel
     ),
     *,
     retryable: bool = False,

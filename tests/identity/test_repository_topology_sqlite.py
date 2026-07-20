@@ -72,7 +72,7 @@ def test_id003_migration_upgrades_downgrades_and_reapplies(tmp_path: Path) -> No
     database = tmp_path / "migration.sqlite3"
     configuration = _migration_config(database)
     alembic_command.upgrade(configuration, "0004_id002_checkout_observation")
-    alembic_command.upgrade(configuration, "head")
+    alembic_command.upgrade(configuration, "0005_id003_repository_topology")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "0005_id003_repository_topology",

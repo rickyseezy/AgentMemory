@@ -20,6 +20,16 @@ from agentmemory.identity.domain.errors import (
     IdentityConflictError,
     IdentityDependencyError,
 )
+from agentmemory.identity.domain.retrieval_scope import (
+    AuthorizedScope,
+    Classification,
+    RetrievalRole,
+    RetrievalScopeMode,
+    RetrievalScopeResolution,
+    ScopeExplanation,
+    ScopeMember,
+    TemporalScope,
+)
 from agentmemory.identity.domain.topology import (
     LinkConfirmation,
     ProjectRepositoryLink,
@@ -49,6 +59,9 @@ if TYPE_CHECKING:
         ConfirmRepositoryLinkCommand,
     )
     from agentmemory.identity.application.commands.observe_checkout import ObserveCheckoutCommand
+    from agentmemory.identity.application.queries.resolve_retrieval_scope import (
+        ResolveRetrievalScopeQuery,
+    )
 
 BRAIN_ID = StableId("018f0000-0000-7000-8000-000000000004")
 ACTOR_ID = StableId("018f0000-0000-7000-8000-000000000002")
@@ -168,6 +181,33 @@ class _LinkConfirmer:
             ),
         )
         return aggregate
+
+
+@dataclass(slots=True)
+class _ScopeResolver:
+    calls: int = 0
+
+    async def execute(self, query: ResolveRetrievalScopeQuery) -> RetrievalScopeResolution:
+        self.calls += 1
+        assert query.mode is RetrievalScopeMode.CURRENT
+        scope = AuthorizedScope.create(
+            brain_id=BRAIN_ID,
+            principal_id=ACTOR_ID,
+            role=RetrievalRole.READER,
+            mode=query.mode,
+            members=(ScopeMember(PROJECT_ID, (REPOSITORY_ID,), (CHECKOUT_ID,), 1_000_000),),
+            classification_ceiling=Classification.LOCAL_ONLY,
+            temporal_scope=TemporalScope(None, None),
+            grant_version=5,
+            policy_version=2,
+            security_epoch=3,
+            action="memory.recall",
+            purpose="interactive_recall",
+        )
+        return RetrievalScopeResolution(
+            scope,
+            ScopeExplanation(query.mode, (f"current:{PROJECT_ID.value}",)),
+        )
 
 
 def _body() -> dict[str, object]:
@@ -412,6 +452,50 @@ async def test_topology_discovery_and_confirmation_are_path_free_and_idempotent(
     assert confirmer.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_retrieval_scope_contract_exposes_only_explicit_included_scope() -> None:
+    scope_resolver = _ScopeResolver()
+    application = FastAPI()
+    application.include_router(
+        create_identity_router(
+            _Authenticator(),
+            _Resolver(),
+            _Observer(),
+            _TopologyDiscovery(),
+            _LinkConfirmer(),
+            scope_resolver,
+        )
+    )
+    body: dict[str, object] = {
+        "operation_id": "scope-1",
+        "brain_id": BRAIN_ID.value,
+        "actor_id": ACTOR_ID.value,
+        "grant_id": GRANT_ID.value,
+        "mode": "current",
+        "current_project_id": PROJECT_ID.value,
+        "current_repository_id": REPOSITORY_ID.value,
+        "current_checkout_id": CHECKOUT_ID.value,
+        "selected_project_ids": [],
+        "at": 123,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://127.0.0.1"
+    ) as client:
+        response = await client.post(
+            "/v1/retrieval-scopes:resolve",
+            headers={"Authorization": "Bearer valid"},
+            json=body,
+        )
+    assert response.status_code == 200
+    assert response.json()["included_projects"] == [PROJECT_ID.value]
+    assert response.json()["included_repositories"] == [REPOSITORY_ID.value]
+    assert response.json()["included_checkouts"] == [CHECKOUT_ID.value]
+    assert response.json()["mode"] == "current"
+    assert response.json()["scope_fingerprint"]
+    assert "cache_key" not in response.json()
+    assert scope_resolver.calls == 1
+
+
 def test_complete_openapi_publishes_normative_identity_operation() -> None:
     schema = export_core_openapi_schema()
     paths = cast("dict[str, object]", schema["paths"])
@@ -434,3 +518,7 @@ def test_complete_openapi_publishes_normative_identity_operation() -> None:
     confirmation = cast("dict[str, object]", confirmation_route["post"])
     assert confirmation["operationId"] == "ConfirmRepositoryLinkCommand"
     assert confirmation["security"] == [{"AgentMemoryBearer": []}]
+    scope_route = cast("dict[str, object]", paths["/v1/retrieval-scopes:resolve"])
+    scope = cast("dict[str, object]", scope_route["post"])
+    assert scope["operationId"] == "ResolveRetrievalScopeQuery"
+    assert scope["security"] == [{"AgentMemoryBearer": []}]

@@ -115,6 +115,10 @@ from agentmemory.indexing.adapters.inbound.artifact_topology_http_api import (
     create_artifact_topology_router,
     create_contract_artifact_topology_router,
 )
+from agentmemory.indexing.adapters.inbound.content_policy_http_api import (
+    create_content_policy_router,
+    create_contract_content_policy_router,
+)
 from agentmemory.indexing.adapters.inbound.http_api import create_contract_indexing_router
 from agentmemory.indexing.adapters.inbound.revision_history_http_api import (
     create_contract_revision_history_router,
@@ -140,6 +144,10 @@ from agentmemory.indexing.adapters.outbound.sqlite_api_topology import (
 from agentmemory.indexing.adapters.outbound.sqlite_artifact_topology import (
     SqliteArtifactTopologyRepository,
 )
+from agentmemory.indexing.adapters.outbound.sqlite_content_policy import (
+    SqliteIndexContentPolicyAdapter,
+    SqliteIndexPolicyProjection,
+)
 from agentmemory.indexing.adapters.outbound.sqlite_revision_history import (
     SqliteCommitGraphAdapter,
     SqliteSourceRevisionRepository,
@@ -153,6 +161,11 @@ from agentmemory.indexing.application.artifact_topology import (
     ExtractAndRegisterArtifactTopologyHandler,
     QueryArtifactTopologyHandler,
     RegisterArtifactTopologyBatchHandler,
+)
+from agentmemory.indexing.application.content_policy import (
+    ActivateIndexPolicyHandler,
+    GetIndexPolicyChangeHandler,
+    PolicyReconciliationWorker,
 )
 from agentmemory.indexing.application.revision_history import (
     ProcessSourceRevisionHandler,
@@ -562,6 +575,12 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
     )
     ordered_replay_worker = _create_ordered_replay_worker(store, clock)
     source_revision_repository = SqliteSourceRevisionRepository(store, clock)
+    content_policy_repository = SqliteIndexContentPolicyAdapter(store, clock)
+    content_policy_worker = PolicyReconciliationWorker(
+        content_policy_repository,
+        SqliteIndexPolicyProjection(store),
+        clock,
+    )
     source_revision_worker = SourceRevisionWorker(
         ProcessSourceRevisionHandler(
             SqliteCommitGraphAdapter(store),
@@ -701,6 +720,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
                 asyncio.create_task(ordered_replay_worker.run(stop)),
                 asyncio.create_task(source_revision_worker.run(stop)),
+                asyncio.create_task(content_policy_worker.run(stop)),
                 asyncio.create_task(scheduler_worker.run(stop)),
                 asyncio.create_task(memory_backfill_worker.run(stop)),
                 asyncio.create_task(memory_worker.run(stop)),
@@ -724,6 +744,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.neo4j_database,
         resolved,
         projection_adapter,
+        content_policy_repository,
     )
     application.include_router(
         create_memory_router(
@@ -816,6 +837,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_revision_history_router(),
             create_contract_api_topology_router(),
             create_contract_artifact_topology_router(),
+            create_contract_content_policy_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),
@@ -861,12 +883,22 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
     neo4j_database: str,
     settings: CoreSettings,
     projection_adapter: SqliteProjectionRebuildAdapter,
+    content_policy_repository: SqliteIndexContentPolicyAdapter,
 ) -> None:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
     retrieval_scope = ResolveRetrievalScopeHandler(
         SqliteRetrievalScopeAuthorizationRepository(store.engine),
         SqliteRelatedProjectGraph(store.engine),
+    )
+    application.include_router(
+        create_content_policy_router(
+            authenticator,
+            retrieval_scope,
+            ActivateIndexPolicyHandler(content_policy_repository),
+            GetIndexPolicyChangeHandler(content_policy_repository),
+            clock,
+        )
     )
     identity_router = create_identity_router(
         authenticator,

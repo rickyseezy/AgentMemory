@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from agentmemory.indexing.adapters.outbound.policy_visibility import policy_visible_sql
 from agentmemory.indexing.domain.code_entities import (
     CodeSymbol,
     FileRevision,
@@ -257,11 +258,13 @@ async def _snapshot_revision_rows(
             (
                 await connection.execute(
                     text(
-                        "SELECT revision.*, source_file.repository_id,binding.relative_path "
+                        "SELECT revision.*, source_file.repository_id,binding.relative_path "  # nosec B608
                         "FROM snapshot_file_bindings AS binding "
                         "JOIN file_revisions AS revision ON revision.id=binding.file_revision_id "
                         "JOIN source_files AS source_file ON source_file.id=binding.source_file_id "
-                        "WHERE binding.snapshot_id=:snapshot ORDER BY binding.relative_path"
+                        "WHERE binding.snapshot_id=:snapshot AND "
+                        + policy_visible_sql("source_file.repository_id", "binding.relative_path")
+                        + " ORDER BY binding.relative_path"
                     ),
                     {"snapshot": snapshot_id},
                 )
@@ -273,9 +276,12 @@ async def _snapshot_revision_rows(
         (
             await connection.execute(
                 text(
-                    "SELECT revision.*, source_file.repository_id,source_file.relative_path "
+                    "SELECT revision.*, source_file.repository_id,source_file.relative_path "  # nosec B608
                     "FROM file_revisions AS revision JOIN source_files AS source_file "
                     "ON source_file.id=revision.file_id WHERE revision.snapshot_id=:snapshot "
+                    "AND "
+                    + policy_visible_sql("source_file.repository_id", "source_file.relative_path")
+                    + " "
                     "ORDER BY source_file.relative_path"
                 ),
                 {"snapshot": snapshot_id},

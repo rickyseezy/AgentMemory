@@ -156,8 +156,9 @@ class _Source:
         target_commit_id: str | None,
         relative_path: str,
         expected_digest: str,
+        revision_context: IndexRevisionContext,
     ) -> SourceArtifact:
-        del target_commit_id
+        del target_commit_id, revision_context
         assert repository_id == REPOSITORY_ID
         value = self.content[relative_path]
         assert _digest(value) == expected_digest

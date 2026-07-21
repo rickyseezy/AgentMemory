@@ -2639,6 +2639,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** One policy decision point prevents parsers/providers from inconsistently handling sensitive files.
 
+**Implementation evidence:** [IDX-006 implementation record](docs/implementation/IDX-006.md) and
+[content-policy operations runbook](docs/runbooks/IDX-006-CONTENT-POLICY.md).
+
 #### IDX-007 — Navigate to exact supporting code
 
 **User story:** As a developer, I can open the exact revision and span supporting a code-derived result.

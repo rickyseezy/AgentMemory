@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from agentmemory.indexing.domain.content_policy_ports import PolicySourceDocuments
 from agentmemory.indexing.domain.errors import (
     IndexingAuthorizationError,
     IndexingUnavailableError,
@@ -33,8 +34,11 @@ from agentmemory.indexing.domain.ports import SourceArtifact
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from agentmemory.indexing.domain.content_policy import IndexContentPolicy
+    from agentmemory.indexing.domain.content_policy_ports import RepositoryContentPolicyGate
     from agentmemory.indexing.domain.incremental import PriorIndexedUnit
     from agentmemory.indexing.domain.ports import LanguagePluginPort
+    from agentmemory.shared.clock import Clock
 
 _ERR_CONFIG = "incremental Git source configuration is invalid"
 _ERR_GIT = "incremental Git inspection is unavailable"
@@ -43,6 +47,7 @@ _COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
 _MAX_FILES = 1_000_000
 _MAX_FILE_BYTES = 64 * 1024 * 1024
 _MAX_GIT_OUTPUT = 256 * 1024 * 1024
+_MAX_POLICY_SOURCE_BYTES = 256 * 1024
 _MIN_GIT_TIMEOUT = 0.1
 _MAX_GIT_TIMEOUT = 300.0
 _GENERATED_PARTS = frozenset({".generated", "dist", "generated", "gen", "vendor", "node_modules"})
@@ -74,6 +79,8 @@ class GitIncrementalRepositorySource:
         roots: Mapping[str, Path],
         policy: GitSourcePolicy | None = None,
         *,
+        content_policy: RepositoryContentPolicyGate,
+        clock: Clock,
         git_executable: Path | None = None,
     ) -> None:
         """Resolve trusted mounts and a fixed Git executable at composition time."""
@@ -104,7 +111,10 @@ class GitIncrementalRepositorySource:
             raise IndexingValidationError(_ERR_CONFIG)
         self._roots = resolved
         self._policy = policy or GitSourcePolicy()
+        self._content_policy = content_policy
+        self._clock = clock
         self._git_executable = executable
+        self._session_policy_digests: dict[str, str] = {}
 
     async def inspect(
         self,
@@ -123,18 +133,38 @@ class GitIncrementalRepositorySource:
             raise IndexingValidationError(_ERR_GIT)
         if base_commit_id is not None and _COMMIT.fullmatch(base_commit_id) is None:
             raise IndexingValidationError(_ERR_GIT)
+        content_policy = await self._prepare_policy(
+            repository_id,
+            root,
+            target,
+            explicit_target=explicit_target,
+        )
         deltas = await self._deltas(root, base_commit_id, target, explicit_target=explicit_target)
-        if previous and base_commit_id is not None:
+        prior_policy_digest = self._session_policy_digests.get(repository_id)
+        if previous and base_commit_id is not None and prior_policy_digest == content_policy.digest:
             entries = await self._incremental_manifest(
                 root,
                 target,
                 previous,
                 deltas,
+                content_policy,
                 explicit_target=explicit_target,
             )
         else:
-            entries = await self._full_manifest(root, target, explicit_target=explicit_target)
-        working_digest = _manifest_digest(entries)
+            entries = await self._full_manifest(
+                root,
+                target,
+                content_policy,
+                explicit_target=explicit_target,
+            )
+        self._session_policy_digests[repository_id] = content_policy.digest
+        included_paths = {entry.relative_path for entry in entries}
+        deltas = tuple(
+            delta
+            for delta in deltas
+            if delta.kind is VcsDeltaKind.DELETE or delta.relative_path in included_paths
+        )
+        working_digest = _manifest_digest(entries, content_policy.digest)
         revision_context = (
             IndexRevisionContext.COMMITTED
             if explicit_target or not await self._dirty(root)
@@ -159,29 +189,49 @@ class GitIncrementalRepositorySource:
         target_commit_id: str | None,
         relative_path: str,
         expected_digest: str,
+        revision_context: IndexRevisionContext,
     ) -> SourceArtifact:
         """Read worktree first, then immutable Git blob, accepting only the planned hash."""
         root = self._root(repository_id)
         _relative_path(relative_path)
-        worktree = root / relative_path
-        try:
-            content = await asyncio.to_thread(self._read_regular, root, worktree)
-        except IndexingUnavailableError:
-            content = None
-        if content is not None and hashlib.sha256(content).hexdigest() == expected_digest:
-            return SourceArtifact(relative_path, content)
-        if target_commit_id is not None:
+        policy = await self._prepare_policy(
+            repository_id,
+            root,
+            target_commit_id or await self._resolve_commit(root, "HEAD"),
+            explicit_target=revision_context is IndexRevisionContext.COMMITTED,
+        )
+        symlink, byte_length = await self._metadata(
+            root,
+            target_commit_id,
+            relative_path,
+            explicit_target=revision_context is IndexRevisionContext.COMMITTED,
+        )
+        path_decision = policy.evaluate_path(
+            relative_path,
+            symlink=symlink,
+            byte_length=byte_length,
+            decided_at=self._clock.now(),
+        )
+        await self._content_policy.record(path_decision)
+        if path_decision.excluded:
+            raise IndexingAuthorizationError(_ERR_SOURCE)
+        if revision_context is IndexRevisionContext.WORKTREE:
+            content = await asyncio.to_thread(self._read_regular, root, root / relative_path)
+            if hashlib.sha256(content).hexdigest() == expected_digest:
+                return await self._authorized_artifact(policy, relative_path, content)
+        elif target_commit_id is not None:
             content = await self._git_blob(root, target_commit_id, relative_path)
             if hashlib.sha256(content).hexdigest() == expected_digest:
-                return SourceArtifact(relative_path, content)
+                return await self._authorized_artifact(policy, relative_path, content)
         raise IndexingUnavailableError(_ERR_SOURCE)
 
-    async def _incremental_manifest(
+    async def _incremental_manifest(  # noqa: PLR0913 -- Exact inspection inputs are explicit.
         self,
         root: Path,
         target: str,
         previous: tuple[PriorIndexedUnit, ...],
         deltas: tuple[VcsDelta, ...],
+        content_policy: IndexContentPolicy,
         *,
         explicit_target: bool,
     ) -> tuple[RepositoryManifestEntry, ...]:
@@ -200,26 +250,165 @@ class GitIncrementalRepositorySource:
                 continue
             if delta.kind is VcsDeltaKind.RENAME:
                 current.pop(str(delta.previous_path), None)
-            content = await self._read_selected(
+            entry = await self._policy_entry(
                 root,
                 target,
                 delta.relative_path,
+                content_policy,
                 explicit_target=explicit_target,
             )
-            current[delta.relative_path] = _manifest_entry(delta.relative_path, content)
+            if entry is None:
+                current.pop(delta.relative_path, None)
+            else:
+                current[delta.relative_path] = entry
         return _bounded_entries(current.values(), self._policy.max_files)
 
     async def _full_manifest(
-        self, root: Path, target: str, *, explicit_target: bool
+        self,
+        root: Path,
+        target: str,
+        content_policy: IndexContentPolicy,
+        *,
+        explicit_target: bool,
     ) -> tuple[RepositoryManifestEntry, ...]:
         paths = await self._current_paths(root, target, explicit_target=explicit_target)
         if len(paths) > self._policy.max_files:
             raise IndexingUnavailableError(_ERR_SOURCE)
         entries: list[RepositoryManifestEntry] = []
         for path in paths:
-            content = await self._read_selected(root, target, path, explicit_target=explicit_target)
-            entries.append(_manifest_entry(path, content))
+            entry = await self._policy_entry(
+                root,
+                target,
+                path,
+                content_policy,
+                explicit_target=explicit_target,
+            )
+            if entry is not None:
+                entries.append(entry)
         return tuple(entries)
+
+    async def _policy_entry(
+        self,
+        root: Path,
+        target: str,
+        relative_path: str,
+        content_policy: IndexContentPolicy,
+        *,
+        explicit_target: bool,
+    ) -> RepositoryManifestEntry | None:
+        """Decide before opening, then classify one bounded read before release."""
+        symlink, byte_length = await self._metadata(
+            root,
+            target,
+            relative_path,
+            explicit_target=explicit_target,
+        )
+        path_decision = content_policy.evaluate_path(
+            relative_path,
+            symlink=symlink,
+            byte_length=byte_length,
+            decided_at=self._clock.now(),
+        )
+        await self._content_policy.record(path_decision)
+        if path_decision.excluded:
+            return None
+        content = await self._read_selected(
+            root,
+            target,
+            relative_path,
+            explicit_target=explicit_target,
+        )
+        decision = content_policy.evaluate_content(relative_path, content, self._clock.now())
+        await self._content_policy.record(decision)
+        if decision.excluded:
+            return None
+        return _manifest_entry(relative_path, content)
+
+    async def _authorized_artifact(
+        self,
+        policy: IndexContentPolicy,
+        relative_path: str,
+        content: bytes,
+    ) -> SourceArtifact:
+        decision = policy.evaluate_content(relative_path, content, self._clock.now())
+        await self._content_policy.record(decision)
+        if decision.excluded:
+            raise IndexingAuthorizationError(_ERR_SOURCE)
+        return SourceArtifact(relative_path, content)
+
+    async def _prepare_policy(
+        self,
+        repository_id: str,
+        root: Path,
+        target: str,
+        *,
+        explicit_target: bool,
+    ) -> IndexContentPolicy:
+        documents = PolicySourceDocuments(
+            await self._policy_document(
+                root, target, ".agentmemoryignore", explicit_target=explicit_target
+            ),
+            await self._policy_document(
+                root, target, ".gitignore", explicit_target=explicit_target
+            ),
+        )
+        return await self._content_policy.prepare(
+            repository_id,
+            documents,
+            self._clock.now(),
+        )
+
+    async def _policy_document(
+        self,
+        root: Path,
+        target: str,
+        name: str,
+        *,
+        explicit_target: bool,
+    ) -> bytes | None:
+        if explicit_target:
+            try:
+                content = await self._git_blob(root, target, name)
+            except IndexingUnavailableError:
+                return None
+        else:
+            path = root / name
+            try:
+                content = await asyncio.to_thread(self._read_regular, root, path)
+            except IndexingUnavailableError:
+                return None
+        if len(content) > _MAX_POLICY_SOURCE_BYTES:
+            raise IndexingUnavailableError(_ERR_SOURCE)
+        return content
+
+    async def _metadata(
+        self,
+        root: Path,
+        target: str | None,
+        relative_path: str,
+        *,
+        explicit_target: bool,
+    ) -> tuple[bool, int]:
+        _relative_path(relative_path)
+        if explicit_target:
+            if target is None:
+                raise IndexingUnavailableError(_ERR_SOURCE)
+            raw = await self._git(root, "ls-tree", "-l", target, "--", relative_path)
+            try:
+                header, encoded_path = raw.rstrip(b"\n").split(b"\t", 1)
+                mode, kind, _digest_value, size = header.split(b" ", 3)
+                decoded_path = encoded_path.decode("utf-8", "strict")
+                byte_length = int(size)
+            except (UnicodeError, ValueError) as error:
+                raise IndexingUnavailableError(_ERR_SOURCE) from error
+            if kind != b"blob" or decoded_path != relative_path or byte_length < 0:
+                raise IndexingUnavailableError(_ERR_SOURCE)
+            return mode == b"120000", byte_length
+        try:
+            observation = (root / relative_path).lstat()
+        except OSError as error:
+            raise IndexingUnavailableError(_ERR_SOURCE) from error
+        return stat.S_ISLNK(observation.st_mode), observation.st_size
 
     async def _deltas(
         self,
@@ -238,7 +427,7 @@ class GitIncrementalRepositorySource:
         raw = await self._git(root, *arguments)
         deltas = list(_parse_name_status(raw))
         if not explicit_target:
-            untracked = await self._git(root, "ls-files", "--others", "--exclude-standard", "-z")
+            untracked = await self._git(root, "ls-files", "--others", "-z")
             existing = {item.relative_path for item in deltas}
             for token in _nul_tokens(untracked):
                 path = token.decode("utf-8", "strict")
@@ -258,15 +447,12 @@ class GitIncrementalRepositorySource:
         if explicit_target:
             output = await self._git(root, "ls-tree", "-r", "--name-only", "-z", target)
         else:
-            output = await self._git(
-                root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
-            )
+            output = await self._git(root, "ls-files", "--cached", "--others", "-z")
         paths: list[str] = []
         for token in _nul_tokens(output):
             path = token.decode("utf-8", "strict")
             _relative_path(path)
-            if explicit_target or (root / path).is_file():
-                paths.append(path)
+            paths.append(path)
         return tuple(sorted(set(paths)))
 
     async def _read_selected(
@@ -278,6 +464,13 @@ class GitIncrementalRepositorySource:
 
     async def _git_blob(self, root: Path, commit: str, relative_path: str) -> bytes:
         _relative_path(relative_path)
+        size_output = await self._git(root, "cat-file", "-s", f"{commit}:{relative_path}")
+        try:
+            size = int(size_output.decode("ascii", "strict").strip())
+        except (UnicodeError, ValueError) as error:
+            raise IndexingUnavailableError(_ERR_SOURCE) from error
+        if size < 0 or size > self._policy.max_file_bytes:
+            raise IndexingUnavailableError(_ERR_SOURCE)
         content = await self._git(root, "cat-file", "blob", f"{commit}:{relative_path}")
         if len(content) > self._policy.max_file_bytes:
             raise IndexingUnavailableError(_ERR_SOURCE)
@@ -476,15 +669,18 @@ def _bounded_entries(
     return entries
 
 
-def _manifest_digest(entries: tuple[RepositoryManifestEntry, ...]) -> str:
-    document = [
-        {
-            "content_digest": item.content_digest,
-            "generated": item.generated,
-            "path": item.relative_path,
-        }
-        for item in entries
-    ]
+def _manifest_digest(entries: tuple[RepositoryManifestEntry, ...], policy_digest: str) -> str:
+    document = {
+        "files": [
+            {
+                "content_digest": item.content_digest,
+                "generated": item.generated,
+                "path": item.relative_path,
+            }
+            for item in entries
+        ],
+        "policy_digest": policy_digest,
+    }
     return hashlib.sha256(
         json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

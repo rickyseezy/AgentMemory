@@ -282,6 +282,7 @@ class IncrementalIndexWorker:
             work.run.target_commit_id,
             operation.relative_path,
             operation.content_digest,
+            work.run.revision_context,
         )
         indexed = index_source_artifact(
             self.plugin,

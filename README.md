@@ -345,6 +345,8 @@ acceptance criteria, a normative technical approach, mandatory tests, and ration
 | [GRA-001 implementation record](./docs/implementation/GRA-001.md) | Closed Brain-scoped Neo4j schema, repository, integrity, and operational evidence |
 | [GRA-002 implementation record](./docs/implementation/GRA-002.md) | Evidence-backed assertion policy, durable lifecycle, revocation, and verification evidence |
 | [GRA-003 implementation record](./docs/implementation/GRA-003.md) | Durable generation-scoped direct relationships, traversal authority, integrity quarantine, and repair |
+| [IDX-006 implementation record](./docs/implementation/IDX-006.md) | Deterministic pre-read repository content policy, immutable decision evidence, and derivative invalidation/reindex reconciliation |
+| [IDX-006 operations runbook](./docs/runbooks/IDX-006-CONTENT-POLICY.md) | Policy activation, reconciliation diagnosis, privacy response, and recovery procedures |
 | [Custom agent registration contract](./docs/integrations/CUSTOM_AGENT_REGISTRATION.md) | Path-neutral MCP stdio contract and conformance obligations for hosts without a certified configuration adapter |
 
 The two documents are jointly normative. The PRD defines what the complete product must do;

@@ -340,13 +340,22 @@ async def _execute_explicit(
     if source is None:
         raise MemoryEvidenceNotFoundError
     expires_at = command.expires_at if isinstance(command, SetMemoryExpiryCommand) else None
-    plan = MemoryLifecyclePlan.create(
-        source,
-        command.action,
-        expected_version=command.expected_version,
-        occurred_at=now,
-        expires_at=expires_at,
-    )
+    try:
+        plan = MemoryLifecyclePlan.create(
+            source,
+            command.action,
+            expected_version=command.expected_version,
+            occurred_at=now,
+            expires_at=expires_at,
+        )
+    except MemoryConflictError:
+        # A concurrent exact request can commit between the optimistic receipt
+        # lookup and source load. Its receipt is authoritative over the stale
+        # expected version; divergent reuse still fails in _replay.
+        concurrent = await reads.get_result(key)
+        if concurrent is not None:
+            return _replay(concurrent, command.request_sha256)
+        raise
     result = MemoryLifecycleResult.create(key, command.request_sha256, command.operation_id, plan)
     commit = MemoryLifecycleCommit(
         command.operation_id,

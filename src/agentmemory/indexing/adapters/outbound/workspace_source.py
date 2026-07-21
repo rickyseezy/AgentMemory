@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentmemory.indexing.domain.content_policy_ports import PolicySourceDocuments
 from agentmemory.indexing.domain.errors import (
     IndexingUnavailableError,
     IndexingValidationError,
@@ -16,6 +17,8 @@ from agentmemory.indexing.domain.ports import SourceArtifact
 
 if TYPE_CHECKING:
     from agentmemory.identity.domain.retrieval_scope import AuthorizedScope
+    from agentmemory.indexing.domain.content_policy_ports import RepositoryContentPolicyGate
+    from agentmemory.shared.clock import Clock
 
 _ERR_POLICY = "workspace source policy is invalid"
 _ERR_READ = "workspace source could not be captured safely"
@@ -28,19 +31,7 @@ _DEFAULT_EXCLUDED = frozenset(
         ".agentmemory",
         ".git",
         ".hg",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
         ".svn",
-        ".tox",
-        ".venv",
-        "__pycache__",
-        "build",
-        "coverage",
-        "dist",
-        "node_modules",
-        "target",
-        "vendor",
     }
 )
 
@@ -71,7 +62,14 @@ class WorkspaceReadPolicy:
 class LocalWorkspaceSnapshotSource:
     """Read a configured workspace mount with symlink and race protection."""
 
-    def __init__(self, root: Path, policy: WorkspaceReadPolicy | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        policy: WorkspaceReadPolicy | None = None,
+        *,
+        content_policy: RepositoryContentPolicyGate,
+        clock: Clock,
+    ) -> None:
         """Capture the trusted mount root ephemerally; it is never returned or persisted."""
         if not root.is_absolute():
             raise IndexingValidationError(_ERR_POLICY)
@@ -85,41 +83,77 @@ class LocalWorkspaceSnapshotSource:
             raise IndexingValidationError(_ERR_POLICY)
         self._root = resolved
         self._policy = policy or WorkspaceReadPolicy()
+        self._content_policy = content_policy
+        self._clock = clock
 
     async def read(self, scope: AuthorizedScope) -> tuple[SourceArtifact, ...]:
         """Return a deterministic, repository-relative snapshot of regular files."""
-        del scope
+        if len(scope.repository_ids) != 1:
+            raise IndexingValidationError(_ERR_POLICY)
+        repository_id = scope.repository_ids[0].value
+        policy = await self._content_policy.prepare(
+            repository_id,
+            PolicySourceDocuments(
+                self._policy_document(".agentmemoryignore"),
+                self._policy_document(".gitignore"),
+            ),
+            self._clock.now(),
+        )
         paths = self._discover()
         artifacts: list[SourceArtifact] = []
         total = 0
-        for relative, absolute in paths:
+        for relative, absolute, symlink, byte_length in paths:
+            path_decision = policy.evaluate_path(
+                relative,
+                symlink=symlink,
+                byte_length=byte_length,
+                decided_at=self._clock.now(),
+            )
+            await self._content_policy.record(path_decision)
+            if path_decision.excluded:
+                continue
             content = self._read_regular(absolute)
+            content_decision = policy.evaluate_content(relative, content, self._clock.now())
+            await self._content_policy.record(content_decision)
+            if content_decision.excluded:
+                continue
             total += len(content)
             if total > self._policy.max_total_bytes:
                 raise IndexingUnavailableError(_ERR_LIMIT)
             artifacts.append(SourceArtifact(relative, content))
         return tuple(artifacts)
 
-    def _discover(self) -> tuple[tuple[str, Path], ...]:
+    def _discover(self) -> tuple[tuple[str, Path, bool, int], ...]:
         pending = [self._root]
-        discovered: list[tuple[str, Path]] = []
+        discovered: list[tuple[str, Path, bool, int]] = []
         try:
             while pending:
                 directory = pending.pop()
                 with os.scandir(directory) as entries:
                     for entry in entries:
-                        if entry.name in self._policy.excluded_names or entry.is_symlink():
+                        if entry.name in self._policy.excluded_names:
                             continue
                         path = Path(entry.path)
-                        if entry.is_dir(follow_symlinks=False):
+                        relative = path.relative_to(self._root).as_posix()
+                        if entry.is_symlink():
+                            observed = entry.stat(follow_symlinks=False)
+                            discovered.append((relative, path, True, observed.st_size))
+                            _limit_if(condition=len(discovered) > self._policy.max_files)
+                        elif entry.is_dir(follow_symlinks=False):
                             pending.append(path)
                         elif entry.is_file(follow_symlinks=False):
-                            relative = path.relative_to(self._root).as_posix()
-                            discovered.append((relative, path))
+                            observed = entry.stat(follow_symlinks=False)
+                            discovered.append((relative, path, False, observed.st_size))
                             _limit_if(condition=len(discovered) > self._policy.max_files)
         except OSError as error:
             raise IndexingUnavailableError(_ERR_READ) from error
         return tuple(sorted(discovered, key=lambda item: item[0]))
+
+    def _policy_document(self, name: str) -> bytes | None:
+        try:
+            return self._read_regular(self._root / name)
+        except IndexingUnavailableError:
+            return None
 
     def _read_regular(self, path: Path) -> bytes:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)

@@ -107,8 +107,9 @@ class _Source:
         target_commit_id: str | None,
         relative_path: str,
         expected_digest: str,
+        revision_context: IndexRevisionContext,
     ) -> SourceArtifact:
-        del repository_id, target_commit_id
+        del repository_id, target_commit_id, revision_context
         value = self.content[relative_path]
         assert hashlib.sha256(value).hexdigest() == expected_digest
         self.reads.append(relative_path)

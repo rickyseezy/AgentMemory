@@ -98,8 +98,9 @@ class IncrementalRepositorySource(Protocol):
         target_commit_id: str | None,
         relative_path: str,
         expected_digest: str,
+        revision_context: IndexRevisionContext,
     ) -> SourceArtifact:
-        """Return exact current bytes only when they still match the planned digest."""
+        """Return exact bytes under the planned commit/worktree policy context."""
         ...
 
 

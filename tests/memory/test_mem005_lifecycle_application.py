@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 import pytest
 
@@ -129,6 +129,29 @@ async def test_exact_replay_returns_receipt_and_divergent_reuse_conflicts() -> N
     assert await replay_handler.execute(_pin()) == first
     with pytest.raises(MemoryConflictError):
         await replay_handler.execute(replace(_pin(), expected_version=2))
+
+
+@pytest.mark.asyncio
+async def test_exact_receipt_wins_when_concurrent_commit_precedes_source_load() -> None:
+    initial = _Repository(_snapshot())
+    result = await PinMemoryHandler(initial, lambda: _UnitOfWork(initial), _Clock()).execute(_pin())
+    racing = _RacingRepository(replace(_snapshot(), version=2), existing=result)
+
+    replay = await PinMemoryHandler(racing, lambda: _UnitOfWork(racing), _Clock()).execute(_pin())
+
+    assert replay == result
+    assert racing.result_reads == 2
+    assert racing.commit is None
+
+
+@pytest.mark.asyncio
+async def test_missing_concurrent_receipt_preserves_version_conflict() -> None:
+    changed = _Repository(replace(_snapshot(), version=2))
+
+    with pytest.raises(MemoryConflictError):
+        await PinMemoryHandler(changed, lambda: _UnitOfWork(changed), _Clock()).execute(_pin())
+
+    assert changed.commit is None
 
 
 @pytest.mark.asyncio
@@ -407,6 +430,23 @@ class _Repository:
 
     async def add(self, commit: MemoryLifecycleCommit) -> None:
         self.commit = commit
+
+
+class _RacingRepository(_Repository):
+    def __init__(
+        self,
+        target: MemoryLifecycleSnapshot,
+        *,
+        existing: MemoryLifecycleResult,
+    ) -> None:
+        super().__init__(target, existing=existing)
+        self.result_reads = 0
+
+    @override
+    async def get_result(self, idempotency_key: str) -> MemoryLifecycleResult | None:
+        del idempotency_key
+        self.result_reads += 1
+        return None if self.result_reads == 1 else self.existing
 
 
 class _UnitOfWork:

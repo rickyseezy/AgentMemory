@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from agentmemory.indexing.adapters.outbound.policy_visibility import policy_visible_sql
 from agentmemory.indexing.domain.api_topology import (
     ApiMatchDisposition,
     ApiMatchRule,
@@ -439,8 +440,10 @@ async def _latest_batch_ids(
     connection: AsyncConnection, repositories: tuple[str, ...], linked_at: datetime
 ) -> tuple[str, ...]:
     statement = text(
-        "SELECT batch.batch_id FROM api_topology_candidate_batches AS batch "
+        "SELECT batch.batch_id FROM api_topology_candidate_batches AS batch "  # noqa: S608  # nosec B608
+        "JOIN source_files AS policy_source ON policy_source.id=batch.source_file_id "
         "WHERE batch.repository_id IN :repositories AND batch.registered_at<=:cutoff "
+        "AND " + policy_visible_sql("batch.repository_id", "policy_source.relative_path") + " "
         "AND NOT EXISTS(SELECT 1 FROM api_topology_candidate_batches AS newer "
         "WHERE newer.brain_id=batch.brain_id AND newer.repository_id=batch.repository_id "
         "AND newer.source_file_id=batch.source_file_id AND newer.registered_at<=:cutoff "

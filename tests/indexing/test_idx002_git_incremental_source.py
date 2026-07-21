@@ -15,19 +15,60 @@ from agentmemory.indexing.adapters.outbound.git_incremental_source import (
     LanguagePluginFingerprintProvider,
 )
 from agentmemory.indexing.adapters.outbound.tree_sitter_plugin import TreeSitterLanguagePlugin
+from agentmemory.indexing.domain.content_policy import (
+    IndexContentPolicy,
+    IndexPolicyRevision,
+    PolicyLayer,
+    PolicyRuleSource,
+)
 from agentmemory.indexing.domain.errors import IndexingUnavailableError
 from agentmemory.indexing.domain.incremental import (
     IndexRevisionContext,
     PriorIndexedUnit,
     VcsDeltaKind,
 )
+from tests.core.support import NOW, FixedClock
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
+    from agentmemory.indexing.domain.content_policy import PolicyDecision
+    from agentmemory.indexing.domain.content_policy_ports import PolicySourceDocuments
     from agentmemory.indexing.domain.incremental_ports import RepositoryInspection
 
 REPOSITORY_ID = "018f0000-0000-7000-8000-000000000020"
+BRAIN_ID = "018f0000-0000-7000-8000-000000000001"
+
+
+class _PolicyGate:
+    def __init__(self) -> None:
+        self.decisions: list[PolicyDecision] = []
+
+    async def prepare(
+        self,
+        repository_id: str,
+        documents: PolicySourceDocuments,
+        observed_at: datetime,
+    ) -> IndexContentPolicy:
+        del observed_at
+        revision = IndexPolicyRevision.production_default(BRAIN_ID, repository_id, NOW)
+        agent = (
+            PolicyRuleSource.empty(PolicyLayer.AGENTMEMORY_IGNORE)
+            if documents.agentmemoryignore is None
+            else PolicyRuleSource.from_ignore_bytes(
+                PolicyLayer.AGENTMEMORY_IGNORE, 1, documents.agentmemoryignore
+            )
+        )
+        git = (
+            PolicyRuleSource.empty(PolicyLayer.GITIGNORE)
+            if documents.gitignore is None
+            else PolicyRuleSource.from_ignore_bytes(PolicyLayer.GITIGNORE, 1, documents.gitignore)
+        )
+        return IndexContentPolicy(revision, agent, git)
+
+    async def record(self, decision: PolicyDecision) -> None:
+        self.decisions.append(decision)
 
 
 def _digest(value: bytes) -> str:
@@ -79,7 +120,9 @@ def _prior(inspection: RepositoryInspection) -> tuple[PriorIndexedUnit, ...]:
 @pytest.mark.asyncio
 async def test_git_adapter_detects_dirty_modify_rename_and_untracked_add(tmp_path: Path) -> None:
     root, base = _repository(tmp_path)
-    adapter = GitIncrementalRepositorySource({REPOSITORY_ID: root})
+    adapter = GitIncrementalRepositorySource(
+        {REPOSITORY_ID: root}, content_policy=_PolicyGate(), clock=FixedClock(NOW)
+    )
     initial = await adapter.inspect(REPOSITORY_ID, None, None, ())
     assert {item.relative_path for item in initial.files} == {"src/a.py", "src/b.py"}
     assert initial.revision_context is IndexRevisionContext.COMMITTED
@@ -105,6 +148,7 @@ async def test_git_adapter_detects_dirty_modify_rename_and_untracked_add(tmp_pat
         changed.target_commit_id,
         "src/b.py",
         _digest(b"def b():\n    return 2\n"),
+        changed.revision_context,
     )
     assert artifact.content.endswith(b"return 2\n")
 
@@ -114,7 +158,9 @@ async def test_git_adapter_reads_explicit_historical_commit_and_rejects_changed_
     tmp_path: Path,
 ) -> None:
     root, base = _repository(tmp_path)
-    adapter = GitIncrementalRepositorySource({REPOSITORY_ID: root})
+    adapter = GitIncrementalRepositorySource(
+        {REPOSITORY_ID: root}, content_policy=_PolicyGate(), clock=FixedClock(NOW)
+    )
     (root / "src" / "a.py").write_text("def a():\n    return 3\n")
     _git(root, "add", "--", "src/a.py")
     _git(root, "commit", "-m", "change")
@@ -125,10 +171,22 @@ async def test_git_adapter_reads_explicit_historical_commit_and_rejects_changed_
     assert initial.revision_context is IndexRevisionContext.COMMITTED
     assert changed.revision_context is IndexRevisionContext.COMMITTED
 
-    artifact = await adapter.read(REPOSITORY_ID, target, "src/a.py", entry.content_digest)
+    artifact = await adapter.read(
+        REPOSITORY_ID,
+        target,
+        "src/a.py",
+        entry.content_digest,
+        changed.revision_context,
+    )
     assert artifact.content.endswith(b"return 3\n")
     with pytest.raises(IndexingUnavailableError, match="changed during indexing"):
-        await adapter.read(REPOSITORY_ID, target, "src/a.py", "f" * 64)
+        await adapter.read(
+            REPOSITORY_ID,
+            target,
+            "src/a.py",
+            "f" * 64,
+            changed.revision_context,
+        )
 
 
 def test_fingerprint_provider_binds_parser_grammar_queries_extraction_and_privacy() -> None:

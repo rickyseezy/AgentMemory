@@ -342,6 +342,8 @@ acceptance criteria, a normative technical approach, mandatory tests, and ration
 | [Product Requirements Document](./PRD.md) | Product vision, behavior, graph and memory model, installation experience, security, quality gates, and product acceptance scenarios |
 | [Technical Requirements and Delivery Specification](./TECHNICAL_REQUIREMENTS.md) | Required architecture, stack, persistence, contracts, security controls, engineering standards, CI/CD, implementation stories, and test obligations |
 | [PF-001 implementation record](./docs/implementation/PF-001.md) | Exact delivered installer-foundation scope, automated evidence, known gaps, and next implementation order |
+| [GRA-001 implementation record](./docs/implementation/GRA-001.md) | Closed Brain-scoped Neo4j schema, repository, integrity, and operational evidence |
+| [GRA-002 implementation record](./docs/implementation/GRA-002.md) | Evidence-backed assertion policy, durable lifecycle, revocation, and verification evidence |
 | [Custom agent registration contract](./docs/integrations/CUSTOM_AGENT_REGISTRATION.md) | Path-neutral MCP stdio contract and conformance obligations for hosts without a certified configuration adapter |
 
 The two documents are jointly normative. The PRD defines what the complete product must do;

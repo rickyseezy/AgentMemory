@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0020_mem006_session_briefing"
+EXPECTED_MIGRATION_HEAD = "0021_gra002_evidence_assertions"
 
 
 class SqliteActiveBrainResolver:

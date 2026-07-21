@@ -2407,6 +2407,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Assertion nodes separate a claim’s authority and history from convenient graph edges.
 
+**Implementation record:** [GRA-002 implementation](docs/implementation/GRA-002.md) and
+[GRA-002 assertion-evidence runbook](docs/runbooks/GRA-002-ASSERTION-EVIDENCE.md).
+
 #### GRA-003 — Materialize traversable relationships
 
 **User story:** As a retriever, I can traverse common relationships efficiently without losing their authority.

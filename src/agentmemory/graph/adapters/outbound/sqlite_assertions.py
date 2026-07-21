@@ -61,6 +61,7 @@ _ERR_SOURCE = "assertion evidence source was not found or authorized"
 _ERR_STORAGE = "canonical assertion storage is unavailable"
 _DIGEST_BYTES = 32
 _DISPUTED_VERSION = 2
+_MAX_PROJECTION_ASSERTIONS = 10_000
 
 _AUTHORIZED_SCOPE = """
 EXISTS (
@@ -531,6 +532,78 @@ class SqliteAssertionRepositoryFactory:
                 self._event_id_factory,
             ),
         )
+
+
+async def load_assertion_projection_snapshot(
+    connection: AsyncConnection,
+    scope: AuthorizedScope,
+    assertion_id: str,
+) -> tuple[Assertion, str, datetime] | None:
+    """Load one current assertion and its exact latest lifecycle event in one SQL snapshot."""
+    assertion = await _assertion(connection, scope, assertion_id)
+    if assertion is None:
+        return None
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT l.event_id,l.event_digest,l.aggregate_version,l.status,"
+                    "d.source_digest,d.event_type,d.occurred_at FROM assertion_lifecycle AS l "
+                    "JOIN domain_events AS d ON d.event_id=l.event_id "
+                    "WHERE l.assertion_id=:assertion AND d.brain_id=:brain "
+                    "AND d.aggregate_type='assertion' AND d.aggregate_id=:assertion "
+                    "ORDER BY l.aggregate_version DESC LIMIT 1"
+                ),
+                {"assertion": assertion_id, "brain": scope.brain_id.value},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    version = int(str(row["aggregate_version"]))
+    expected_event = AssertionEventType.ACTIVATED if version == 1 else AssertionEventType.DISPUTED
+    if (
+        version not in {1, _DISPUTED_VERSION}
+        or str(row["status"]) != assertion.status.value
+        or str(row["event_type"]) != expected_event.value
+        or _bytes(row["event_digest"]) != _bytes(row["source_digest"])
+    ):
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    return assertion, str(row["event_id"]), _time(row["occurred_at"])
+
+
+async def list_assertion_projection_snapshots(
+    connection: AsyncConnection,
+    scope: AuthorizedScope,
+) -> tuple[tuple[Assertion, str, datetime], ...]:
+    """Load a bounded deterministic current assertion set for one integrity scope."""
+    parameters = {
+        **_scope_parameters(scope, _now_micros()),
+        "limit": _MAX_PROJECTION_ASSERTIONS + 1,
+    }
+    rows = (
+        await connection.execute(
+            text(
+                "SELECT c.assertion_id FROM assertion_candidates AS c "  # noqa: S608  # nosec B608
+                "WHERE c.brain_id=:brain_id AND c.classification IN "
+                "(SELECT value FROM json_each(:classifications)) AND "
+                + _authorized_scope_sql("c")
+                + " ORDER BY c.assertion_id LIMIT :limit"
+            ),
+            parameters,
+        )
+    ).all()
+    if len(rows) > _MAX_PROJECTION_ASSERTIONS:
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    snapshots: list[tuple[Assertion, str, datetime]] = []
+    for row in rows:
+        snapshot = await load_assertion_projection_snapshot(connection, scope, str(row[0]))
+        if snapshot is None:
+            raise GraphIntegrityError(_ERR_INTEGRITY)
+        snapshots.append(snapshot)
+    return tuple(snapshots)
 
 
 @asynccontextmanager
@@ -1077,6 +1150,35 @@ async def _insert_domain_event(
             "causation": event.evidence_ids[0],
         },
     )
+    queued = await connection.execute(
+        text(
+            "INSERT INTO assertion_edge_projection_jobs "
+            "(source_event_id,assertion_id,brain_id,principal_id,scope_fingerprint,project_id,"
+            "repository_id,checkout_id,classification,aggregate_version,event_type,event_digest,"
+            "state,attempts,not_before,lease_owner,lease_until,last_error_code,created_at,"
+            "updated_at,completed_at,schema_version) "
+            "SELECT :event,:assertion,:brain,o.principal_id,o.scope_fingerprint,:project,"
+            ":repository,:checkout,:classification,:version,:event_type,:digest,'ready',0,:at,"
+            "NULL,NULL,NULL,:at,:at,NULL,1 FROM assertion_operations AS o "
+            "WHERE o.operation_id=:operation"
+        ),
+        {
+            "event": event.event_id,
+            "assertion": assertion.id,
+            "brain": assertion.scope.brain_id,
+            "project": assertion.scope.project_id,
+            "repository": assertion.scope.repository_id,
+            "checkout": assertion.scope.checkout_id,
+            "classification": assertion.scope.classification,
+            "version": version,
+            "event_type": event.event_type.value,
+            "digest": bytes.fromhex(event.digest),
+            "at": _micros(event.occurred_at),
+            "operation": event.operation_id,
+        },
+    )
+    if queued.rowcount != 1:
+        raise GraphIntegrityError(_ERR_INTEGRITY)
 
 
 def _candidate_parameters(operation_id: str, candidate: AssertionCandidate) -> dict[str, object]:

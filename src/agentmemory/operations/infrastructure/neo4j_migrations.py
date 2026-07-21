@@ -31,6 +31,11 @@ _MIGRATIONS = (
         54,
         "f3e2b2370d682132157b4f0129b26403be2f46836dd3386cdc89c4848faf6ed8",
     ),
+    (
+        "0004_gra003_materialized_edge_indexes.cypher",
+        8,
+        "7c584d5179398f7de2ad91b4757535d6415d1d4e4c511da707bd888688413d9f",
+    ),
 )
 
 

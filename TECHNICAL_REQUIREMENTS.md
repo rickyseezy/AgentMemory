@@ -2430,6 +2430,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Denormalized edges deliver graph performance while the assertion remains the source of truth.
 
+**Implementation record:** [GRA-003 implementation](docs/implementation/GRA-003.md) and
+[GRA-003 materialized-edge runbook](docs/runbooks/GRA-003-MATERIALIZED-EDGES.md).
+
 #### GRA-004 — Query bitemporal and branch-aware truth
 
 **User story:** As a developer, I can distinguish what is true now from what was true at a commit, branch, or recorded time.

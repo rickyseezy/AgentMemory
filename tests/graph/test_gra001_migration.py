@@ -27,7 +27,7 @@ async def test_gra001_migration_installs_every_stable_label_and_relationship_con
         Path(__file__).parents[2] / "migrations" / "neo4j",
     )
     source = "\n".join(query for query, _ in driver.calls)
-    assert NEO4J_SCHEMA_HEAD == "0003_gra001_brain_scoped_schema"
+    assert NEO4J_SCHEMA_HEAD == "0004_gra003_materialized_edge_indexes"
     assert "FOR (entity:GraphEntity)" in source
     for entity_type in GraphEntityType:
         assert f"FOR (entity:{entity_type.value})" in source

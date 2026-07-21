@@ -14,7 +14,26 @@ from agentmemory.graph.adapters.inbound.http_api import (
     create_contract_graph_router,
     create_graph_router,
 )
+from agentmemory.graph.adapters.outbound.neo4j_materialized_edges import (
+    Neo4jMaterializedEdgeProjectionFactory,
+)
 from agentmemory.graph.adapters.outbound.neo4j_repository import Neo4jGraphRepositoryFactory
+from agentmemory.graph.adapters.outbound.sqlite_materialized_edges import (
+    SqliteCanonicalAssertionProjectionSource,
+    SqliteMaterializedEdgeAuthorization,
+    SqliteMaterializedEdgeGenerationResolver,
+    SqliteMaterializedEdgeIntegrityJournal,
+    SqliteMaterializedEdgeIntegrityScopeSource,
+    SqliteMaterializedEdgeWorkRepository,
+)
+from agentmemory.graph.application.materialized_edge_worker import (
+    MaterializedEdgeIntegrityWorker,
+    MaterializedEdgeProjectionWorker,
+)
+from agentmemory.graph.application.materialized_edges import (
+    MaterializeAssertionEdgeHandler,
+    ValidateAssertionEdgesHandler,
+)
 from agentmemory.identity.adapters.inbound.http_api import (
     create_contract_identity_router,
     create_identity_router,
@@ -415,6 +434,31 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             projection_adapter,
         ),
     )
+    materialized_edge_projections = Neo4jMaterializedEdgeProjectionFactory(
+        neo4j_driver,
+        resolved.neo4j_database,
+    )
+    materialized_edge_source = SqliteCanonicalAssertionProjectionSource(store)
+    materialized_edge_worker = MaterializedEdgeProjectionWorker(
+        "core-edge-projection-v1",
+        SqliteMaterializedEdgeWorkRepository(store),
+        SqliteMaterializedEdgeAuthorization(store),
+        SqliteMaterializedEdgeGenerationResolver(store),
+        MaterializeAssertionEdgeHandler(
+            materialized_edge_source,
+            materialized_edge_projections,
+        ),
+        clock,
+    )
+    materialized_edge_integrity_worker = MaterializedEdgeIntegrityWorker(
+        SqliteMaterializedEdgeIntegrityScopeSource(store),
+        ValidateAssertionEdgesHandler(
+            materialized_edge_source,
+            materialized_edge_projections,
+            SqliteMaterializedEdgeIntegrityJournal(store),
+        ),
+        clock,
+    )
     durable_ingestion_worker = _create_durable_ingestion_worker(
         store,
         clock,
@@ -547,6 +591,8 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             await memory_backfill_repository.start_or_resume()
             tasks = (
                 asyncio.create_task(projection_worker.run(stop)),
+                asyncio.create_task(materialized_edge_worker.run(stop)),
+                asyncio.create_task(materialized_edge_integrity_worker.run(stop)),
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
                 asyncio.create_task(ordered_replay_worker.run(stop)),
                 asyncio.create_task(scheduler_worker.run(stop)),

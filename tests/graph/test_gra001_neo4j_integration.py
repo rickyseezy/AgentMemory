@@ -89,7 +89,7 @@ async def test_live_constraints_concurrent_merge_and_cross_brain_canary() -> Non
 
         readiness_binding = cast("ReadinessBinding", object())
         proof = await Neo4jGraphAdapter(driver, "neo4j", _Brain()).verify(readiness_binding)
-        assert "schema:0003_gra001_brain_scoped_schema" in proof
+        assert "schema:0004_gra003_materialized_edge_indexes" in proof
 
         malformed_id = "018f0000-0000-7000-8000-000000000080"
         await driver.execute_query(

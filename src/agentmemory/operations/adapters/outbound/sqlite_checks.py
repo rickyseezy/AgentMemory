@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0017_mem003_memory_deduplication"
+EXPECTED_MIGRATION_HEAD = "0018_mem004_memory_correction"
 
 
 class SqliteActiveBrainResolver:

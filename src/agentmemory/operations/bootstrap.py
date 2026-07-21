@@ -126,6 +126,10 @@ from agentmemory.ingestion.application.ordered_replay import (
 )
 from agentmemory.ingestion.application.privacy import CapturePolicyPipeline
 from agentmemory.ingestion.domain.backpressure import QueueLimits, RetryPolicy
+from agentmemory.memory.adapters.inbound.correction_http_api import (
+    create_contract_memory_correction_router,
+    create_memory_correction_router,
+)
 from agentmemory.memory.adapters.inbound.http_api import (
     create_contract_memory_router,
     create_memory_router,
@@ -138,6 +142,10 @@ from agentmemory.memory.adapters.outbound.sqlite_consolidation import (
     SqliteMemoryConsolidationReceiptQuery,
     SqliteMemoryConsolidationUnitOfWorkFactory,
     SqliteTaskEvidenceQuery,
+)
+from agentmemory.memory.adapters.outbound.sqlite_correction import (
+    SqliteMemoryCorrectionRepository,
+    SqliteMemoryCorrectionUnitOfWorkFactory,
 )
 from agentmemory.memory.adapters.outbound.sqlite_deduplication import (
     SqliteMemoryDeduplicationRepository,
@@ -153,10 +161,15 @@ from agentmemory.memory.adapters.outbound.sqlite_work import (
 )
 from agentmemory.memory.application.consolidate_task import ConsolidateTaskHandler
 from agentmemory.memory.application.consolidation_worker import MemoryConsolidationWorker
+from agentmemory.memory.application.correct_memory import CorrectMemoryHandler
 from agentmemory.memory.application.deduplicate_memories import DeduplicateMemoriesHandler
 from agentmemory.memory.application.explain_memory import ExplainMemoryHandler
 from agentmemory.memory.application.lineage_backfill import TaskLineageBackfillWorker
+from agentmemory.memory.application.query_memory_corrections import (
+    GetMemoryCorrectionHistoryHandler,
+)
 from agentmemory.memory.domain.consolidation import ExtractorIdentity, MemoryPromotionPolicy
+from agentmemory.memory.domain.correction import MemoryPrecedencePolicy
 from agentmemory.memory.domain.deduplication import MemoryCompatibilityPolicy
 from agentmemory.memory.domain.work import MemoryWorkRetryPolicy
 from agentmemory.operations.adapters.inbound.authentication import ApiAuthenticator
@@ -522,6 +535,25 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             clock,
         )
     )
+    correction_repository = SqliteMemoryCorrectionRepository(store)
+    correction_policy = MemoryPrecedencePolicy()
+    application.include_router(
+        create_memory_correction_router(
+            authenticator,
+            CorrectMemoryHandler(
+                correction_repository,
+                SqliteMemoryCorrectionUnitOfWorkFactory(store),
+                correction_policy,
+                clock,
+            ),
+            GetMemoryCorrectionHistoryHandler(
+                correction_repository,
+                correction_policy,
+                clock,
+            ),
+            clock,
+        )
+    )
     _include_ingestion_runtime_routers(
         application,
         store,
@@ -575,6 +607,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
             create_contract_memory_router(),
+            create_contract_memory_correction_router(),
             create_contract_ordered_replay_router(),
             create_contract_backpressure_router(),
         )

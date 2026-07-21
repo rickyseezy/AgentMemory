@@ -84,10 +84,12 @@ class MemoryClass(StrEnum):
 
 
 class MemoryStatus(StrEnum):
-    """Reachable states through MEM-003; merged sources remain historical."""
+    """Reachable memory states; non-active sources remain historical."""
 
     ACTIVE = "active"
     MERGED = "merged"
+    DISPUTED = "disputed"
+    SUPERSEDED = "superseded"
 
 
 class PromotionDisposition(StrEnum):
@@ -714,7 +716,12 @@ class Memory:
     def _validate_content_and_time(self) -> None:
         """Validate identity, lifecycle, content digest, and bitemporal shape."""
         _require_uuid7(self.memory_id, "memory_id")
-        if self.status not in {MemoryStatus.ACTIVE, MemoryStatus.MERGED}:
+        if self.status not in {
+            MemoryStatus.ACTIVE,
+            MemoryStatus.MERGED,
+            MemoryStatus.DISPUTED,
+            MemoryStatus.SUPERSEDED,
+        }:
             _invalid("status", "unsupported")
         _require_bounded_text(self.statement, "statement", _MAX_STATEMENT_CHARACTERS)
         if self.statement != unicodedata.normalize("NFC", self.statement).strip():

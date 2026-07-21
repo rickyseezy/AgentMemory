@@ -2276,6 +2276,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-004 — Correct, dispute, and supersede memory
 
+**Implementation record:** [`docs/implementation/MEM-004.md`](docs/implementation/MEM-004.md) and
+[`docs/runbooks/MEM-004-CORRECTION.md`](docs/runbooks/MEM-004-CORRECTION.md).
+
 **User story:** As a user, I can correct false or outdated knowledge while retaining explainable history.
 
 **Acceptance criteria**

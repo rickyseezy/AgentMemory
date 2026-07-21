@@ -17,6 +17,13 @@ if TYPE_CHECKING:
         MemoryScope,
         TaskEvidenceBundle,
     )
+    from agentmemory.memory.domain.correction import (
+        CorrectionEvidence,
+        CorrectionTarget,
+        MemoryCorrectionCommit,
+        MemoryCorrectionHistory,
+        MemoryCorrectionResult,
+    )
     from agentmemory.memory.domain.deduplication import (
         DeduplicationCommit,
         DeduplicationResult,
@@ -184,6 +191,89 @@ class MemoryDeduplicationUnitOfWorkFactory(Protocol):
 
     def __call__(self) -> MemoryDeduplicationUnitOfWork:
         """Return one unopened Unit of Work."""
+        ...
+
+
+class MemoryCorrectionReadRepository(Protocol):
+    """Read explicit correction receipts, authorized targets, and optional evidence."""
+
+    async def get_result(self, idempotency_key: str) -> MemoryCorrectionResult | None:
+        """Return one authenticated request-bound correction receipt or None."""
+        ...
+
+    async def load_authorized(
+        self,
+        assertion_id: str,
+        brain_id: str,
+        actor_id: str,
+        grant_id: str,
+        at: datetime,
+    ) -> CorrectionTarget | None:
+        """Load one currently correctable assertion under explicit user authority."""
+        ...
+
+    async def load_evidence_authorized(
+        self,
+        evidence_ids: tuple[str, ...],
+        brain_id: str,
+        actor_id: str,
+        grant_id: str,
+        at: datetime,
+    ) -> tuple[CorrectionEvidence, ...] | None:
+        """Resolve the exact optional evidence set or hide any unauthorized/missing item."""
+        ...
+
+    async def history_authorized(
+        self,
+        root_memory_id: str,
+        brain_id: str,
+        actor_id: str,
+        grant_id: str,
+        at: datetime,
+    ) -> MemoryCorrectionHistory | None:
+        """Return one complete correction history after exact explicit-user authorization."""
+        ...
+
+
+class MemoryCorrectionRepository(MemoryCorrectionReadRepository, Protocol):
+    """Stage one CAS correction plus lineage, graph source, outbox, receipt, and audit."""
+
+    async def add(self, commit: MemoryCorrectionCommit) -> None:
+        """Stage the complete correction transaction."""
+        ...
+
+
+class MemoryCorrectionUnitOfWork(Protocol):
+    """Own one short serialized MEM-004 correction transaction."""
+
+    @property
+    def repository(self) -> MemoryCorrectionRepository:
+        """Return the transaction-bound correction repository."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Acquire the local writer and open a transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Rollback incomplete work and release the writer."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit exactly once."""
+        ...
+
+
+class MemoryCorrectionUnitOfWorkFactory(Protocol):
+    """Create unopened MEM-004 correction Units of Work."""
+
+    def __call__(self) -> MemoryCorrectionUnitOfWork:
+        """Return one unopened correction Unit of Work."""
         ...
 
 

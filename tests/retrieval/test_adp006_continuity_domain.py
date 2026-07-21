@@ -16,9 +16,6 @@ from agentmemory.identity.domain.retrieval_scope import (
     TemporalScope,
 )
 from agentmemory.identity.domain.value_objects import StableId
-from agentmemory.retrieval.application.start_session_briefing import (
-    StartSessionBriefingHandler,
-)
 from agentmemory.retrieval.domain.continuity import (
     AgentHost,
     BriefingBudget,
@@ -28,7 +25,6 @@ from agentmemory.retrieval.domain.continuity import (
     ProcedureApplicability,
     ProcedureCandidate,
     ProcedureEnvironment,
-    StartSessionBriefingQuery,
     classification_permitted,
     conservative_tokens,
 )
@@ -36,7 +32,13 @@ from agentmemory.retrieval.domain.errors import (
     RetrievalAuthorizationError,
     RetrievalValidationError,
 )
-from tests.retrieval.support import FakeContinuityRepository, FakeProcedureRepository, scope
+from tests.retrieval.support import (
+    FakeContinuityRepository,
+    FakeProcedureRepository,
+    briefing_handler,
+    briefing_query,
+    scope,
+)
 
 
 def _item(identifier: str, kind: ContinuityKind, content: str) -> ContinuityItem:
@@ -105,12 +107,13 @@ def test_domain_rejects_malformed_provenance_item_and_budget_dimensions() -> Non
 def test_context_serialization_token_counter_and_classification_are_exact() -> None:
     item = _item("exact", ContinuityKind.DECISION, "café decision")
     assert item.context_bytes() == (
-        b'{"classification":"internal","content":"caf\xc3\xa9 decision",'
+        b'{"category":null,"classification":"internal","content":"caf\xc3\xa9 decision",'
         b'"evidence_event_id":"018f0000-0000-7000-8000-000000000101",'
-        b'"item_id":"exact","kind":"decision","provenance":{'
+        b'"freshness":"current","item_id":"exact","kind":"decision","provenance":{'
         b'"adapter_id":"agentmemory.claude-code","adapter_version":"1.0.0",'
         b'"capture_method":"native","model_id":"claude-sonnet",'
-        b'"producer_host":"claude_code"},"semantic_id":"exact"}'
+        b'"producer_host":"claude_code"},"rank":0,'
+        b'"revision_compatibility":"unknown","semantic_id":"exact"}'
     )
     procedure = ProcedureCandidate(
         "exact-procedure",
@@ -145,7 +148,7 @@ def test_procedure_and_query_validation_cover_platform_scope_and_identity() -> N
     with pytest.raises(RetrievalValidationError):
         ProcedureCandidate("bad id", "content", applicability)
     with pytest.raises(RetrievalValidationError):
-        StartSessionBriefingQuery(
+        briefing_query(
             replace(scope(), action="memory.write"),
             BriefingBudget(),
             ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
@@ -163,10 +166,10 @@ async def test_selection_is_atomic_deterministic_deduplicated_and_priority_order
         _item("next", ContinuityKind.NEXT_STEP, "same next action"),
         duplicate,
     )
-    handler = StartSessionBriefingHandler(
+    handler = briefing_handler(
         FakeContinuityRepository(tuple(reversed(records))), FakeProcedureRepository(())
     )
-    query = StartSessionBriefingQuery(
+    query = briefing_query(
         scope(),
         BriefingBudget(max_tokens=1_200, max_items=5, max_bytes=20_480),
         ProcedureEnvironment(platform="darwin", capabilities=("mcp", "shell")),
@@ -193,10 +196,10 @@ async def test_oversized_item_is_skipped_without_cutting_and_later_item_can_fit(
         _item("large", ContinuityKind.NEXT_STEP, "x" * 8_000),
         _item("small", ContinuityKind.DECISION, "keep the repository boundary"),
     )
-    result = await StartSessionBriefingHandler(
+    result = await briefing_handler(
         FakeContinuityRepository(records), FakeProcedureRepository(())
     ).execute(
-        StartSessionBriefingQuery(
+        briefing_query(
             scope(),
             BriefingBudget(max_tokens=400, max_items=2, max_bytes=2_000),
             ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
@@ -222,16 +225,17 @@ async def test_procedure_applicability_is_separate_from_memory_access() -> None:
             ProcedureApplicability(platforms=("darwin",), required_capabilities=("patch.apply",)),
         ),
     )
-    result = await StartSessionBriefingHandler(
+    result = await briefing_handler(
         FakeContinuityRepository((memory,)), FakeProcedureRepository(procedures)
     ).execute(
-        StartSessionBriefingQuery(
+        briefing_query(
             scope(),
             BriefingBudget(max_tokens=1_200, max_items=12, max_bytes=20_480),
             ProcedureEnvironment(platform="darwin", capabilities=("mcp", "shell")),
         )
     )
-    assert result.items == (memory,)
+    assert [item.item_id for item in result.items] == [memory.item_id]
+    assert [item.content for item in result.items] == [memory.content]
     assert [item.procedure_id for item in result.procedures] == ["portable"]
     assert [(item.procedure_id, item.reason) for item in result.excluded_procedures] == [
         ("incompatible", "missing_capability:patch.apply")
@@ -261,14 +265,12 @@ async def test_repository_scope_leaks_fail_closed(case: str) -> None:
     else:
         end = round(datetime(2026, 7, 19, tzinfo=UTC).timestamp() * 1_000_000)
         authorized = replace(authorized, temporal_scope=TemporalScope(None, end))
-    handler = StartSessionBriefingHandler(
-        FakeContinuityRepository((leaked,)), FakeProcedureRepository(())
-    )
+    handler = briefing_handler(FakeContinuityRepository((leaked,)), FakeProcedureRepository(()))
     with pytest.raises(
         RetrievalAuthorizationError, match="continuity repository crossed authorized scope"
     ):
         await handler.execute(
-            StartSessionBriefingQuery(
+            briefing_query(
                 authorized,
                 BriefingBudget(),
                 ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
@@ -296,31 +298,31 @@ async def test_temporal_boundaries_and_checkout_membership_are_exact() -> None:
     )
     occurred = round(baseline.occurred_at.timestamp() * 1_000_000)
     inclusive = replace(checkout_scope, temporal_scope=TemporalScope(occurred, occurred + 1))
-    result = await StartSessionBriefingHandler(
+    result = await briefing_handler(
         FakeContinuityRepository((checked_out,)), FakeProcedureRepository(())
     ).execute(
-        StartSessionBriefingQuery(
+        briefing_query(
             inclusive,
             BriefingBudget(),
             ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
         )
     )
-    assert result.items == (checked_out,)
+    assert [item.item_id for item in result.items] == [checked_out.item_id]
     with pytest.raises(RetrievalAuthorizationError):
-        await StartSessionBriefingHandler(
+        await briefing_handler(
             FakeContinuityRepository((baseline,)), FakeProcedureRepository(())
         ).execute(
-            StartSessionBriefingQuery(
+            briefing_query(
                 checkout_scope,
                 BriefingBudget(),
                 ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
             )
         )
     with pytest.raises(RetrievalAuthorizationError):
-        await StartSessionBriefingHandler(
+        await briefing_handler(
             FakeContinuityRepository((checked_out,)), FakeProcedureRepository(())
         ).execute(
-            StartSessionBriefingQuery(
+            briefing_query(
                 replace(checkout_scope, temporal_scope=TemporalScope(None, occurred)),
                 BriefingBudget(),
                 ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),
@@ -335,10 +337,10 @@ async def test_compatible_procedure_that_does_not_fit_is_atomically_omitted() ->
         "x" * 2_000,
         ProcedureApplicability(platforms=("darwin",), required_capabilities=("mcp",)),
     )
-    result = await StartSessionBriefingHandler(
+    result = await briefing_handler(
         FakeContinuityRepository(()), FakeProcedureRepository((procedure,))
     ).execute(
-        StartSessionBriefingQuery(
+        briefing_query(
             scope(),
             BriefingBudget(max_tokens=200, max_items=1, max_bytes=1_000),
             ProcedureEnvironment(platform="darwin", capabilities=("mcp",)),

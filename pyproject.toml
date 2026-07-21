@@ -256,6 +256,7 @@ pytest_add_cli_args_test_selection = [
   "tests/providers/test_ing002_provider_idempotency_domain_application.py",
   "tests/retrieval/test_adp006_continuity_domain.py",
   "tests/retrieval/test_adp006_cross_host_conformance.py",
+  "tests/retrieval/test_mem006_briefing_domain_application.py",
 ]
 mutate_only_covered_lines = false
 use_setproctitle = false

@@ -330,6 +330,9 @@ def project_continuity_event(
                     event.provenance.adapter_version,
                     event.provenance.capture_method.value,
                 ),
+                source_event_type=event.event_type.value,
+                source_session_id=event.provenance.session_id,
+                source_task_id=event.provenance.task_id,
             )
         except (KeyError, TypeError, ValueError, RetrievalValidationError) as error:
             raise RetrievalIntegrityError(_ERR_ITEM_INVALID) from error

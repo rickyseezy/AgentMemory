@@ -17,6 +17,8 @@ from agentmemory.retrieval.domain.continuity import (
 from agentmemory.retrieval.domain.errors import RetrievalValidationError
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from agentmemory.identity.domain.retrieval_scope import AuthorizedScope
     from agentmemory.retrieval.domain.continuity import SessionBriefing
 
@@ -62,6 +64,8 @@ class BriefingDeliveryRequest:
 
     scope: AuthorizedScope
     budget: BriefingBudget
+    operation_id: str
+    requested_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +94,8 @@ class BriefingDeliveryAdapter:
                 request.scope,
                 effective,
                 self.profile.environment,
+                request.operation_id,
+                request.requested_at,
             )
         )
         rendered, media_type = _render(briefing, self.profile.delivery_format)
@@ -168,6 +174,10 @@ class CertifiedDeliveryAdapterRegistry:
 
 def _render(briefing: SessionBriefing, delivery_format: DeliveryFormat) -> tuple[str, str]:
     document: dict[str, object] = {
+        "context_event_id": briefing.context_event_id,
+        "excluded_items": [
+            {"item_id": item.item_id, "reason": item.reason} for item in briefing.excluded_items
+        ],
         "items": [item.context_document() for item in briefing.items],
         "policy_version": briefing.policy_version,
         "procedures": [
@@ -178,6 +188,7 @@ def _render(briefing: SessionBriefing, delivery_format: DeliveryFormat) -> tuple
             for procedure in briefing.procedures
         ],
         "scope_fingerprint": briefing.scope_fingerprint,
+        "status": briefing.status.value,
         "type": "agentmemory_session_briefing",
         "untrusted_historical_data": True,
     }

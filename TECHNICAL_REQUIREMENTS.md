@@ -2334,6 +2334,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-006 — Restore unresolved-work continuity
 
+**Implementation record:** [`docs/implementation/MEM-006.md`](docs/implementation/MEM-006.md) and
+[`docs/runbooks/MEM-006-SESSION-BRIEFING.md`](docs/runbooks/MEM-006-SESSION-BRIEFING.md).
+
 **User story:** As a developer, a new session starts with useful prior work from any supported agent.
 
 **Acceptance criteria**

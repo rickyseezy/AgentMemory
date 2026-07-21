@@ -251,11 +251,17 @@ from agentmemory.retrieval.adapters.inbound.http_api import (
     create_contract_retrieval_router,
     create_retrieval_router,
 )
+from agentmemory.retrieval.adapters.outbound.sqlite_briefing import (
+    SqliteCodeRevisionQuery,
+    SqliteContextInjectionRepository,
+    SqliteMemoryBriefingRepository,
+)
 from agentmemory.retrieval.adapters.outbound.sqlite_continuity import (
     EmptyProcedureReadRepository,
     SqliteContinuityReadRepository,
 )
 from agentmemory.retrieval.application.start_session_briefing import (
+    DeterministicBriefingRetrievalPipeline,
     StartSessionBriefingHandler,
 )
 from agentmemory.shared.clock import SystemClock
@@ -739,7 +745,14 @@ def _create_retrieval_runtime_router(
         SqliteWrappedBrainKeyProvider(store, installation_root_key_file, clock),
         clock,
     )
-    handler = StartSessionBriefingHandler(continuity, EmptyProcedureReadRepository())
+    handler = StartSessionBriefingHandler(
+        continuity,
+        SqliteMemoryBriefingRepository(store.engine, clock),
+        SqliteCodeRevisionQuery(store.engine, clock),
+        DeterministicBriefingRetrievalPipeline.production(),
+        EmptyProcedureReadRepository(),
+        SqliteContextInjectionRepository(store.engine),
+    )
     return create_retrieval_router(
         authenticator,
         retrieval_scope,

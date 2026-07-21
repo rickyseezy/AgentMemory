@@ -27,9 +27,6 @@ from agentmemory.retrieval.adapters.inbound.host_delivery import (
 from agentmemory.retrieval.adapters.outbound.sqlite_continuity import (
     project_continuity_event,
 )
-from agentmemory.retrieval.application.start_session_briefing import (
-    StartSessionBriefingHandler,
-)
 from agentmemory.retrieval.domain.continuity import (
     AgentHost,
     BriefingBudget,
@@ -39,7 +36,14 @@ from agentmemory.retrieval.domain.continuity import (
     ProcedureApplicability,
     ProcedureCandidate,
 )
-from tests.retrieval.support import FakeContinuityRepository, FakeProcedureRepository, scope
+from tests.retrieval.support import (
+    BRIEFING_OPERATION_ID,
+    BRIEFING_REQUESTED_AT,
+    FakeContinuityRepository,
+    FakeProcedureRepository,
+    briefing_handler,
+    scope,
+)
 
 _CORPUS_PATH = (
     Path(__file__).parents[2] / "conformance" / "agent-hosts" / "cross-host-continuity.v1.json"
@@ -162,11 +166,11 @@ async def test_all_producer_consumer_pairs_return_equivalent_semantics_and_prove
     producer: AgentHost, consumer: AgentHost
 ) -> None:
     records = _items(producer)
-    handler = StartSessionBriefingHandler(
-        FakeContinuityRepository(records), FakeProcedureRepository(())
-    )
+    handler = briefing_handler(FakeContinuityRepository(records), FakeProcedureRepository(()))
     delivered = await certified_delivery_adapters(handler, "darwin")[consumer].deliver(
-        BriefingDeliveryRequest(scope(), BriefingBudget())
+        BriefingDeliveryRequest(
+            scope(), BriefingBudget(), BRIEFING_OPERATION_ID, BRIEFING_REQUESTED_AT
+        )
     )
     corpus = _corpus()
     expected = {
@@ -188,11 +192,11 @@ async def test_capability_gap_fallback_does_not_drop_checkpointed_semantics(
     consumer: AgentHost,
 ) -> None:
     records = _items(AgentHost.GENERIC, capture_method="explicit_tool_only")
-    handler = StartSessionBriefingHandler(
-        FakeContinuityRepository(records), FakeProcedureRepository(())
-    )
+    handler = briefing_handler(FakeContinuityRepository(records), FakeProcedureRepository(()))
     delivered = await certified_delivery_adapters(handler, "linux")[consumer].deliver(
-        BriefingDeliveryRequest(scope(), BriefingBudget())
+        BriefingDeliveryRequest(
+            scope(), BriefingBudget(), BRIEFING_OPERATION_ID, BRIEFING_REQUESTED_AT
+        )
     )
     required = set(cast("dict[str, Any]", _corpus()["capability_gap"])["required_semantic_ids"])
     assert {item.semantic_id for item in delivered.briefing.items} == required
@@ -203,12 +207,15 @@ async def test_capability_gap_fallback_does_not_drop_checkpointed_semantics(
 
 @pytest.mark.asyncio
 async def test_equivalent_host_budgets_select_identical_memory_ids() -> None:
-    handler = StartSessionBriefingHandler(
+    handler = briefing_handler(
         FakeContinuityRepository(_items(AgentHost.CLAUDE_CODE)), FakeProcedureRepository(())
     )
     adapters = certified_delivery_adapters(handler, "darwin")
     request = BriefingDeliveryRequest(
-        scope(), BriefingBudget(max_tokens=1_200, max_items=3, max_bytes=20_480)
+        scope(),
+        BriefingBudget(max_tokens=1_200, max_items=3, max_bytes=20_480),
+        BRIEFING_OPERATION_ID,
+        BRIEFING_REQUESTED_AT,
     )
     delivered = [await adapter.deliver(request) for adapter in adapters.values()]
     selections = [tuple(item.item_id for item in value.briefing.items) for value in delivered]
@@ -228,12 +235,16 @@ async def test_host_specific_procedure_is_excluded_without_siloing_memory() -> N
         "Apply the verified patch with the host patch primitive.",
         ProcedureApplicability(platforms=("darwin",), required_capabilities=("patch.apply",)),
     )
-    handler = StartSessionBriefingHandler(
+    handler = briefing_handler(
         FakeContinuityRepository(_items(AgentHost.GEMINI_CLI)),
         FakeProcedureRepository((procedure,)),
     )
     delivered = {
-        host: await adapter.deliver(BriefingDeliveryRequest(scope(), BriefingBudget()))
+        host: await adapter.deliver(
+            BriefingDeliveryRequest(
+                scope(), BriefingBudget(), BRIEFING_OPERATION_ID, BRIEFING_REQUESTED_AT
+            )
+        )
         for host, adapter in certified_delivery_adapters(handler, "darwin").items()
     }
     memory_ids = {
@@ -272,11 +283,11 @@ async def test_markdown_delivery_escapes_stored_delimiter_injection_as_data() ->
         evidence_event_id=hostile.evidence_event_id,
         provenance=hostile.provenance,
     )
-    handler = StartSessionBriefingHandler(
-        FakeContinuityRepository((hostile,)), FakeProcedureRepository(())
-    )
+    handler = briefing_handler(FakeContinuityRepository((hostile,)), FakeProcedureRepository(()))
     delivered = await certified_delivery_adapters(handler, "darwin")[AgentHost.CODEX].deliver(
-        BriefingDeliveryRequest(scope(), BriefingBudget())
+        BriefingDeliveryRequest(
+            scope(), BriefingBudget(), BRIEFING_OPERATION_ID, BRIEFING_REQUESTED_AT
+        )
     )
     assert delivered.briefing.items[0].content == hostile.content
     assert "<agentmemory-data>" not in delivered.rendered_context

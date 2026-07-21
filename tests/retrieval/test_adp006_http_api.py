@@ -19,21 +19,28 @@ from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
 )
 from agentmemory.retrieval.adapters.inbound.http_api import create_retrieval_router
-from agentmemory.retrieval.application.start_session_briefing import (
-    StartSessionBriefingHandler,
-)
 from agentmemory.retrieval.domain.continuity import (
+    BriefingStatus,
     ContinuityItem,
     ContinuityKind,
     ItemProvenance,
+    SessionBriefing,
 )
+from agentmemory.retrieval.domain.errors import RetrievalConflictError
 from tests.core.support import FixedClock
-from tests.retrieval.support import FakeContinuityRepository, FakeProcedureRepository, scope
+from tests.retrieval.support import (
+    FakeContinuityRepository,
+    FakeProcedureRepository,
+    briefing_handler,
+    scope,
+)
 
 if TYPE_CHECKING:
     from agentmemory.identity.application.queries.resolve_retrieval_scope import (
         ResolveRetrievalScopeQuery,
     )
+    from agentmemory.retrieval.adapters.inbound.host_delivery import BriefingQueryHandler
+    from agentmemory.retrieval.domain.continuity import StartSessionBriefingQuery
 
 _NOW = datetime(2026, 7, 20, 10, 12, 13, tzinfo=UTC)
 
@@ -96,16 +103,20 @@ def _item() -> ContinuityItem:
     )
 
 
-def _app(auth: _Auth, resolver: _ScopeResolver) -> FastAPI:
+def _app(
+    auth: _Auth,
+    resolver: _ScopeResolver,
+    handler: BriefingQueryHandler | None = None,
+) -> FastAPI:
     app = FastAPI()
-    handler = StartSessionBriefingHandler(
+    effective_handler = handler or briefing_handler(
         FakeContinuityRepository((_item(),)), FakeProcedureRepository(())
     )
     app.include_router(
         create_retrieval_router(
             auth,
             resolver,
-            CertifiedDeliveryAdapterRegistry(handler),
+            CertifiedDeliveryAdapterRegistry(effective_handler),
             FixedClock(_NOW),
         )
     )
@@ -146,6 +157,10 @@ async def test_endpoint_authenticates_resolves_scope_and_preserves_original_prov
     assert body["consumer_host"] == "codex"
     assert body["media_type"] == "text/markdown"
     assert body["items"][0]["kind"] == "decision"
+    assert body["items"][0]["category"] == "decision"
+    assert body["items"][0]["freshness"] == "current"
+    assert body["status"] == "ready"
+    assert body["context_event_id"] is not None
     assert body["items"][0]["provenance"] == {
         "producer_host": "claude_code",
         "model_id": "claude-sonnet",
@@ -186,6 +201,43 @@ async def test_denied_scope_returns_content_free_forbidden() -> None:
     assert "shared user API" not in response.text
 
 
+@pytest.mark.asyncio
+async def test_divergent_operation_returns_content_free_conflict() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(_Auth(), _ScopeResolver(), _ConflictHandler())),
+        base_url="http://127.0.0.1:9411",
+    ) as client:
+        response = await client.post("/recall:brief", json=_request_body())
+    assert response.status_code == 409
+    assert response.json() == {
+        "code": "AM_CONFLICT",
+        "detail": "briefing request conflicts",
+        "retryable": False,
+    }
+    assert "shared user API" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformation", ["missing_event", "missing_category"])
+async def test_malformed_delivery_result_returns_content_free_integrity_error(
+    malformation: str,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(
+            app=_app(_Auth(), _ScopeResolver(), _MalformedHandler(malformation))
+        ),
+        base_url="http://127.0.0.1:9411",
+    ) as client:
+        response = await client.post("/recall:brief", json=_request_body())
+    assert response.status_code == 500
+    assert response.json() == {
+        "code": "AM_INTEGRITY_VIOLATION",
+        "detail": "briefing evidence failed verification",
+        "retryable": False,
+    }
+    assert "shared user API" not in response.text
+
+
 def test_openapi_exposes_normative_path_and_operation() -> None:
     schema = _app(_Auth(), _ScopeResolver()).openapi()
     operation = schema["paths"]["/recall:brief"]["post"]
@@ -195,3 +247,34 @@ def test_openapi_exposes_normative_path_and_operation() -> None:
         in operation["requestBody"]["content"]["application/json"]["schema"].get("$ref", "")
         or operation["requestBody"]
     )
+
+
+class _ConflictHandler:
+    async def execute(self, query: StartSessionBriefingQuery) -> SessionBriefing:
+        del query
+        raise RetrievalConflictError
+
+
+@dataclass(frozen=True)
+class _MalformedHandler:
+    malformation: str
+
+    async def execute(self, query: StartSessionBriefingQuery) -> SessionBriefing:
+        item = () if self.malformation == "missing_event" else (_item(),)
+        return SessionBriefing(
+            items=item,
+            procedures=(),
+            excluded_procedures=(),
+            excluded_items=(),
+            used_tokens=64,
+            used_items=len(item),
+            used_bytes=512,
+            truncated=False,
+            scope_fingerprint=query.scope.scope_fingerprint,
+            status=BriefingStatus.READY if item else BriefingStatus.NO_ANSWER,
+            context_event_id=(
+                None
+                if self.malformation == "missing_event"
+                else "018f0000-0000-7000-8000-000000000199"
+            ),
+        )

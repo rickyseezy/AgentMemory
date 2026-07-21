@@ -21,3 +21,7 @@ class RetrievalDependencyError(RetrievalError):
 
 class RetrievalIntegrityError(RetrievalError):
     """Report authenticated canonical evidence that failed verification."""
+
+
+class RetrievalConflictError(RetrievalError):
+    """Reject divergent reuse of one immutable briefing operation identity."""

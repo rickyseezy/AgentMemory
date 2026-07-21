@@ -24,6 +24,7 @@ from agentmemory.retrieval.adapters.inbound.host_delivery import BriefingDeliver
 from agentmemory.retrieval.domain.continuity import AgentHost, BriefingBudget
 from agentmemory.retrieval.domain.errors import (
     RetrievalAuthorizationError,
+    RetrievalConflictError,
     RetrievalDependencyError,
     RetrievalIntegrityError,
     RetrievalValidationError,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         DeliveredBriefing,
         DeliveryAdapterRegistry,
     )
+    from agentmemory.retrieval.domain.continuity import ContinuityItem
     from agentmemory.shared.clock import Clock
 
 _AUTHORIZATION = APIKeyHeader(
@@ -121,6 +123,19 @@ class ContinuityItemResponseModel(_StrictModel):
     semantic_id: str
     kind: Literal["fact", "decision", "change", "failure", "next_step"]
     content: str
+    category: Literal[
+        "safety_constraint",
+        "blocker",
+        "unresolved_work",
+        "decision",
+        "failure",
+        "validation",
+        "change",
+        "supporting",
+    ]
+    freshness: Literal["current", "stale"]
+    revision_compatibility: Literal["compatible", "unknown", "branch_incompatible"]
+    rank: int = Field(ge=1)
     classification: str
     evidence_event_id: str
     occurred_at: str
@@ -141,6 +156,13 @@ class ExcludedProcedureResponseModel(_StrictModel):
     reason: str
 
 
+class ExcludedContinuityItemResponseModel(_StrictModel):
+    """Content-free reason an otherwise authorized candidate was omitted."""
+
+    item_id: str
+    reason: Literal["branch_incompatible", "stale_beyond_horizon"]
+
+
 class StartSessionBriefingResponseModel(_StrictModel):
     """Structured briefing plus exact host-specific context serialization."""
 
@@ -150,11 +172,14 @@ class StartSessionBriefingResponseModel(_StrictModel):
     items: tuple[ContinuityItemResponseModel, ...]
     procedures: tuple[ProcedureResponseModel, ...]
     excluded_procedures: tuple[ExcludedProcedureResponseModel, ...]
+    excluded_items: tuple[ExcludedContinuityItemResponseModel, ...]
     used_tokens: int
     used_items: int
     used_bytes: int
     truncated: bool
     scope_fingerprint: str
+    status: Literal["ready", "no_answer"]
+    context_event_id: str
     policy_version: str
 
 
@@ -195,18 +220,25 @@ def create_retrieval_router(
         """Recall host-neutral memories and render only at the final host boundary."""
         try:
             await authenticator.authenticate(authorization)
-            at = round(clock.now().timestamp() * 1_000_000)
+            requested_at = clock.now()
+            at = round(requested_at.timestamp() * 1_000_000)
             resolution = await scope_resolver.execute(request.scope_query(at))
             adapter = delivery_adapters.get(
                 AgentHost(request.consumer_host), request.consumer_platform
             )
             delivered = await adapter.deliver(
-                BriefingDeliveryRequest(resolution.scope, request.budget.to_domain())
+                BriefingDeliveryRequest(
+                    resolution.scope,
+                    request.budget.to_domain(),
+                    request.operation_id,
+                    requested_at,
+                )
             )
+            return _response(delivered)
         except IdentityAuthorizationError, RetrievalAuthorizationError:
             return _problem("AM_FORBIDDEN", 403, "briefing scope is not authorized")
-        except IdentityConflictError:
-            return _problem("AM_CONFLICT", 409, "briefing scope is ambiguous")
+        except IdentityConflictError, RetrievalConflictError:
+            return _problem("AM_CONFLICT", 409, "briefing request conflicts")
         except IdentityValidationError, RetrievalValidationError:
             return _problem("AM_VALIDATION", 422, "briefing request is invalid")
         except IdentityDependencyError, RetrievalDependencyError:
@@ -218,7 +250,6 @@ def create_retrieval_router(
             )
         except RetrievalIntegrityError:
             return _problem("AM_INTEGRITY_VIOLATION", 500, "briefing evidence failed verification")
-        return _response(delivered)
 
     registered_routes = (start_session_briefing,)
     del registered_routes
@@ -262,6 +293,8 @@ def create_contract_retrieval_router() -> APIRouter:
 
 def _response(delivered: DeliveredBriefing) -> StartSessionBriefingResponseModel:
     briefing = delivered.briefing
+    if briefing.context_event_id is None:
+        raise RetrievalIntegrityError
     return StartSessionBriefingResponseModel(
         consumer_host=delivered.consumer_host.value,
         media_type=cast("Literal['application/json', 'text/markdown']", delivered.media_type),
@@ -272,6 +305,10 @@ def _response(delivered: DeliveredBriefing) -> StartSessionBriefingResponseModel
                 semantic_id=item.semantic_id,
                 kind=item.kind.value,
                 content=item.content,
+                category=_response_category(item),
+                freshness=item.freshness.value,
+                revision_compatibility=item.revision_compatibility.value,
+                rank=item.rank,
                 classification=item.classification,
                 evidence_event_id=item.evidence_event_id,
                 occurred_at=item.occurred_at.isoformat().replace("+00:00", "Z"),
@@ -299,13 +336,42 @@ def _response(delivered: DeliveredBriefing) -> StartSessionBriefingResponseModel
             )
             for procedure in briefing.excluded_procedures
         ),
+        excluded_items=tuple(
+            ExcludedContinuityItemResponseModel(
+                item_id=item.item_id,
+                reason=cast(
+                    "Literal['branch_incompatible','stale_beyond_horizon']",
+                    item.reason,
+                ),
+            )
+            for item in briefing.excluded_items
+        ),
         used_tokens=briefing.used_tokens,
         used_items=briefing.used_items,
         used_bytes=briefing.used_bytes,
         truncated=briefing.truncated,
         scope_fingerprint=briefing.scope_fingerprint,
+        status=briefing.status.value,
+        context_event_id=briefing.context_event_id,
         policy_version=briefing.policy_version,
     )
+
+
+def _response_category(
+    item: ContinuityItem,
+) -> Literal[
+    "safety_constraint",
+    "blocker",
+    "unresolved_work",
+    "decision",
+    "failure",
+    "validation",
+    "change",
+    "supporting",
+]:
+    if item.category is None:
+        raise RetrievalIntegrityError
+    return item.category.value
 
 
 def _optional_id(value: str | None) -> StableId | None:

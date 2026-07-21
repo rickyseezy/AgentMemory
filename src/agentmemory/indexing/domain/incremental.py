@@ -77,6 +77,13 @@ class IndexRunState(StrEnum):
     FAILED = "failed"
 
 
+class IndexRevisionContext(StrEnum):
+    """Whether source bytes represent an immutable commit or a mutable worktree."""
+
+    COMMITTED = "committed"
+    WORKTREE = "worktree"
+
+
 @dataclass(frozen=True, slots=True)
 class IndexFingerprint:
     """Every implementation/policy coordinate capable of changing extracted semantics."""
@@ -437,6 +444,7 @@ class IndexRun:
     updated_at: datetime
     completed_at: datetime | None
     failure_code: str | None = None
+    revision_context: IndexRevisionContext = IndexRevisionContext.WORKTREE
 
     @classmethod
     def queue(  # noqa: PLR0913 -- Run identity binds every exact repository coordinate.
@@ -453,6 +461,7 @@ class IndexRun:
         implementation_fingerprint: str,
         plan: IndexPlan,
         detected_at: datetime,
+        revision_context: IndexRevisionContext = IndexRevisionContext.WORKTREE,
     ) -> IndexRun:
         """Create a replay-stable queued run before any semantic mutation."""
         run_id = _identity(
@@ -489,6 +498,7 @@ class IndexRun:
             detected_at,
             None,
             None,
+            revision_context,
         )
 
     def __post_init__(self) -> None:
@@ -631,6 +641,9 @@ def _validate_run_identity(value: IndexRun) -> None:
         or len(value.target_commit_id) > _MAX_IDENTITY
         or any(char.isspace() for char in value.target_commit_id)
     ):
+        raise IndexingValidationError(_ERR_RUN)
+    _enum(value.revision_context, IndexRevisionContext, _ERR_RUN)
+    if value.revision_context is IndexRevisionContext.COMMITTED and value.target_commit_id is None:
         raise IndexingValidationError(_ERR_RUN)
 
 

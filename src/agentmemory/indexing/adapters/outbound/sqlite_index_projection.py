@@ -30,6 +30,7 @@ from agentmemory.indexing.domain.errors import (
     IndexingUnavailableError,
     IndexingValidationError,
 )
+from agentmemory.indexing.domain.incremental import IndexRevisionContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -66,7 +67,8 @@ class SqliteIndexProjectionConsumer:
         """Apply one event idempotently before its outbox delivery is acknowledged."""
         try:
             run = await self._run(event)
-            await self._revoke_assertion_evidence(run, event)
+            if str(run["revision_context"]) == IndexRevisionContext.WORKTREE.value:
+                await self._revoke_assertion_evidence(run, event)
             vectors = await self._embed_changed_semantics(event)
             async with _write_transaction(self._store) as connection:
                 await _insert_invalidations(connection, event)
@@ -86,8 +88,11 @@ class SqliteIndexProjectionConsumer:
                 (
                     await connection.execute(
                         text(
-                            "SELECT * FROM incremental_index_runs WHERE run_id=:run "
-                            "AND target_snapshot_id=:snapshot"
+                            "SELECT root.*,COALESCE(context.revision_context,'worktree') "
+                            "AS revision_context FROM incremental_index_runs AS root LEFT JOIN "
+                            "incremental_index_run_revision_contexts AS context "
+                            "ON context.run_id=root.run_id WHERE root.run_id=:run "
+                            "AND root.target_snapshot_id=:snapshot"
                         ),
                         {"run": event.run_id, "snapshot": event.snapshot_id},
                     )

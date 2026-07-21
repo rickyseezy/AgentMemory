@@ -49,6 +49,7 @@ from agentmemory.indexing.application.incremental_index import (
 from agentmemory.indexing.domain.errors import IndexingAuthorizationError
 from agentmemory.indexing.domain.incremental import (
     IndexFingerprint,
+    IndexRevisionContext,
     IndexRunState,
     PriorIndexedUnit,
     VcsDelta,
@@ -119,6 +120,7 @@ class _Source:
     target_commit: str
     working_digest: str
     deltas: tuple[VcsDelta, ...]
+    revision_context: IndexRevisionContext = IndexRevisionContext.WORKTREE
     reads: list[str] = field(default_factory=list[str])
     inspections: int = 0
 
@@ -145,6 +147,7 @@ class _Source:
                 for path, value in sorted(self.content.items())
             ),
             self.deltas,
+            self.revision_context,
         )
 
     async def read(
@@ -397,7 +400,7 @@ async def test_sqlite_incremental_reuse_change_outbox_replay_and_immutability(  
                 )
     finally:
         await store.close()
-    with pytest.raises(RuntimeError, match="IDX-002 incremental indexing history"):
+    with pytest.raises(RuntimeError, match="IDX-003 revision history"):
         alembic_command.downgrade(
             _configuration(tmp_path / "agentmemory.sqlite3"),
             "0026_idx001_code_entities",

@@ -27,6 +27,7 @@ from agentmemory.indexing.domain.incremental import (
     IndexOperationKind,
     IndexPlan,
     IndexProjectionEvent,
+    IndexRevisionContext,
     IndexRun,
     IndexRunState,
     PriorIndexedUnit,
@@ -272,6 +273,7 @@ def _inspection(content: dict[str, bytes], deltas: tuple[VcsDelta, ...]) -> Repo
             for path, value in sorted(content.items())
         ),
         deltas,
+        IndexRevisionContext.COMMITTED,
     )
 
 

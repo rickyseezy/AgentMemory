@@ -2570,6 +2570,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Lineage-driven invalidation prevents global staleness from a local branch edit.
 
+**Implementation evidence:** [IDX-003 implementation record](docs/implementation/IDX-003.md) and
+[source revision history operations runbook](docs/runbooks/IDX-003-SOURCE-REVISION-HISTORY.md).
+
 #### IDX-004 — Connect API consumers across projects
 
 **User story:** As an architect, I can ask which frontend or service consumes an API and receive the correct path with evidence.

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         IndexOperation,
         IndexPlan,
         IndexProjectionEvent,
+        IndexRevisionContext,
         IndexRun,
         PriorIndexedUnit,
         VcsDelta,
@@ -41,6 +42,7 @@ class RepositoryInspection:
     working_digest: str
     files: tuple[RepositoryManifestEntry, ...]
     vcs_deltas: tuple[VcsDelta, ...]
+    revision_context: IndexRevisionContext
 
 
 @dataclass(frozen=True, slots=True)

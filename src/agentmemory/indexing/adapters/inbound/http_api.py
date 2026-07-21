@@ -92,6 +92,7 @@ class IndexRunResponseModel(_StrictModel):
     base_snapshot_id: str | None
     target_snapshot_id: str
     target_commit_id: str | None
+    revision_context: str
     state: str
     total_operations: int
     changed_operations: int
@@ -316,6 +317,7 @@ def _response(run: IndexRun) -> IndexRunResponseModel:
         base_snapshot_id=run.base_snapshot_id,
         target_snapshot_id=run.target_snapshot_id,
         target_commit_id=run.target_commit_id,
+        revision_context=run.revision_context.value,
         state=run.state.value,
         total_operations=run.total_operations,
         changed_operations=run.changed_operations,

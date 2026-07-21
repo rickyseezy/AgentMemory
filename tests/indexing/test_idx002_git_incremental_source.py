@@ -16,7 +16,11 @@ from agentmemory.indexing.adapters.outbound.git_incremental_source import (
 )
 from agentmemory.indexing.adapters.outbound.tree_sitter_plugin import TreeSitterLanguagePlugin
 from agentmemory.indexing.domain.errors import IndexingUnavailableError
-from agentmemory.indexing.domain.incremental import PriorIndexedUnit, VcsDeltaKind
+from agentmemory.indexing.domain.incremental import (
+    IndexRevisionContext,
+    PriorIndexedUnit,
+    VcsDeltaKind,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -78,6 +82,7 @@ async def test_git_adapter_detects_dirty_modify_rename_and_untracked_add(tmp_pat
     adapter = GitIncrementalRepositorySource({REPOSITORY_ID: root})
     initial = await adapter.inspect(REPOSITORY_ID, None, None, ())
     assert {item.relative_path for item in initial.files} == {"src/a.py", "src/b.py"}
+    assert initial.revision_context is IndexRevisionContext.COMMITTED
 
     (root / "src" / "b.py").write_text("def b():\n    return 2\n")
     (root / "src" / "a.py").rename(root / "src" / "renamed.py")
@@ -94,6 +99,7 @@ async def test_git_adapter_detects_dirty_modify_rename_and_untracked_add(tmp_pat
         "src/new.py",
         "src/renamed.py",
     }
+    assert changed.revision_context is IndexRevisionContext.WORKTREE
     artifact = await adapter.read(
         REPOSITORY_ID,
         changed.target_commit_id,
@@ -116,6 +122,8 @@ async def test_git_adapter_reads_explicit_historical_commit_and_rejects_changed_
     initial = await adapter.inspect(REPOSITORY_ID, None, base, ())
     changed = await adapter.inspect(REPOSITORY_ID, base, target, _prior(initial))
     entry = next(item for item in changed.files if item.relative_path == "src/a.py")
+    assert initial.revision_context is IndexRevisionContext.COMMITTED
+    assert changed.revision_context is IndexRevisionContext.COMMITTED
 
     artifact = await adapter.read(REPOSITORY_ID, target, "src/a.py", entry.content_digest)
     assert artifact.content.endswith(b"return 3\n")

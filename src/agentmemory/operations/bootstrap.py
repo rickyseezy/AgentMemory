@@ -105,6 +105,20 @@ from agentmemory.identity.application.queries.resolve_workspace import (
     ResolveWorkspaceHandler,
 )
 from agentmemory.indexing.adapters.inbound.http_api import create_contract_indexing_router
+from agentmemory.indexing.adapters.inbound.revision_history_http_api import (
+    create_contract_revision_history_router,
+    create_revision_history_router,
+)
+from agentmemory.indexing.adapters.outbound.sqlite_revision_history import (
+    SqliteCommitGraphAdapter,
+    SqliteSourceRevisionRepository,
+)
+from agentmemory.indexing.application.revision_history import (
+    ProcessSourceRevisionHandler,
+    QuerySourceRevisionHistoryHandler,
+    RegisterEvidenceLineageHandler,
+    SourceRevisionWorker,
+)
 from agentmemory.ingestion.adapters.inbound.backpressure_http_api import (
     create_backpressure_router,
     create_contract_backpressure_router,
@@ -506,6 +520,15 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.installation_root_key_file,
     )
     ordered_replay_worker = _create_ordered_replay_worker(store, clock)
+    source_revision_repository = SqliteSourceRevisionRepository(store, clock)
+    source_revision_worker = SourceRevisionWorker(
+        ProcessSourceRevisionHandler(
+            SqliteCommitGraphAdapter(store),
+            source_revision_repository,
+        ),
+        source_revision_repository,
+        clock,
+    )
     memory_keys = SqliteWrappedBrainKeyProvider(
         store,
         resolved.installation_root_key_file,
@@ -636,6 +659,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(materialized_edge_integrity_worker.run(stop)),
                 asyncio.create_task(durable_ingestion_worker.run(stop)),
                 asyncio.create_task(ordered_replay_worker.run(stop)),
+                asyncio.create_task(source_revision_worker.run(stop)),
                 asyncio.create_task(scheduler_worker.run(stop)),
                 asyncio.create_task(memory_backfill_worker.run(stop)),
                 asyncio.create_task(memory_worker.run(stop)),
@@ -748,6 +772,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
             create_contract_indexing_router(),
+            create_contract_revision_history_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),
@@ -850,6 +875,20 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             authenticator,
             retrieval_scope,
             SqliteContradictionRepository(store, clock),
+            clock,
+        )
+    )
+    source_revision_repository = SqliteSourceRevisionRepository(store, clock)
+    application.include_router(
+        create_revision_history_router(
+            authenticator,
+            retrieval_scope,
+            QuerySourceRevisionHistoryHandler(
+                SqliteCommitGraphAdapter(store),
+                source_revision_repository,
+                clock,
+            ),
+            RegisterEvidenceLineageHandler(source_revision_repository),
             clock,
         )
     )

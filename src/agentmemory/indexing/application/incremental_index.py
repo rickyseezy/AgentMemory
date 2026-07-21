@@ -169,6 +169,7 @@ class StartIndexRunHandler:
             implementation_fingerprint=self.fingerprints.implementation_digest,
             plan=plan,
             detected_at=command.detected_at,
+            revision_context=inspected.revision_context,
         )
         return await self.repository.start(command.scope, run, snapshot, plan)
 

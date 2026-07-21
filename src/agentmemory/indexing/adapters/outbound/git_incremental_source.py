@@ -18,7 +18,12 @@ from agentmemory.indexing.domain.errors import (
     IndexingUnavailableError,
     IndexingValidationError,
 )
-from agentmemory.indexing.domain.incremental import IndexFingerprint, VcsDelta, VcsDeltaKind
+from agentmemory.indexing.domain.incremental import (
+    IndexFingerprint,
+    IndexRevisionContext,
+    VcsDelta,
+    VcsDeltaKind,
+)
 from agentmemory.indexing.domain.incremental_ports import (
     RepositoryInspection,
     RepositoryManifestEntry,
@@ -130,7 +135,23 @@ class GitIncrementalRepositorySource:
         else:
             entries = await self._full_manifest(root, target, explicit_target=explicit_target)
         working_digest = _manifest_digest(entries)
-        return RepositoryInspection(target, working_digest, entries, deltas)
+        revision_context = (
+            IndexRevisionContext.COMMITTED
+            if explicit_target or not await self._dirty(root)
+            else IndexRevisionContext.WORKTREE
+        )
+        return RepositoryInspection(target, working_digest, entries, deltas, revision_context)
+
+    async def _dirty(self, root: Path) -> bool:
+        """Return whether tracked, staged, or untracked bytes differ from HEAD."""
+        output = await self._git(
+            root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+        )
+        return bool(output)
 
     async def read(
         self,

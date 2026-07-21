@@ -25,6 +25,7 @@ from agentmemory.indexing.domain.incremental import (
     IndexOperationReason,
     IndexPlan,
     IndexProjectionEvent,
+    IndexRevisionContext,
     IndexRun,
     IndexRunState,
     PriorIndexedUnit,
@@ -468,6 +469,18 @@ async def _insert_run_root(
             "detected": _micros(run.detected_at),
         },
     )
+    await connection.execute(
+        text(
+            "INSERT INTO incremental_index_run_revision_contexts "
+            "(run_id,revision_context,recorded_at,schema_version) VALUES "
+            "(:run,:context,:at,1)"
+        ),
+        {
+            "run": run.id,
+            "context": run.revision_context.value,
+            "at": _micros(run.detected_at),
+        },
+    )
 
 
 async def _insert_plan_operation(
@@ -887,7 +900,12 @@ async def _run_root_by_id(connection: AsyncConnection, run_id: str) -> RowMappin
     return (
         (
             await connection.execute(
-                text("SELECT * FROM incremental_index_runs WHERE run_id=:run"),
+                text(
+                    "SELECT root.*,COALESCE(context.revision_context,'worktree') "
+                    "AS revision_context FROM incremental_index_runs AS root LEFT JOIN "
+                    "incremental_index_run_revision_contexts AS context "
+                    "ON context.run_id=root.run_id WHERE root.run_id=:run"
+                ),
                 {"run": run_id},
             )
         )
@@ -902,7 +920,12 @@ async def _run_root_by_operation(
     return (
         (
             await connection.execute(
-                text("SELECT * FROM incremental_index_runs WHERE operation_id=:operation"),
+                text(
+                    "SELECT root.*,COALESCE(context.revision_context,'worktree') "
+                    "AS revision_context FROM incremental_index_runs AS root LEFT JOIN "
+                    "incremental_index_run_revision_contexts AS context "
+                    "ON context.run_id=root.run_id WHERE root.operation_id=:operation"
+                ),
                 {"operation": operation_id},
             )
         )
@@ -1118,6 +1141,7 @@ def _decode_run(root: RowMapping, state: RowMapping) -> IndexRun:
         _datetime(int(state["updated_at"])),
         None if state["completed_at"] is None else _datetime(int(state["completed_at"])),
         None if state["failure_code"] is None else str(state["failure_code"]),
+        IndexRevisionContext(str(root["revision_context"])),
     )
     _conflict_if(_run_snapshot_digest(run) != _blob(state["snapshot_digest"]))
     return run

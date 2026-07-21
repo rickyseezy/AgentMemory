@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 from uuid import uuid7
@@ -408,6 +409,7 @@ class SqliteAssertionEvidenceCatalog:
                         "now": _micros(registered_at),
                     },
                 )
+                await _anchor_evidence_revision(connection, source, registered_at)
                 return source
         except GraphConflictError:
             raise
@@ -604,6 +606,150 @@ async def list_assertion_projection_snapshots(
             raise GraphIntegrityError(_ERR_INTEGRITY)
         snapshots.append(snapshot)
     return tuple(snapshots)
+
+
+async def list_authorized_assertion_ids_for_truth(  # noqa: PLR0913 -- Query coordinates.
+    connection: AsyncConnection,
+    scope: AuthorizedScope,
+    *,
+    assertion_id: str | None,
+    subject_id: str | None,
+    predicates: tuple[AssertionPredicate, ...],
+    valid_at: datetime,
+    limit: int,
+) -> tuple[str, ...]:
+    """List bounded valid-time candidates under current authorization."""
+    parameters = {
+        **_scope_parameters(scope, _now_micros()),
+        "assertion": assertion_id,
+        "subject": subject_id,
+        "predicates": json.dumps([item.value for item in predicates], separators=(",", ":")),
+        "has_predicates": int(bool(predicates)),
+        "valid_at": _micros(valid_at),
+        "limit": limit + 1,
+    }
+    rows = (
+        await connection.execute(
+            text(
+                "SELECT c.assertion_id FROM assertion_candidates AS c "  # noqa: S608  # nosec B608
+                "WHERE c.brain_id=:brain_id AND c.classification IN "
+                "(SELECT value FROM json_each(:classifications)) AND "
+                + _authorized_scope_sql("c")
+                + " AND (:assertion IS NULL OR c.assertion_id=:assertion) "
+                "AND (:subject IS NULL OR c.subject_id=:subject) "
+                "AND (:has_predicates=0 OR c.predicate IN "
+                "(SELECT value FROM json_each(:predicates))) "
+                "AND c.valid_from<=:valid_at AND (c.valid_to IS NULL OR c.valid_to>:valid_at) "
+                "ORDER BY c.assertion_id LIMIT :limit"
+            ),
+            parameters,
+        )
+    ).all()
+    if len(rows) > limit:
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    return tuple(str(row[0]) for row in rows)
+
+
+async def load_assertion_revision_snapshot(
+    connection: AsyncConnection,
+    scope: AuthorizedScope,
+    assertion_id: str,
+    recorded_at: datetime,
+) -> tuple[Assertion, str, bool] | None:
+    """Reconstruct the canonical assertion lifecycle known at recorded_at."""
+    candidate = await _candidate(connection, scope, assertion_id)
+    if candidate is None:
+        return None
+    row = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT l.aggregate_version,l.status,l.recorded_from,l.recorded_to,"
+                    "l.event_id,l.event_digest,l.created_at,d.source_digest,d.event_type "
+                    "FROM assertion_lifecycle AS l JOIN domain_events AS d "
+                    "ON d.event_id=l.event_id "
+                    "WHERE l.assertion_id=:id AND l.created_at<=:recorded "
+                    "ORDER BY l.aggregate_version DESC LIMIT 1"
+                ),
+                {"id": assertion_id, "recorded": _micros(recorded_at)},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    evidence_rows = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT * FROM assertion_evidence_snapshots WHERE assertion_id=:id "
+                    "ORDER BY evidence_id"
+                ),
+                {"id": assertion_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    latest = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT aggregate_version,status FROM assertion_lifecycle "
+                    "WHERE assertion_id=:id ORDER BY aggregate_version DESC LIMIT 1"
+                ),
+                {"id": assertion_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if latest is None:
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    version = int(str(row["aggregate_version"]))
+    status = AssertionStatus(str(row["status"]))
+    expected_event = AssertionEventType.ACTIVATED if version == 1 else AssertionEventType.DISPUTED
+    if (
+        version not in {1, _DISPUTED_VERSION}
+        or str(row["event_type"]) != expected_event.value
+        or _bytes(row["event_digest"]) != _bytes(row["source_digest"])
+    ):
+        raise GraphIntegrityError(_ERR_INTEGRITY)
+    evidence = tuple(_decode_snapshot(item) for item in evidence_rows)
+    try:
+        active = candidate.activate(evidence, _time(row["recorded_from"]))
+        current = (
+            int(str(latest["aggregate_version"])) == 1
+            and AssertionStatus(str(latest["status"])) is AssertionStatus.ACTIVE
+        )
+        if version == 1 and status is AssertionStatus.ACTIVE:
+            next_recorded = await connection.scalar(
+                text(
+                    "SELECT MIN(created_at) FROM assertion_lifecycle "
+                    "WHERE assertion_id=:id AND aggregate_version>:version"
+                ),
+                {"id": assertion_id, "version": version},
+            )
+            if next_recorded is not None:
+                active = replace(
+                    active,
+                    temporal=AssertionTemporal(
+                        active.temporal.valid_from,
+                        active.temporal.valid_to,
+                        active.temporal.recorded_from,
+                        _time(next_recorded),
+                    ),
+                )
+            return active, str(row["event_id"]), current
+        if version == _DISPUTED_VERSION and status is AssertionStatus.DISPUTED:
+            if row["recorded_to"] is None:
+                raise GraphIntegrityError(_ERR_INTEGRITY)
+            disputed = active.reconcile_evidence((), _time(row["recorded_to"]))
+            return disputed, str(row["event_id"]), False
+    except (TypeError, ValueError) as error:
+        raise GraphIntegrityError(_ERR_INTEGRITY) from error
+    raise GraphIntegrityError(_ERR_INTEGRITY)
 
 
 @asynccontextmanager
@@ -926,6 +1072,37 @@ async def _canonical_source(
         accessible=True,
         deleted=False,
         immutable=True,
+    )
+
+
+async def _anchor_evidence_revision(
+    connection: AsyncConnection,
+    source: ResolvedAssertionEvidence,
+    anchored_at: datetime,
+) -> None:
+    """Anchor non-user evidence to the last observed immutable Checkout commit."""
+    if source.kind is EvidenceKind.USER_STATEMENT or source.scope.checkout_id is None:
+        return
+    await connection.execute(
+        text(
+            "INSERT INTO assertion_evidence_revision_anchors "
+            "(evidence_id,brain_id,repository_id,checkout_id,commit_sha,branch_at_capture,"
+            "revision_observed_at,anchored_at,schema_version) "
+            "SELECT :evidence,:brain,:repository,:checkout,o.head_commit,o.branch,o.observed_at,"
+            ":anchored,1 FROM checkout_observations AS o "
+            "WHERE o.brain_id=:brain AND o.repository_id=:repository "
+            "AND o.checkout_id=:checkout AND o.observed_at<=:occurred "
+            "AND o.head_commit IS NOT NULL ORDER BY o.observed_at DESC,o.aggregate_version DESC "
+            "LIMIT 1"
+        ),
+        {
+            "evidence": source.evidence_id,
+            "brain": source.scope.brain_id,
+            "repository": source.scope.repository_id,
+            "checkout": source.scope.checkout_id,
+            "occurred": _micros(source.occurred_at),
+            "anchored": _micros(anchored_at),
+        },
     )
 
 

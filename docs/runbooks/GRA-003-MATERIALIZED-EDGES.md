@@ -9,7 +9,7 @@ unquarantine a relationship manually.
 
 ## Healthy state
 
-- Core is Ready at relational head `0022_gra003_materialized_assertion_edges` and graph head
+- Core is Ready at relational head `0023_gra004_temporal_revision_truth` and graph head
   `0004_gra003_materialized_edge_indexes` or a later release-certified pair.
 - Every committed assertion lifecycle event has one `assertion_edge_projection_jobs` row.
 - Each completed job has one immutable receipt with the active graph generation and exact projection

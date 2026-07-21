@@ -14,6 +14,10 @@ from agentmemory.graph.adapters.inbound.http_api import (
     create_contract_graph_router,
     create_graph_router,
 )
+from agentmemory.graph.adapters.inbound.temporal_truth_http_api import (
+    create_contract_temporal_truth_router,
+    create_temporal_truth_router,
+)
 from agentmemory.graph.adapters.outbound.neo4j_materialized_edges import (
     Neo4jMaterializedEdgeProjectionFactory,
 )
@@ -25,6 +29,10 @@ from agentmemory.graph.adapters.outbound.sqlite_materialized_edges import (
     SqliteMaterializedEdgeIntegrityJournal,
     SqliteMaterializedEdgeIntegrityScopeSource,
     SqliteMaterializedEdgeWorkRepository,
+)
+from agentmemory.graph.adapters.outbound.sqlite_temporal_truth import (
+    SqliteTemporalAssertionRepository,
+    SqliteVcsRevisionRepository,
 )
 from agentmemory.graph.application.materialized_edge_worker import (
     MaterializedEdgeIntegrityWorker,
@@ -705,6 +713,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
             create_contract_graph_router(),
+            create_contract_temporal_truth_router(),
             create_contract_memory_router(),
             create_contract_memory_correction_router(),
             create_contract_memory_lifecycle_router(),
@@ -782,6 +791,17 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             authenticator,
             retrieval_scope,
             Neo4jGraphRepositoryFactory(neo4j_driver, neo4j_database),
+            clock,
+        )
+    )
+    vcs_revisions = SqliteVcsRevisionRepository(store, clock)
+    application.include_router(
+        create_temporal_truth_router(
+            authenticator,
+            retrieval_scope,
+            SqliteTemporalAssertionRepository(store),
+            vcs_revisions,
+            vcs_revisions,
             clock,
         )
     )

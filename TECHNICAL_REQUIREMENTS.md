@@ -2453,6 +2453,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Bitemporal plus revision reachability models both reality time and knowledge-recording time.
 
+**Implementation record:** [GRA-004 implementation](docs/implementation/GRA-004.md) and
+[GRA-004 temporal-truth runbook](docs/runbooks/GRA-004-TEMPORAL-TRUTH.md).
+
 #### GRA-005 — Surface contradictions and uncertainty
 
 **User story:** As a user, conflicting evidence appears as a dispute rather than a silently chosen fact.

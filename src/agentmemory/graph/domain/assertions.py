@@ -606,7 +606,18 @@ def _require_activation_evidence(
 ) -> None:
     if tuple(sorted(item.evidence_id for item in evidence)) != candidate.evidence_ids:
         raise AssertionEvidenceError(_ERR_UNRESOLVED)
-    if not evidence or any(not item.usable or item.scope != candidate.scope for item in evidence):
+    if not evidence or any(not item.usable for item in evidence):
+        raise AssertionEvidenceError(_ERR_UNAVAILABLE)
+    if candidate.predicate is AssertionPredicate.CONSUMES:
+        same_brain_and_classification = all(
+            item.scope.brain_id == candidate.scope.brain_id
+            and item.scope.classification == candidate.scope.classification
+            for item in evidence
+        )
+        client_scope_is_evidenced = any(item.scope == candidate.scope for item in evidence)
+        if not same_brain_and_classification or not client_scope_is_evidenced:
+            raise AssertionEvidenceError(_ERR_UNAVAILABLE)
+    elif any(item.scope != candidate.scope for item in evidence):
         raise AssertionEvidenceError(_ERR_UNAVAILABLE)
     explicit = any(item.kind is EvidenceKind.USER_STATEMENT for item in evidence)
     independent_sources = {item.source_id for item in evidence}

@@ -2593,6 +2593,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Decomposed evidence and ranked deterministic rules make topology answers explainable instead of guessed.
 
+**Implementation evidence:** [IDX-004 implementation record](docs/implementation/IDX-004.md) and
+[API topology operations runbook](docs/runbooks/IDX-004-API-TOPOLOGY.md).
+
 #### IDX-005 — Index dependencies, messaging, and infrastructure
 
 **User story:** As an architect, I can understand build and runtime topology beyond source calls.

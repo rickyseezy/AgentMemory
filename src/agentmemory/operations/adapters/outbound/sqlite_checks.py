@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0028_idx003_revision_history"
+EXPECTED_MIGRATION_HEAD = "0029_idx004_api_topology"
 
 
 class SqliteActiveBrainResolver:

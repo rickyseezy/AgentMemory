@@ -16,6 +16,7 @@ dependencies = [
     { name = "neo4j" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
@@ -36,6 +37,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -49,6 +51,7 @@ requires-dist = [
     { name = "neo4j", specifier = "==6.2.0" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = "==2.14.2" },
+    { name = "pyyaml", specifier = "==6.0.3" },
     { name = "sqlalchemy", specifier = "==2.0.51" },
     { name = "tree-sitter", specifier = "==0.26.0" },
     { name = "tree-sitter-language-pack", specifier = "==1.13.2" },
@@ -69,6 +72,7 @@ dev = [
     { name = "pytest-asyncio", specifier = "==1.3.0" },
     { name = "pytest-cov", specifier = "==7.0.0" },
     { name = "ruff", specifier = "==0.15.21" },
+    { name = "types-pyyaml", specifier = "==6.0.12.20250915" },
 ]
 
 [[package]]
@@ -1413,6 +1417,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ff/47/a847fb4f3a4f6370f4695a4760127db84e60cd6674e60d615e6d031c62f2/tree_sitter_language_pack-1.13.2-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:e5d9cc32fce7bcea702f850c7e2df5d6d29f27ffed4fabb9bbff2026011f9672", size = 2301071, upload-time = "2026-07-20T17:14:27.134Z" },
     { url = "https://files.pythonhosted.org/packages/f7/e7/c576b71f270aef186b453eeecdbba3bc71e07bef8b4b8228a148ae09affb/tree_sitter_language_pack-1.13.2-cp310-abi3-win_amd64.whl", hash = "sha256:74ae34bcbce7de588d7aa87ca5d55f08a9b1cae815eb5a06ab6cfef52b5918d9", size = 2076148, upload-time = "2026-07-20T17:14:28.232Z" },
     { url = "https://files.pythonhosted.org/packages/7d/13/e5b6bd18f91c179a79b9d419babbc1cd966d03aa5ad4c5e91f48f304473b/tree_sitter_language_pack-1.13.2-cp310-abi3-win_arm64.whl", hash = "sha256:cc108a55c760470bf28ff2af73339a959d6d37227a54e672a1b406e35ad7b980", size = 1987665, upload-time = "2026-07-20T17:14:29.397Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20250915"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/69/3c51b36d04da19b92f9e815be12753125bd8bc247ba0470a982e6979e71c/types_pyyaml-6.0.12.20250915.tar.gz", hash = "sha256:0f8b54a528c303f0e6f7165687dd33fafa81c807fcac23f632b63aa624ced1d3", size = 17522, upload-time = "2025-09-15T03:01:00.728Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/e0/1eed384f02555dde685fff1a1ac805c1c7dcb6dd019c916fe659b1c1f9ec/types_pyyaml-6.0.12.20250915-py3-none-any.whl", hash = "sha256:e7d4d9e064e89a3b3cae120b4990cd370874d2bf12fa5f46c97018dd5d3c9ab6", size = 20338, upload-time = "2025-09-15T03:00:59.218Z" },
 ]
 
 [[package]]

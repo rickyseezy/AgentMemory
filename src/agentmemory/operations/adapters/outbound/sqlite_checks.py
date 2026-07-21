@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0024_gra005_contradictions"
+EXPECTED_MIGRATION_HEAD = "0025_gra006_graph_integrity"
 
 
 class SqliteActiveBrainResolver:

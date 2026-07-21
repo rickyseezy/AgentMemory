@@ -1,4 +1,4 @@
-"""GRA-005 contradiction schema migration tests."""
+"""GRA-006 external graph migration and repair evidence schema tests."""
 
 from __future__ import annotations
 
@@ -18,38 +18,30 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_gra005_schema_is_closed_append_only_and_adds_assertion_polarity(
+async def test_gra006_schema_keeps_migration_and_repair_lineage_outside_graph(
     tmp_path: Path,
 ) -> None:
     store = migrated_store(tmp_path)
     async with store.engine.connect() as connection:
-        head = (
+        assert (
             await connection.execute(text("SELECT version_num FROM alembic_version"))
-        ).scalar_one()
-        assert head == "0025_gra006_graph_integrity"
-        columns = {
-            str(row["name"])
-            for row in (
-                await connection.execute(text("PRAGMA table_info('assertion_candidates')"))
-            ).mappings()
-        }
-        assert "polarity" in columns
+        ).scalar_one() == "0025_gra006_graph_integrity"
         tables = {
             str(row[0])
             for row in (
                 await connection.execute(
                     text(
                         "SELECT name FROM sqlite_master WHERE type='table' "
-                        "AND name LIKE 'graph_contradiction%'"
+                        "AND (name LIKE 'graph_migration_%' "
+                        "OR name LIKE 'graph_integrity_%')"
                     )
                 )
             ).all()
         }
         assert tables == {
-            "graph_contradiction_evidence",
-            "graph_contradiction_operations",
-            "graph_contradiction_resolutions",
-            "graph_contradictions",
+            "graph_integrity_findings",
+            "graph_integrity_repairs",
+            "graph_migration_snapshots",
         }
         triggers = {
             str(row[0])
@@ -57,17 +49,18 @@ async def test_gra005_schema_is_closed_append_only_and_adds_assertion_polarity(
                 await connection.execute(
                     text(
                         "SELECT name FROM sqlite_master WHERE type='trigger' "
-                        "AND name LIKE 'graph_contradiction%_no_%'"
+                        "AND (name LIKE 'graph_migration_%_no_%' "
+                        "OR name LIKE 'graph_integrity_%_no_%')"
                     )
                 )
             ).all()
         }
-        assert len(triggers) == 8
+        assert len(triggers) == 6
     await store.engine.dispose()
 
 
-def test_gra005_downgrade_is_available_only_before_contradiction_history(tmp_path: Path) -> None:
+def test_gra006_clean_downgrade_and_reapply_are_supported(tmp_path: Path) -> None:
     config = _migration_config(tmp_path / "downgrade.sqlite3")
-    command.upgrade(config, "0024_gra005_contradictions")
-    command.downgrade(config, "0023_gra004_temporal_revision_truth")
+    command.upgrade(config, "0025_gra006_graph_integrity")
+    command.downgrade(config, "0024_gra005_contradictions")
     command.upgrade(config, "head")

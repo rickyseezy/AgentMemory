@@ -2499,6 +2499,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Graph projections are repairable only when migration state and lineage live outside the graph being repaired.
 
+**Implementation evidence:** [GRA-006 implementation record](docs/implementation/GRA-006.md) and
+[graph integrity operations runbook](docs/runbooks/GRA-006-GRAPH-INTEGRITY.md).
+
 ### 11.7 Epic IDX — Code and architecture indexing
 
 #### IDX-001 — Index semantic code entities

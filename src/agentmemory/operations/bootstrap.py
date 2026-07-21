@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -10,9 +11,14 @@ from typing import TYPE_CHECKING
 import httpx
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
+from agentmemory import __version__
 from agentmemory.graph.adapters.inbound.contradiction_http_api import (
     create_contract_contradiction_router,
     create_contradiction_router,
+)
+from agentmemory.graph.adapters.inbound.graph_integrity_http_api import (
+    create_contract_graph_integrity_router,
+    create_graph_integrity_router,
 )
 from agentmemory.graph.adapters.inbound.http_api import (
     create_contract_graph_router,
@@ -22,11 +28,20 @@ from agentmemory.graph.adapters.inbound.temporal_truth_http_api import (
     create_contract_temporal_truth_router,
     create_temporal_truth_router,
 )
+from agentmemory.graph.adapters.outbound.neo4j_graph_integrity import (
+    REGISTERED_GRAPH_MIGRATION_CHECKSUM,
+    Neo4jGraphIntegrityAdapter,
+)
 from agentmemory.graph.adapters.outbound.neo4j_materialized_edges import (
     Neo4jMaterializedEdgeProjectionFactory,
 )
 from agentmemory.graph.adapters.outbound.neo4j_repository import Neo4jGraphRepositoryFactory
+from agentmemory.graph.adapters.outbound.pf002_graph_rebuild import Pf002CanonicalGraphRebuild
 from agentmemory.graph.adapters.outbound.sqlite_contradictions import SqliteContradictionRepository
+from agentmemory.graph.adapters.outbound.sqlite_graph_integrity import (
+    SqliteGraphIntegrityJournal,
+    SqliteGraphMigrationRepository,
+)
 from agentmemory.graph.adapters.outbound.sqlite_materialized_edges import (
     SqliteCanonicalAssertionProjectionSource,
     SqliteMaterializedEdgeAuthorization,
@@ -38,6 +53,12 @@ from agentmemory.graph.adapters.outbound.sqlite_materialized_edges import (
 from agentmemory.graph.adapters.outbound.sqlite_temporal_truth import (
     SqliteTemporalAssertionRepository,
     SqliteVcsRevisionRepository,
+)
+from agentmemory.graph.application.graph_integrity import (
+    RepairGraphFindingHandler,
+    RunGraphMigrationHandler,
+    StartGraphMigrationHandler,
+    ValidateGraphIntegrityHandler,
 )
 from agentmemory.graph.application.materialized_edge_worker import (
     MaterializedEdgeIntegrityWorker,
@@ -240,7 +261,10 @@ from agentmemory.operations.adapters.outbound.local_provider import (
     LocalExtractionHttpAdapter,
     LocalRerankingHttpAdapter,
 )
-from agentmemory.operations.adapters.outbound.neo4j_graph import Neo4jGraphAdapter
+from agentmemory.operations.adapters.outbound.neo4j_graph import (
+    NEO4J_SCHEMA_HEAD,
+    Neo4jGraphAdapter,
+)
 from agentmemory.operations.adapters.outbound.neo4j_projection_rebuild import (
     Neo4jProjectionGenerationAdapter,
     ProjectionGenerationRouter,
@@ -254,6 +278,7 @@ from agentmemory.operations.adapters.outbound.provider_checks import (
 )
 from agentmemory.operations.adapters.outbound.readiness_status import SqliteReadinessStatusQuery
 from agentmemory.operations.adapters.outbound.sqlite_checks import (
+    EXPECTED_MIGRATION_HEAD,
     SqliteActiveBrainResolver,
     SqliteReadinessChecks,
     SqliteSemanticSmokeStore,
@@ -279,7 +304,9 @@ from agentmemory.operations.application.commands.projection_rebuild import (
 from agentmemory.operations.application.commands.verify_readiness import VerifyReadinessHandler
 from agentmemory.operations.application.projection_worker import ProjectionRebuildWorker
 from agentmemory.operations.application.runtime_readiness import RuntimeReadinessCoordinator
+from agentmemory.operations.domain.projection_rebuild import RebuildManifest
 from agentmemory.operations.domain.readiness import ReadinessProbe
+from agentmemory.operations.domain.value_objects import Sha256Digest
 from agentmemory.operations.infrastructure.configuration import CoreSettings
 from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
@@ -629,6 +656,8 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved.installation_root_key_file,
         neo4j_driver,
         resolved.neo4j_database,
+        resolved,
+        projection_adapter,
     )
     application.include_router(
         create_memory_router(
@@ -720,6 +749,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),
+            create_contract_graph_integrity_router(),
             create_contract_memory_router(),
             create_contract_memory_correction_router(),
             create_contract_memory_lifecycle_router(),
@@ -759,6 +789,8 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
     installation_root_key_file: Path,
     neo4j_driver: AsyncDriver,
     neo4j_database: str,
+    settings: CoreSettings,
+    projection_adapter: SqliteProjectionRebuildAdapter,
 ) -> None:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
@@ -819,6 +851,34 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             clock,
         )
     )
+    graph_integrity = Neo4jGraphIntegrityAdapter(neo4j_driver, neo4j_database)
+    graph_integrity_journal = SqliteGraphIntegrityJournal(store, clock)
+    application.include_router(
+        create_graph_integrity_router(
+            authenticator,
+            retrieval_scope,
+            StartGraphMigrationHandler(
+                SqliteGraphMigrationRepository(store, clock), graph_integrity
+            ),
+            RunGraphMigrationHandler(SqliteGraphMigrationRepository(store, clock), graph_integrity),
+            ValidateGraphIntegrityHandler(graph_integrity, graph_integrity_journal),
+            RepairGraphFindingHandler(
+                graph_integrity_journal,
+                graph_integrity,
+                Pf002CanonicalGraphRebuild(
+                    store,
+                    clock,
+                    StartProjectionRebuildHandler(
+                        projection_adapter,
+                        projection_adapter,
+                        projection_adapter,
+                    ),
+                    _graph_rebuild_manifest(settings),
+                ),
+            ),
+            clock,
+        )
+    )
     application.include_router(
         _create_retrieval_runtime_router(
             store,
@@ -827,6 +887,46 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             retrieval_scope,
             installation_root_key_file,
         )
+    )
+
+
+def _graph_rebuild_manifest(settings: CoreSettings) -> RebuildManifest:
+    """Bind the internal GRA-006 repair path to this exact local release configuration."""
+    providers = tuple(
+        sorted(
+            (
+                f"embedding:{settings.embedding_model_id}@{settings.embedding_model_revision}",
+                f"extractor:{settings.extraction_model_id}@{settings.extraction_model_revision}",
+                f"reranker:{settings.reranking_model_id}@{settings.reranking_model_revision}",
+            )
+        )
+    )
+    identity = json.dumps(
+        {
+            "application": __version__,
+            "graph_migration": REGISTERED_GRAPH_MIGRATION_CHECKSUM,
+            "graph_schema": NEO4J_SCHEMA_HEAD,
+            "providers": providers,
+            "relational_schema": EXPECTED_MIGRATION_HEAD,
+            "schema_version": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return RebuildManifest(
+        application_build=f"agentmemory@{__version__}",
+        relational_schema=EXPECTED_MIGRATION_HEAD,
+        graph_schema=NEO4J_SCHEMA_HEAD,
+        parser_version="canonical-event-projection@1",
+        extractor_version=(
+            f"{settings.memory_extractor_id}@{settings.memory_extractor_version}:"
+            f"{settings.extraction_model_revision}"
+        ),
+        provider_versions=providers,
+        embedding_space=(
+            f"{settings.embedding_model_id}@{settings.embedding_model_revision}:1024:cosine:v1"
+        ),
+        implementation_fingerprint=Sha256Digest.from_bytes(identity),
     )
 
 

@@ -2,7 +2,7 @@
 
 ## Healthy state
 
-- Core reports Ready at relational head `0024_gra005_contradictions`.
+- Core reports Ready at relational head `0025_gra006_graph_integrity`.
 - Detection operations are append-only and exact retries return the same conflict IDs.
 - Every conflict links two current canonical assertion IDs and all supporting evidence IDs.
 - Unresolved conflicts cause retrieval to qualify or abstain; rank never hides them.

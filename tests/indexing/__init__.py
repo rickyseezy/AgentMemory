@@ -1,0 +1,1 @@
+"""Indexing bounded-context tests."""

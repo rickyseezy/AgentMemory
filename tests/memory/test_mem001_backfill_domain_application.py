@@ -451,8 +451,26 @@ async def test_worker_run_honors_stop_and_retries_only_dependency_failures(
 
 
 @pytest.mark.asyncio
-async def test_wait_returns_on_timeout_and_stop_signal() -> None:
+async def test_wait_returns_on_timeout_and_stop_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[float | None] = []
+
+    async def inspect_timeout(
+        awaitable: object,
+        *,
+        timeout: float | None,  # noqa: ASYNC109 -- Mirrors asyncio.wait_for for mutation proof.
+    ) -> None:
+        observed.append(timeout)
+        awaitable.close()  # type: ignore[attr-defined]
+        assert timeout is not None
+        raise TimeoutError
+
     stop = asyncio.Event()
-    await backfill_module._wait_or_stop(stop, 0)
+    with monkeypatch.context() as context:
+        context.setattr(asyncio, "wait_for", inspect_timeout)
+        await backfill_module._wait_or_stop(stop, 0)
+    assert observed == [0]
+
     stop.set()
     await backfill_module._wait_or_stop(stop, 1)

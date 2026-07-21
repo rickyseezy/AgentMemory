@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "tree_sitter_version": "0.26.0",
+  "language_pack_version": "1.13.2",
+  "platform_bundles": {
+    "linux-aarch64": "f840e57df98917ae8ca570f1442a73b635c92bff4e1ead541807f588f0089119",
+    "linux-x86_64": "3a6fc64f10d02db623df1243c320c4827e8259743786a724cf91450fdeb294bb",
+    "macos-arm64": "06086f5675fda68c1f6cec696f6c95d04541f6c7b80af322b577eb5252327109",
+    "macos-x86_64": "7cc7ecb55045a9352cae3036f0084c4ea434315b56567db9c1e2c83cb22381ed",
+    "windows-aarch64": "6282bb8f9214845665f6d90f764f337b96759e8fdc13d853b497f7560fd3911b",
+    "windows-x86_64": "8943c83ad928ef1475894a23cedd46d730e2731e41ac436d563185b254b97f40"
+  },
+  "languages": [
+    {"name":"python","runtime_names":["python"],"repository":"tree-sitter/tree-sitter-python","revision":"26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64","query_sha256":"d0f3e577878167bfabc30e526e497bce58d1699b9bcabf8ab3a50698efb5ca3e"},
+    {"name":"javascript","runtime_names":["javascript"],"repository":"tree-sitter/tree-sitter-javascript","revision":"58404d8cf191d69f2674a8fd507bd5776f46cb11","query_sha256":"6ef988cce5a428a15b5460e3ee96f1478705f965fc6e848a91a18bfa6c6f0212"},
+    {"name":"typescript","runtime_names":["typescript","tsx"],"repository":"tree-sitter/tree-sitter-typescript","revision":"75b3874edb2dc714fb1fd77a32013d0f8699989f","query_sha256":"56c0cdb4f9fa46c23ce7b8657ac5b6983661e7be8303286de6ecd8b528799bcc"},
+    {"name":"java","runtime_names":["java"],"repository":"tree-sitter/tree-sitter-java","revision":"e10607b45ff745f5f876bfa3e94fbcc6b44bdc11","query_sha256":"c92ee3f659ffc32c1a4c14c6bdbeaea4b0d4097df1b5aab517a67b820ddd4169"},
+    {"name":"kotlin","runtime_names":["kotlin"],"repository":"fwcd/tree-sitter-kotlin","revision":"c8ac3d2627240160b999a2c100de3babbdb8f419","query_sha256":"f23a2b4a11801aeb0b9ddad18dc562b66c14c2c004539d412596b652a2f7cfb5"},
+    {"name":"go","runtime_names":["go"],"repository":"tree-sitter/tree-sitter-go","revision":"2346a3ab1bb3857b48b29d779a1ef9799a248cd7","query_sha256":"d1a9b1f678fe0278b85054e2dc56a28ef26aa478b8c88fb2b0dd83cdcdb9db35"},
+    {"name":"csharp","runtime_names":["csharp"],"repository":"tree-sitter/tree-sitter-c-sharp","revision":"9150f7d56bb47f1a809fa23623f1ba1413e93fa9","query_sha256":"bd750ff3262913474fe7994dbecc2f7085e180e8aca8a6d9be6c1da57aa3bcdd"},
+    {"name":"rust","runtime_names":["rust"],"repository":"tree-sitter/tree-sitter-rust","revision":"77a3747266f4d621d0757825e6b11edcbf991ca5","query_sha256":"f22867fdebde5cb091861c08d34690dc2540f4318068bf81be9f6b0d348ab8c1"},
+    {"name":"c","runtime_names":["c"],"repository":"tree-sitter/tree-sitter-c","revision":"b780e47fc780ddc8da13afa35a3f4ed5c157823d","query_sha256":"774ca67cfe23b0e0d1d3a4f01788049a822beb1311feee72b20a595a37be1e28"},
+    {"name":"cpp","runtime_names":["cpp"],"repository":"tree-sitter/tree-sitter-cpp","revision":"8b5b49eb196bec7040441bee33b2c9a4838d6967","query_sha256":"f63a5db9f70177dad54a73c2ca3bf5f641d08db139f908ffc77a9c95668eef2a"},
+    {"name":"ruby","runtime_names":["ruby"],"repository":"tree-sitter/tree-sitter-ruby","revision":"ad907a69da0c8a4f7a943a7fe012712208da6dee","query_sha256":"4a908d7036aa4495c076bd0b9b0948682e147b8ac79e7802fc2b69588b936d20"},
+    {"name":"php","runtime_names":["php"],"repository":"tree-sitter/tree-sitter-php","revision":"38216983c07bf9e1b56e16acde53b25adaeab61c","query_sha256":"2d637cf59604a09ce6db387ee55b72692683f3ab1645ad2b68ca423ffcb898db"},
+    {"name":"swift","runtime_names":["swift"],"repository":"alex-pinkus/tree-sitter-swift","revision":"28fe3a8a85586aa297524fe6164140b9521dcaff","query_sha256":"61d4a2859a5155e2d7aef5e1563fc383524ef52533b86dfbaa7a1d3e27403679"},
+    {"name":"bash","runtime_names":["bash"],"repository":"tree-sitter/tree-sitter-bash","revision":"a06c2e4415e9bc0346c6b86d401879ffb44058f7","query_sha256":"8a1f0023a1e04b9a8a6e7c2f1b38f856111b14b1758948b68d9c88383860e9e7"},
+    {"name":"powershell","runtime_names":["powershell"],"repository":"airbus-cert/tree-sitter-powershell","revision":"e7bd348c49fdfd5c853a146a670965ba516a6239","query_sha256":"f297bc94a90afca9fc7525a586b988adf0310e2e51732584f47a510c5919a299"}
+  ]
+}

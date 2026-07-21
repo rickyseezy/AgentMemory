@@ -2524,6 +2524,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Versioned source revisions and tiered precision support both universal coverage and exact navigation.
 
+**Implementation evidence:** [IDX-001 implementation record](docs/implementation/IDX-001.md) and
+[semantic code indexing operations runbook](docs/runbooks/IDX-001-CODE-INDEXING.md).
+
 #### IDX-002 — Incrementally index changed content
 
 **User story:** As an operator, large repositories stay fresh without full rescans.

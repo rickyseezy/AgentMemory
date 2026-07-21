@@ -271,15 +271,33 @@ async def test_scheduler_validates_bounds_clock_and_compare_and_swap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduler_wait_helper_observes_stop_and_timeout() -> None:
+async def test_scheduler_wait_helper_observes_stop_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[float | None] = []
+
+    async def inspect_timeout(
+        awaitable: Any,
+        *,
+        timeout: float | None,  # noqa: ASYNC109 -- Mirrors asyncio.wait_for for mutation proof.
+    ) -> None:
+        observed.append(timeout)
+        awaitable.close()
+        assert timeout is not None
+        raise TimeoutError
+
+    with monkeypatch.context() as context:
+        context.setattr(asyncio, "wait_for", inspect_timeout)
+        waiting = asyncio.Event()
+        await _wait_or_stop(waiting, 0.001)
+
+    assert observed == [0.001]
+    assert not waiting.is_set()
+
     stopped = asyncio.Event()
     stopped.set()
     await _wait_or_stop(stopped, 1)
     assert stopped.is_set()
-
-    waiting = asyncio.Event()
-    await _wait_or_stop(waiting, 0.001)
-    assert not waiting.is_set()
 
 
 def test_private_validation_boundary_preserves_stable_field_and_code() -> None:

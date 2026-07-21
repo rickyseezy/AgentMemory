@@ -21,6 +21,8 @@ dependencies = [
   "pydantic==2.13.4",
   "pydantic-settings==2.14.2",
   "sqlalchemy==2.0.51",
+  "tree-sitter==0.26.0",
+  "tree-sitter-language-pack==1.13.2",
   "uvicorn==0.51.0",
 ]
 
@@ -169,6 +171,8 @@ skips = []
 [tool.mutmut]
 source_paths = ["src/agentmemory"]
 only_mutate = [
+  "*indexing/domain/code_entities.py",
+  "*indexing/application/code_index.py",
   "*operations/domain/projection_rebuild.py",
   "*graph/domain/models.py",
   "*graph/domain/assertions.py",
@@ -228,6 +232,9 @@ only_mutate = [
   "*retrieval/application/start_session_briefing.py",
 ]
 pytest_add_cli_args_test_selection = [
+  "tests/indexing/test_idx001_code_entities_domain.py",
+  "tests/indexing/test_idx001_code_index_application.py",
+  "tests/indexing/test_idx001_scip_import.py",
   "tests/core/test_projection_rebuild_domain.py",
   "tests/core/test_projection_rebuild_application.py",
   "tests/graph/test_gra001_domain_application.py",

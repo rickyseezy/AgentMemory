@@ -8,8 +8,10 @@ or active pointers to force a repair.
 
 ## Preconditions
 
-- AgentMemory Core is Ready and its SQLite/Neo4j migration heads are
-  `0002_pf002_projection_rebuild` and `0002_pf002_projection_schema`.
+- AgentMemory Core is Ready and its SQLite/Neo4j migration heads are the exact heads certified by the
+  active release (currently `0020_mem006_session_briefing` and
+  `0003_gra001_brain_scoped_schema`). PF-002 introduced the earlier `0002` schemas; do not downgrade
+  an active installation to match an old example.
 - The operator has an active grant for the target Brain.
 - The manifest contains exact immutable application, schema, parser, extractor, provider/model, and
   embedding-space pins. Do not use aliases such as `latest`.
@@ -35,8 +37,8 @@ Content-Type: application/json
   "requested_watermark": null,
   "manifest": {
     "application_build": "<immutable-build>",
-    "relational_schema": "0002_pf002_projection_rebuild",
-    "graph_schema": "0002_pf002_projection_schema",
+    "relational_schema": "0020_mem006_session_briefing",
+    "graph_schema": "0003_gra001_brain_scoped_schema",
     "parser_version": "<immutable-parser-revision>",
     "extractor_version": "<immutable-extractor-revision>",
     "provider_versions": ["<provider:model@immutable-revision>"],

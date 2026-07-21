@@ -243,3 +243,55 @@ forbidden_modules =
     agentmemory.operations
     agentmemory.providers
     agentmemory.retrieval
+
+[importlinter:contract:graph layers]
+name = Graph clean architecture layers
+type = layers
+layers =
+    agentmemory.graph.infrastructure
+    agentmemory.graph.adapters
+    agentmemory.graph.application
+    agentmemory.graph.domain
+
+[importlinter:contract:graph domain independence]
+name = Graph domain is framework and upper-layer independent
+type = forbidden
+source_modules =
+    agentmemory.graph.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.graph.application
+    agentmemory.graph.adapters
+    agentmemory.graph.infrastructure
+    agentmemory.ingestion
+    agentmemory.memory
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval
+
+[importlinter:contract:graph application independence]
+name = Graph application is framework and adapter independent
+type = forbidden
+source_modules =
+    agentmemory.graph.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.graph.adapters
+    agentmemory.graph.infrastructure
+    agentmemory.ingestion
+    agentmemory.memory
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval

@@ -11,6 +11,7 @@ from neo4j import Query
 from neo4j.exceptions import ServiceUnavailable
 
 from agentmemory.operations.adapters.outbound.neo4j_graph import (
+    GRA001_CONSTRAINT_NAMES,
     NEO4J_SCHEMA_HEAD,
     VECTOR_INDEX_NAME,
     Neo4jGraphAdapter,
@@ -37,6 +38,9 @@ class _Driver:
     schema_version: str = NEO4J_SCHEMA_HEAD
     index_state: str = "ONLINE"
     index_provider: str = "vector-2026.06"
+    graph_constraints: tuple[str, ...] = GRA001_CONSTRAINT_NAMES
+    invalid_entities: int = 0
+    invalid_relationships: int = 0
     fail: bool = False
     calls: list[tuple[str, dict[str, object]]] = field(
         default_factory=list[tuple[str, dict[str, object]]]
@@ -48,7 +52,7 @@ class _Driver:
             msg = "unavailable"
             raise ServiceUnavailable(msg)
 
-    async def execute_query(
+    async def execute_query(  # noqa: PLR0911 -- Protocol fake routes fixed query contracts.
         self,
         query: str | Query,
         **parameters: object,
@@ -80,6 +84,12 @@ class _Driver:
                 None,
                 None,
             )
+        if "SHOW CONSTRAINTS" in query_text:
+            return ([{"names": list(self.graph_constraints)}], None, None)
+        if "MATCH (entity:GraphEntity)" in query_text and "AS invalid" in query_text:
+            return ([{"invalid": self.invalid_entities}], None, None)
+        if "MATCH (subject)-[relationship]->(object)" in query_text:
+            return ([{"invalid": self.invalid_relationships}], None, None)
         if "SEARCH record IN" in query_text:
             return ([{"id": parameters.get("expected_canary", "canary")}], None, None)
         return ([], None, None)
@@ -103,7 +113,7 @@ def _vector(content_id: str = "canary", dimension: int = 1024) -> EmbeddingVecto
 async def test_graph_compatibility_checks_live_version_schema_and_filtered_index() -> None:
     driver = _Driver()
     proof = await _adapter(driver).verify(binding())
-    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0002_pf002_projection_schema")
+    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0003_gra001_brain_scoped_schema")
     assert any("SHOW VECTOR INDEXES" in query for query, _ in driver.calls)
 
 
@@ -114,6 +124,9 @@ async def test_graph_compatibility_checks_live_version_schema_and_filtered_index
         (_Driver(server_version="2025.12.0"), ErrorCode.DEPENDENCY_UNAVAILABLE),
         (_Driver(schema_version="old"), ErrorCode.CONFLICT),
         (_Driver(index_state="POPULATING"), ErrorCode.INTEGRITY_VIOLATION),
+        (_Driver(graph_constraints=()), ErrorCode.INTEGRITY_VIOLATION),
+        (_Driver(invalid_entities=1), ErrorCode.INTEGRITY_VIOLATION),
+        (_Driver(invalid_relationships=1), ErrorCode.INTEGRITY_VIOLATION),
         (_Driver(fail=True), ErrorCode.DEPENDENCY_UNAVAILABLE),
     ],
 )
@@ -161,12 +174,12 @@ async def test_graph_migration_runs_closed_ordered_schema_and_awaits_index() -> 
     driver = _Driver()
     migration_directory = Path(__file__).parents[2] / "migrations" / "neo4j"
     await migrate_neo4j(cast("AsyncDriver", driver), "agentmemory", migration_directory)
-    assert len(driver.calls) == 9
+    assert len(driver.calls) == 63
     assert "CREATE CONSTRAINT" in driver.calls[0][0]
     assert "CREATE VECTOR INDEX" in driver.calls[2][0]
-    assert NEO4J_SCHEMA_HEAD in driver.calls[7][0]
-    assert "db.awaitIndex" in driver.calls[8][0]
-    assert driver.calls[8][1]["index_name"] == VECTOR_INDEX_NAME
+    assert NEO4J_SCHEMA_HEAD in driver.calls[-2][0]
+    assert "db.awaitIndex" in driver.calls[-1][0]
+    assert driver.calls[-1][1]["index_name"] == VECTOR_INDEX_NAME
 
 
 @pytest.mark.asyncio

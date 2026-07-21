@@ -26,6 +26,11 @@ _MIGRATIONS = (
         4,
         "ebaffd862afc8833b1c3bca1ccf7cb084a0682cbfb222b8e6ddba430a5d8f465",
     ),
+    (
+        "0003_gra001_brain_scoped_schema.cypher",
+        54,
+        "f3e2b2370d682132157b4f0129b26403be2f46836dd3386cdc89c4848faf6ed8",
+    ),
 )
 
 

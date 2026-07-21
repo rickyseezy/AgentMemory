@@ -167,6 +167,8 @@ skips = []
 source_paths = ["src/agentmemory"]
 only_mutate = [
   "*operations/domain/projection_rebuild.py",
+  "*graph/domain/models.py",
+  "*graph/application/project_entity.py",
   "*identity/domain/services.py",
   "*identity/domain/checkout.py",
   "*identity/domain/topology.py",
@@ -214,6 +216,7 @@ only_mutate = [
 pytest_add_cli_args_test_selection = [
   "tests/core/test_projection_rebuild_domain.py",
   "tests/core/test_projection_rebuild_application.py",
+  "tests/graph/test_gra001_domain_application.py",
   "tests/identity/test_identity_resolution_domain.py",
   "tests/identity/test_identity_fingerprints.py",
   "tests/identity/test_checkout_observation_domain.py",

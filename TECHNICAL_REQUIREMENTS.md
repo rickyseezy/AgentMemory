@@ -2369,13 +2369,23 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Technical approach**
 
-- GraphSchemaMigration creates composite uniqueness/type/existence constraints before writers activate.
+- GraphSchemaMigration creates Community-supported composite `(brain_id, id)` uniqueness constraints
+  for the base graph label, every closed stable label, and every closed relationship type before
+  writers activate. Because Neo4j Community does not provide Enterprise property existence/type or
+  key constraints, required property presence/types are enforced by closed domain constructors and
+  repository documents on every product write, then independently checked by the fail-closed startup
+  integrity scan. A maintenance/admin write that bypasses the repository cannot make Core Ready.
 - Neo4jGraphRepository accepts AuthorizedScope at construction per operation and prepends closed, parameterized scope predicates to every query template.
 - Stable graph IDs derive from canonical entity UUIDs; revision IDs derive from entity + content/commit/version fingerprint.
+- Public graph reads accept only the `GraphEntityType` enum and exact UUIDv7 identity; arbitrary
+  Cypher, labels, relationship types, path expressions, and database names are never request inputs.
 
 **Mandatory tests:** constraint integration; concurrent MERGE; scope-query static scan; malicious IDs; cross-Brain canary; migration upgrade.
 
 **Why:** Database constraints and mandatory scope parameters make graph integrity structural, not conventional.
+
+**Implementation record:** [GRA-001 implementation](docs/implementation/GRA-001.md) and
+[GRA-001 graph-schema runbook](docs/runbooks/GRA-001-GRAPH-SCHEMA.md).
 
 #### GRA-002 — Represent facts as evidence-backed assertions
 

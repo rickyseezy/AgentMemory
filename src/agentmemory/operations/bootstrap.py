@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING
 import httpx
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
+from agentmemory.graph.adapters.inbound.http_api import (
+    create_contract_graph_router,
+    create_graph_router,
+)
+from agentmemory.graph.adapters.outbound.neo4j_repository import Neo4jGraphRepositoryFactory
 from agentmemory.identity.adapters.inbound.http_api import (
     create_contract_identity_router,
     create_identity_router,
@@ -557,12 +562,14 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             await container.close()
 
     application = create_app(dependencies, lifespan)
-    _include_identity_and_retrieval_runtime_routers(
+    _include_identity_graph_and_retrieval_runtime_routers(
         application,
         store,
         clock,
         authenticator,
         resolved.installation_root_key_file,
+        neo4j_driver,
+        resolved.neo4j_database,
     )
     application.include_router(
         create_memory_router(
@@ -651,6 +658,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
+            create_contract_graph_router(),
             create_contract_memory_router(),
             create_contract_memory_correction_router(),
             create_contract_memory_lifecycle_router(),
@@ -682,12 +690,14 @@ def _create_adapter_capability_runtime_router(
     )
 
 
-def _include_identity_and_retrieval_runtime_routers(
+def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- Explicit composition.
     application: FastAPI,
     store: SqliteCoreStore,
     clock: SystemClock,
     authenticator: ApiAuthenticator,
     installation_root_key_file: Path,
+    neo4j_driver: AsyncDriver,
+    neo4j_database: str,
 ) -> None:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
@@ -721,6 +731,14 @@ def _include_identity_and_retrieval_runtime_routers(
         retrieval_scope,
     )
     application.include_router(identity_router)
+    application.include_router(
+        create_graph_router(
+            authenticator,
+            retrieval_scope,
+            Neo4jGraphRepositoryFactory(neo4j_driver, neo4j_database),
+            clock,
+        )
+    )
     application.include_router(
         _create_retrieval_runtime_router(
             store,

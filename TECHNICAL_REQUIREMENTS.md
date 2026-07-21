@@ -2616,6 +2616,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Format-specific parsers provide precision while a common candidate schema keeps graph projection uniform.
 
+**Implementation evidence:** [IDX-005 implementation record](docs/implementation/IDX-005.md) and
+[artifact topology operations runbook](docs/runbooks/IDX-005-ARTIFACT-TOPOLOGY.md).
+
 #### IDX-006 — Apply content indexing policy
 
 **User story:** As an administrator, I control generated, vendored, binary, oversized, encrypted, ignored, and private content.

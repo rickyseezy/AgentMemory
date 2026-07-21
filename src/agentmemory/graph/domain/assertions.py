@@ -621,9 +621,27 @@ def _require_activation_evidence(
         raise AssertionEvidenceError(_ERR_UNAVAILABLE)
     explicit = any(item.kind is EvidenceKind.USER_STATEMENT for item in evidence)
     independent_sources = {item.source_id for item in evidence}
-    if not explicit and (
-        not candidate.confidence.automated_activation_eligible
-        or len(independent_sources) < _MIN_INDEPENDENT_SOURCES
+    exact_deterministic_artifact = (
+        candidate.extractor.extractor_id == "artifact-topology-parser"
+        and candidate.extractor.model_id == "deterministic"
+        and candidate.predicate
+        in {
+            AssertionPredicate.DEPENDS_ON,
+            AssertionPredicate.DEPLOYED_AS,
+            AssertionPredicate.PRODUCES,
+            AssertionPredicate.CONSUMES,
+        }
+        and len(evidence) == 1
+        and evidence[0].kind in {EvidenceKind.ARTIFACT, EvidenceKind.SOURCE_SPAN}
+        and evidence[0].immutable
+    )
+    if (
+        not explicit
+        and not exact_deterministic_artifact
+        and (
+            not candidate.confidence.automated_activation_eligible
+            or len(independent_sources) < _MIN_INDEPENDENT_SOURCES
+        )
     ):
         raise AssertionEvidenceError(_ERR_EVIDENCE_POLICY)
 

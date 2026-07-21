@@ -75,6 +75,39 @@ def test_automated_activation_requires_threshold_and_two_independent_sources() -
         _candidate((EVIDENCE_ID,)).activate((first,), NOW)
 
 
+def test_exact_idx005_artifact_relations_activate_from_one_immutable_source_only() -> None:
+    evidence = _evidence(EVIDENCE_ID, SOURCE_ID, EvidenceKind.ARTIFACT)
+    candidates: list[AssertionCandidate] = []
+    for predicate in (
+        AssertionPredicate.DEPENDS_ON,
+        AssertionPredicate.DEPLOYED_AS,
+        AssertionPredicate.PRODUCES,
+        AssertionPredicate.CONSUMES,
+    ):
+        candidate = AssertionCandidate.create(
+            candidate_id=CANDIDATE_ID,
+            subject_id=SUBJECT_ID,
+            predicate=predicate,
+            object_id=OBJECT_ID,
+            scope=AssertionScope(BRAIN_ID, PROJECT_ID, REPOSITORY_ID, None, "internal"),
+            temporal=AssertionTemporal(NOW, None, NOW, None),
+            confidence=AssertionConfidence(9_800, 9_700, 9_800),
+            extractor=AssertionExtractor(
+                "artifact-topology-parser",
+                "idx005-parsers-1.0.0",
+                "deterministic",
+                "local-v1",
+            ),
+            evidence_ids=(EVIDENCE_ID,),
+        )
+        candidates.append(candidate)
+        assert candidate.activate((evidence,), NOW).status is AssertionStatus.ACTIVE
+
+    event = _evidence(EVIDENCE_ID, SOURCE_ID, EvidenceKind.EVENT)
+    with pytest.raises(AssertionEvidenceError, match="policy"):
+        candidates[-1].activate((event,), NOW)
+
+
 def test_inaccessible_deleted_mutable_or_out_of_scope_evidence_cannot_activate() -> None:
     valid = _evidence(EVIDENCE_ID, SOURCE_ID, EvidenceKind.USER_STATEMENT)
     invalid = (

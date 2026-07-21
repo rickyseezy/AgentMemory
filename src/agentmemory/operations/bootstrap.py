@@ -111,6 +111,10 @@ from agentmemory.indexing.adapters.inbound.api_topology_http_api import (
     create_api_topology_router,
     create_contract_api_topology_router,
 )
+from agentmemory.indexing.adapters.inbound.artifact_topology_http_api import (
+    create_artifact_topology_router,
+    create_contract_artifact_topology_router,
+)
 from agentmemory.indexing.adapters.inbound.http_api import create_contract_indexing_router
 from agentmemory.indexing.adapters.inbound.revision_history_http_api import (
     create_contract_revision_history_router,
@@ -123,8 +127,18 @@ from agentmemory.indexing.adapters.outbound.api_topology_graph import (
 from agentmemory.indexing.adapters.outbound.api_topology_plugins import (
     production_api_topology_plugins,
 )
+from agentmemory.indexing.adapters.outbound.artifact_topology_graph import (
+    CanonicalArtifactTopologyProjection,
+    SourceRevisionArtifactTopologyLineage,
+)
+from agentmemory.indexing.adapters.outbound.artifact_topology_plugins import (
+    production_artifact_topology_parsers,
+)
 from agentmemory.indexing.adapters.outbound.sqlite_api_topology import (
     SqliteApiTopologyRepository,
+)
+from agentmemory.indexing.adapters.outbound.sqlite_artifact_topology import (
+    SqliteArtifactTopologyRepository,
 )
 from agentmemory.indexing.adapters.outbound.sqlite_revision_history import (
     SqliteCommitGraphAdapter,
@@ -134,6 +148,11 @@ from agentmemory.indexing.application.api_topology import (
     ExtractAndRegisterApiTopologyHandler,
     LinkApiTopologyHandler,
     RegisterApiTopologyBatchHandler,
+)
+from agentmemory.indexing.application.artifact_topology import (
+    ExtractAndRegisterArtifactTopologyHandler,
+    QueryArtifactTopologyHandler,
+    RegisterArtifactTopologyBatchHandler,
 )
 from agentmemory.indexing.application.revision_history import (
     ProcessSourceRevisionHandler,
@@ -796,6 +815,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_indexing_router(),
             create_contract_revision_history_router(),
             create_contract_api_topology_router(),
+            create_contract_artifact_topology_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),
@@ -929,6 +949,28 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
                 SqliteConsumesAssertionAdapter(store, SqliteAssertionRepositoryFactory(store)),
                 SourceRevisionTopologyLineageAdapter(source_revision_repository),
             ),
+            clock,
+        )
+    )
+    artifact_topology_repository = SqliteArtifactTopologyRepository(store, clock)
+    assertion_repositories = SqliteAssertionRepositoryFactory(store)
+    application.include_router(
+        create_artifact_topology_router(
+            authenticator,
+            retrieval_scope,
+            ExtractAndRegisterArtifactTopologyHandler(
+                production_artifact_topology_parsers(),
+                RegisterArtifactTopologyBatchHandler(
+                    artifact_topology_repository,
+                    CanonicalArtifactTopologyProjection(
+                        store,
+                        Neo4jGraphRepositoryFactory(neo4j_driver, neo4j_database),
+                        assertion_repositories,
+                    ),
+                    SourceRevisionArtifactTopologyLineage(source_revision_repository),
+                ),
+            ),
+            QueryArtifactTopologyHandler(artifact_topology_repository),
             clock,
         )
     )

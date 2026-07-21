@@ -2476,6 +2476,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Contradiction is domain state and must not be hidden inside a ranking score.
 
+**Implementation record:** [GRA-005 implementation](docs/implementation/GRA-005.md) and
+[GRA-005 contradiction runbook](docs/runbooks/GRA-005-CONTRADICTIONS.md).
+
 #### GRA-006 — Migrate and repair graph integrity
 
 **User story:** As an operator, I can evolve and repair graph projections safely.

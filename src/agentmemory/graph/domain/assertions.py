@@ -100,6 +100,13 @@ class AssertionPredicate(StrEnum):
     DEPLOYED_AS = "deployed_as"
 
 
+class AssertionPolarity(StrEnum):
+    """Closed polarity carried by every canonical assertion revision."""
+
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
+
 class AssertionStatus(StrEnum):
     """Closed authoritative assertion lifecycle."""
 
@@ -336,6 +343,7 @@ class AssertionCandidate:
     content_fingerprint: str
     revision_id: str
     status: AssertionStatus = AssertionStatus.CANDIDATE
+    polarity: AssertionPolarity = AssertionPolarity.POSITIVE
 
     @classmethod
     def create(  # noqa: PLR0913 -- Complete claim schema is mandatory.
@@ -350,6 +358,7 @@ class AssertionCandidate:
         confidence: AssertionConfidence,
         extractor: AssertionExtractor,
         evidence_ids: tuple[str, ...],
+        polarity: AssertionPolarity = AssertionPolarity.POSITIVE,
     ) -> AssertionCandidate:
         """Create a deterministic candidate without granting it authority."""
         normalized_evidence = tuple(sorted(evidence_ids))
@@ -362,6 +371,7 @@ class AssertionCandidate:
             confidence,
             extractor,
             normalized_evidence,
+            polarity,
         )
         return cls(
             candidate_id,
@@ -375,6 +385,8 @@ class AssertionCandidate:
             normalized_evidence,
             fingerprint,
             _revision(candidate_id, fingerprint),
+            AssertionStatus.CANDIDATE,
+            polarity,
         )
 
     def __post_init__(self) -> None:
@@ -384,6 +396,7 @@ class AssertionCandidate:
         if self.subject_id == self.object_id:
             raise AssertionValidationError(_ERR_ENDPOINTS)
         _require_predicate(self.predicate)
+        _require_polarity(self.polarity)
         if self.status is not AssertionStatus.CANDIDATE:
             raise AssertionValidationError(_ERR_CANDIDATE_STATUS)
         if len(self.evidence_ids) > _MAX_EVIDENCE or self.evidence_ids != tuple(
@@ -403,6 +416,7 @@ class AssertionCandidate:
             self.confidence,
             self.extractor,
             self.evidence_ids,
+            self.polarity,
         )
         if self.content_fingerprint != expected or self.revision_id != _revision(self.id, expected):
             raise AssertionValidationError(_ERR_FINGERPRINT)
@@ -433,6 +447,7 @@ class AssertionCandidate:
             self.content_fingerprint,
             self.revision_id,
             AssertionStatus.ACTIVE,
+            self.polarity,
         )
 
 
@@ -452,6 +467,7 @@ class Assertion:
     content_fingerprint: str
     revision_id: str
     status: AssertionStatus
+    polarity: AssertionPolarity = AssertionPolarity.POSITIVE
 
     def __post_init__(self) -> None:
         """Require authoritative status, stable identity, digests, and evidence."""
@@ -459,6 +475,7 @@ class Assertion:
             stable_graph_id(value)
         _require_digest(self.content_fingerprint)
         _require_digest(self.revision_id)
+        _require_polarity(self.polarity)
         if self.status not in {
             AssertionStatus.ACTIVE,
             AssertionStatus.DISPUTED,
@@ -498,6 +515,7 @@ class Assertion:
             self.content_fingerprint,
             self.revision_id,
             AssertionStatus.DISPUTED,
+            self.polarity,
         )
 
 
@@ -608,6 +626,7 @@ def _fingerprint(  # noqa: PLR0913 -- Fingerprint binds every claim coordinate.
     confidence: AssertionConfidence,
     extractor: AssertionExtractor,
     evidence_ids: tuple[str, ...],
+    polarity: AssertionPolarity,
 ) -> str:
     document = {
         "confidence": {
@@ -639,6 +658,8 @@ def _fingerprint(  # noqa: PLR0913 -- Fingerprint binds every claim coordinate.
             "valid_to": _optional_time(temporal.valid_to),
         },
     }
+    if polarity is AssertionPolarity.NEGATIVE:
+        document["polarity"] = polarity.value
     encoded = json.dumps(
         document, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode()
@@ -705,6 +726,11 @@ def _require_revocation_reason(value: object) -> None:
 
 def _require_predicate(value: object) -> None:
     if not isinstance(value, AssertionPredicate):
+        raise AssertionValidationError(_ERR_PREDICATE)
+
+
+def _require_polarity(value: object) -> None:
+    if not isinstance(value, AssertionPolarity):
         raise AssertionValidationError(_ERR_PREDICATE)
 
 

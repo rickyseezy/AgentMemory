@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING
 import httpx
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
+from agentmemory.graph.adapters.inbound.contradiction_http_api import (
+    create_contract_contradiction_router,
+    create_contradiction_router,
+)
 from agentmemory.graph.adapters.inbound.http_api import (
     create_contract_graph_router,
     create_graph_router,
@@ -22,6 +26,7 @@ from agentmemory.graph.adapters.outbound.neo4j_materialized_edges import (
     Neo4jMaterializedEdgeProjectionFactory,
 )
 from agentmemory.graph.adapters.outbound.neo4j_repository import Neo4jGraphRepositoryFactory
+from agentmemory.graph.adapters.outbound.sqlite_contradictions import SqliteContradictionRepository
 from agentmemory.graph.adapters.outbound.sqlite_materialized_edges import (
     SqliteCanonicalAssertionProjectionSource,
     SqliteMaterializedEdgeAuthorization,
@@ -714,6 +719,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_retrieval_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
+            create_contract_contradiction_router(),
             create_contract_memory_router(),
             create_contract_memory_correction_router(),
             create_contract_memory_lifecycle_router(),
@@ -802,6 +808,14 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             SqliteTemporalAssertionRepository(store),
             vcs_revisions,
             vcs_revisions,
+            clock,
+        )
+    )
+    application.include_router(
+        create_contradiction_router(
+            authenticator,
+            retrieval_scope,
+            SqliteContradictionRepository(store, clock),
             clock,
         )
     )

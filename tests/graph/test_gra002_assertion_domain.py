@@ -17,6 +17,7 @@ from agentmemory.graph.domain.assertions import (
     AssertionEvidenceRevocation,
     AssertionExtractor,
     AssertionLifecycleEvent,
+    AssertionPolarity,
     AssertionPredicate,
     AssertionScope,
     AssertionStatus,
@@ -104,6 +105,10 @@ def test_removing_all_evidence_disputes_but_one_usable_source_keeps_active() -> 
 def test_closed_predicate_confidence_temporal_and_evidence_schema_fail_closed() -> None:
     with pytest.raises(AssertionValidationError, match="predicate"):
         replace(_candidate(()), predicate=cast("AssertionPredicate", "reads"))
+    negative = _candidate((), polarity=AssertionPolarity.NEGATIVE)
+    assert negative.polarity is AssertionPolarity.NEGATIVE
+    with pytest.raises(AssertionValidationError, match="predicate"):
+        replace(_candidate(()), polarity=cast("AssertionPolarity", "negative"))
     for confidence in (-1, 10_001, True):
         with pytest.raises(AssertionValidationError, match="confidence"):
             AssertionConfidence(confidence, 9_000, 9_000)
@@ -243,7 +248,11 @@ def test_scope_evidence_and_extractor_runtime_types_fail_closed() -> None:
         replace(evidence, occurred_at=NOW.replace(tzinfo=None))
 
 
-def _candidate(evidence_ids: tuple[str, ...], confidence: int = 9_000) -> AssertionCandidate:
+def _candidate(
+    evidence_ids: tuple[str, ...],
+    confidence: int = 9_000,
+    polarity: AssertionPolarity = AssertionPolarity.POSITIVE,
+) -> AssertionCandidate:
     return AssertionCandidate.create(
         candidate_id=CANDIDATE_ID,
         subject_id=SUBJECT_ID,
@@ -254,6 +263,7 @@ def _candidate(evidence_ids: tuple[str, ...], confidence: int = 9_000) -> Assert
         confidence=AssertionConfidence(confidence, confidence, confidence),
         extractor=AssertionExtractor("graph.extractor", "1.0.0", "qwen3", "revision-1"),
         evidence_ids=evidence_ids,
+        polarity=polarity,
     )
 
 

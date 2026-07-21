@@ -132,6 +132,7 @@ class TemporalAssertionResponseModel(_StrictModel):
     assertion_revision_id: str
     subject_id: str
     predicate: str
+    polarity: str
     object_id: str
     status: str
     project_id: str
@@ -503,6 +504,7 @@ def _response(result: TemporalAssertionResult) -> TemporalAssertionResponseModel
         assertion_revision_id=assertion.revision_id,
         subject_id=assertion.subject_id,
         predicate=assertion.predicate.value,
+        polarity=assertion.polarity.value,
         object_id=assertion.object_id,
         status=assertion.status.value,
         project_id=assertion.scope.project_id,

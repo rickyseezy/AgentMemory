@@ -22,6 +22,7 @@ from agentmemory.graph.domain.assertions import (
     AssertionEvidenceRevocation,
     AssertionExtractor,
     AssertionLifecycleEvent,
+    AssertionPolarity,
     AssertionPredicate,
     AssertionScope,
     AssertionStatus,
@@ -1219,12 +1220,12 @@ async def _insert_candidate(
         text(
             "INSERT INTO assertion_candidates "
             "(assertion_id,proposal_operation_id,brain_id,project_id,repository_id,checkout_id,"
-            "subject_id,predicate,object_id,classification,valid_from,valid_to,proposed_at,"
+            "subject_id,predicate,polarity,object_id,classification,valid_from,valid_to,proposed_at,"
             "confidence_evidence_support,confidence_source_reliability,"
             "confidence_extraction_quality,extractor_id,extractor_version,model_id,"
             "model_revision,evidence_ids_json,content_fingerprint,revision_id,status,"
             "schema_version) VALUES (:id,:operation,:brain,:project,:repository,:checkout,"
-            ":subject,:predicate,:object,:classification,:valid_from,:valid_to,:proposed_at,"
+            ":subject,:predicate,:polarity,:object,:classification,:valid_from,:valid_to,:proposed_at,"
             ":support,:reliability,:quality,:extractor,:extractor_version,:model,"
             ":model_revision,:evidence,:fingerprint,:revision,'candidate',1)"
         ),
@@ -1368,6 +1369,7 @@ def _candidate_parameters(operation_id: str, candidate: AssertionCandidate) -> d
         "checkout": candidate.scope.checkout_id,
         "subject": candidate.subject_id,
         "predicate": candidate.predicate.value,
+        "polarity": candidate.polarity.value,
         "object": candidate.object_id,
         "classification": candidate.scope.classification,
         "valid_from": _micros(candidate.temporal.valid_from),
@@ -1393,6 +1395,7 @@ def _decode_candidate(row: RowMapping) -> AssertionCandidate:
             candidate_id=str(row["assertion_id"]),
             subject_id=str(row["subject_id"]),
             predicate=AssertionPredicate(str(row["predicate"])),
+            polarity=AssertionPolarity(str(row["polarity"])),
             object_id=str(row["object_id"]),
             scope=AssertionScope(
                 str(row["brain_id"]),

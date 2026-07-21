@@ -127,74 +127,84 @@ class IndexRepositorySnapshotHandler:
             snapshot, len(artifacts), indexed_count, recovered_count, failed_count
         )
 
-    def _index_file(  # noqa: PLR0911 -- Every plugin failure exits as file-scoped evidence.
+    def _index_file(
         self, snapshot: SourceSnapshot, repository_id: str, artifact: SourceArtifact
     ) -> IndexedFile:
-        source_file = SourceFile.create(repository_id, artifact.relative_path)
-        if len(artifact.content) > _MAX_SOURCE_BYTES:
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                _failure_descriptor("unknown"),
-                "source_too_large",
-            )
-        try:
-            language = self.plugin.detect(artifact.relative_path, artifact.content)
-        except Exception:  # noqa: BLE001 -- Detector code is an untrusted plugin boundary.
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                _failure_descriptor("unknown"),
-                "detector_crash",
-            )
-        if language is None:
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                _failure_descriptor("binary", parser_version="detector-v1"),
-                "unsupported_encoding",
-            )
-        try:
-            descriptor = self.plugin.describe(language)
-        except Exception:  # noqa: BLE001 -- Descriptor code is an untrusted plugin boundary.
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                _failure_descriptor(language),
-                "descriptor_crash",
-            )
-        if not _valid_descriptor(descriptor):
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                _failure_descriptor(language),
-                "descriptor_crash",
-            )
-        try:
-            parsed = self.plugin.parse(language, artifact.relative_path, artifact.content)
-        except Exception:  # noqa: BLE001 -- One parser failure must not abort sibling files.
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                descriptor,
-                "parser_crash",
-            )
-        try:
-            return _parsed_file(source_file, snapshot, artifact.content, descriptor, parsed)
-        except Exception:  # noqa: BLE001 -- Invalid plugin DTOs remain file-scoped evidence.
-            return _failed_file(
-                source_file,
-                snapshot,
-                artifact.content,
-                descriptor,
-                "parser_output_invalid",
-            )
+        return index_source_artifact(self.plugin, snapshot, repository_id, artifact)
+
+
+def index_source_artifact(  # noqa: PLR0911 -- Failures are closed file-scoped evidence.
+    plugin: LanguagePluginPort,
+    snapshot: SourceSnapshot,
+    repository_id: str,
+    artifact: SourceArtifact,
+) -> IndexedFile:
+    """Index one exact artifact for full and incremental orchestrators alike."""
+    source_file = SourceFile.create(repository_id, artifact.relative_path)
+    if len(artifact.content) > _MAX_SOURCE_BYTES:
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            _failure_descriptor("unknown"),
+            "source_too_large",
+        )
+    try:
+        language = plugin.detect(artifact.relative_path, artifact.content)
+    except Exception:  # noqa: BLE001 -- Detector code is an untrusted plugin boundary.
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            _failure_descriptor("unknown"),
+            "detector_crash",
+        )
+    if language is None:
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            _failure_descriptor("binary", parser_version="detector-v1"),
+            "unsupported_encoding",
+        )
+    try:
+        descriptor = plugin.describe(language)
+    except Exception:  # noqa: BLE001 -- Descriptor code is an untrusted plugin boundary.
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            _failure_descriptor(language),
+            "descriptor_crash",
+        )
+    if not _valid_descriptor(descriptor):
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            _failure_descriptor(language),
+            "descriptor_crash",
+        )
+    try:
+        parsed = plugin.parse(language, artifact.relative_path, artifact.content)
+    except Exception:  # noqa: BLE001 -- One parser failure must not abort sibling files.
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            descriptor,
+            "parser_crash",
+        )
+    try:
+        return _parsed_file(source_file, snapshot, artifact.content, descriptor, parsed)
+    except Exception:  # noqa: BLE001 -- Invalid plugin DTOs remain file-scoped evidence.
+        return _failed_file(
+            source_file,
+            snapshot,
+            artifact.content,
+            descriptor,
+            "parser_output_invalid",
+        )
 
 
 @dataclass(frozen=True, slots=True)

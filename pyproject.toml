@@ -172,7 +172,9 @@ skips = []
 source_paths = ["src/agentmemory"]
 only_mutate = [
   "*indexing/domain/code_entities.py",
+  "*indexing/domain/incremental.py",
   "*indexing/application/code_index.py",
+  "*indexing/application/incremental_index.py",
   "*operations/domain/projection_rebuild.py",
   "*graph/domain/models.py",
   "*graph/domain/assertions.py",
@@ -235,6 +237,8 @@ pytest_add_cli_args_test_selection = [
   "tests/indexing/test_idx001_code_entities_domain.py",
   "tests/indexing/test_idx001_code_index_application.py",
   "tests/indexing/test_idx001_scip_import.py",
+  "tests/indexing/test_idx002_incremental_domain.py",
+  "tests/indexing/test_idx002_incremental_application.py",
   "tests/core/test_projection_rebuild_domain.py",
   "tests/core/test_projection_rebuild_application.py",
   "tests/graph/test_gra001_domain_application.py",

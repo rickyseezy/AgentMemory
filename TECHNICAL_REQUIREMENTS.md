@@ -2547,6 +2547,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Content-addressed incremental plans are deterministic and scale with changes, not repository size.
 
+**Implementation evidence:** [IDX-002 implementation record](docs/implementation/IDX-002.md) and
+[incremental indexing operations runbook](docs/runbooks/IDX-002-INCREMENTAL-INDEXING.md).
+
 #### IDX-003 — Preserve code history and invalidate stale facts
 
 **User story:** As a developer, code-derived knowledge remains correct for its commit and branch.

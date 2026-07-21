@@ -104,6 +104,7 @@ from agentmemory.identity.application.queries.resolve_workspace import (
     IdentityResolutionDependencies,
     ResolveWorkspaceHandler,
 )
+from agentmemory.indexing.adapters.inbound.http_api import create_contract_indexing_router
 from agentmemory.ingestion.adapters.inbound.backpressure_http_api import (
     create_backpressure_router,
     create_contract_backpressure_router,
@@ -746,6 +747,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
             create_contract_retrieval_router(),
+            create_contract_indexing_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),

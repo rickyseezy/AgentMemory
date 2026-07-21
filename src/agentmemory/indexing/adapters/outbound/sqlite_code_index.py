@@ -34,7 +34,7 @@ from agentmemory.indexing.domain.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncConnection
@@ -145,16 +145,7 @@ class SqliteCodeIndexRepository:
                     self._clock.now(),
                     write=True,
                 )
-                await _insert_file(connection, indexed.file)
-                await _insert_revision(connection, indexed.revision)
-                for symbol in indexed.symbols:
-                    await _insert_symbol(connection, symbol)
-                for revision in indexed.symbol_revisions:
-                    await _insert_symbol_revision(connection, revision)
-                for occurrence in indexed.occurrences:
-                    await _insert_occurrence(connection, occurrence)
-                for failure in indexed.failures:
-                    await _insert_failure(connection, failure)
+                await append_indexed_file(connection, indexed)
                 return indexed
         except IndexingAuthorizationError, IndexingConflictError, IndexingValidationError:
             raise
@@ -223,29 +214,76 @@ class SqliteCodeIndexRepository:
                     self._clock.now(),
                     write=False,
                 )
-                rows = (
-                    (
-                        await connection.execute(
-                            text(
-                                "SELECT revision.*, source_file.repository_id,"
-                                "source_file.relative_path FROM file_revisions AS revision "
-                                "JOIN source_files AS source_file "
-                                "ON source_file.id=revision.file_id "
-                                "WHERE revision.snapshot_id=:snapshot "
-                                "ORDER BY source_file.relative_path"
-                            ),
-                            {"snapshot": snapshot_id},
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
+                rows = await _snapshot_revision_rows(connection, snapshot_id)
                 indexed_files = [await _indexed_file(connection, row) for row in rows]
                 return tuple(indexed_files)
         except IndexingAuthorizationError, IndexingConflictError, IndexingValidationError:
             raise
         except SQLAlchemyError as error:
             raise IndexingUnavailableError(_ERR_STORAGE) from error
+
+
+async def append_indexed_file(connection: AsyncConnection, indexed: IndexedFile) -> None:
+    """Append one canonical IDX-001 file aggregate inside a caller-owned transaction."""
+    await _insert_file(connection, indexed.file)
+    await _insert_revision(connection, indexed.revision)
+    for symbol in indexed.symbols:
+        await _insert_symbol(connection, symbol)
+    for revision in indexed.symbol_revisions:
+        await _insert_symbol_revision(connection, revision)
+    for occurrence in indexed.occurrences:
+        await _insert_occurrence(connection, occurrence)
+    for failure in indexed.failures:
+        await _insert_failure(connection, failure)
+
+
+async def _snapshot_revision_rows(
+    connection: AsyncConnection, snapshot_id: str
+) -> Sequence[RowMapping]:
+    """Resolve current snapshot bindings while retaining immutable revision provenance."""
+    bindings_exist = bool(
+        (
+            await connection.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM snapshot_file_bindings "
+                    "WHERE snapshot_id=:snapshot)"
+                ),
+                {"snapshot": snapshot_id},
+            )
+        ).scalar_one()
+    )
+    if bindings_exist:
+        return (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT revision.*, source_file.repository_id,binding.relative_path "
+                        "FROM snapshot_file_bindings AS binding "
+                        "JOIN file_revisions AS revision ON revision.id=binding.file_revision_id "
+                        "JOIN source_files AS source_file ON source_file.id=binding.source_file_id "
+                        "WHERE binding.snapshot_id=:snapshot ORDER BY binding.relative_path"
+                    ),
+                    {"snapshot": snapshot_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return (
+        (
+            await connection.execute(
+                text(
+                    "SELECT revision.*, source_file.repository_id,source_file.relative_path "
+                    "FROM file_revisions AS revision JOIN source_files AS source_file "
+                    "ON source_file.id=revision.file_id WHERE revision.snapshot_id=:snapshot "
+                    "ORDER BY source_file.relative_path"
+                ),
+                {"snapshot": snapshot_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
 
 
 async def _insert_file(connection: AsyncConnection, item: SourceFile) -> None:

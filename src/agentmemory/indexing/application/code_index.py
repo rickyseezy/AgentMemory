@@ -260,6 +260,7 @@ class CodeSearchHit:
     """Authorized content-free code navigation result."""
 
     symbol_id: str
+    evidence_id: str | None
     display_name: str
     kind: SymbolKind
     file_id: str
@@ -299,6 +300,7 @@ class FindCodeEntitiesHandler:
                 hits.append(
                     CodeSearchHit(
                         symbol.id,
+                        None if evidence is None else evidence.id,
                         symbol.display_name,
                         symbol.kind,
                         indexed.file.id,

@@ -347,6 +347,8 @@ acceptance criteria, a normative technical approach, mandatory tests, and ration
 | [GRA-003 implementation record](./docs/implementation/GRA-003.md) | Durable generation-scoped direct relationships, traversal authority, integrity quarantine, and repair |
 | [IDX-006 implementation record](./docs/implementation/IDX-006.md) | Deterministic pre-read repository content policy, immutable decision evidence, and derivative invalidation/reindex reconciliation |
 | [IDX-006 operations runbook](./docs/runbooks/IDX-006-CONTENT-POLICY.md) | Policy activation, reconciliation diagnosis, privacy response, and recovery procedures |
+| [IDX-007 implementation record](./docs/implementation/IDX-007.md) | Revision-bound source evidence, conservative checkout mapping, and explicit host-local open safety |
+| [IDX-007 operations runbook](./docs/runbooks/IDX-007-SOURCE-NAVIGATION.md) | Source-link mismatch, missing blob, conflict, policy, and path-safety procedures |
 | [Custom agent registration contract](./docs/integrations/CUSTOM_AGENT_REGISTRATION.md) | Path-neutral MCP stdio contract and conformance obligations for hosts without a certified configuration adapter |
 
 The two documents are jointly normative. The PRD defines what the complete product must do;

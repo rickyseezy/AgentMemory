@@ -126,6 +126,7 @@ async def test_sqlite_repository_exact_replay_search_and_immutability(tmp_path: 
         )
         assert len(hits) == 1
         assert hits[0].display_name == "hello"
+        assert hits[0].evidence_id == files[0].symbol_revisions[0].id
 
         async with store.engine.begin() as connection:
             with pytest.raises(IntegrityError, match="immutable"):

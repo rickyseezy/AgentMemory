@@ -2661,6 +2661,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 **Why:** Revision-bound links preserve citation correctness as source files evolve.
 
+**Implementation evidence:** [IDX-007 implementation record](docs/implementation/IDX-007.md) and
+[source-navigation operations runbook](docs/runbooks/IDX-007-SOURCE-NAVIGATION.md).
+
 ### 11.8 Epic PRO — Embedding and reranking provider platform
 
 #### PRO-001 — Configure certified built-in providers

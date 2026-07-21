@@ -124,6 +124,9 @@ from agentmemory.indexing.adapters.inbound.revision_history_http_api import (
     create_contract_revision_history_router,
     create_revision_history_router,
 )
+from agentmemory.indexing.adapters.inbound.source_navigation_http_api import (
+    create_contract_source_navigation_router,
+)
 from agentmemory.indexing.adapters.outbound.api_topology_graph import (
     SourceRevisionTopologyLineageAdapter,
     SqliteConsumesAssertionAdapter,
@@ -838,6 +841,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_api_topology_router(),
             create_contract_artifact_topology_router(),
             create_contract_content_policy_router(),
+            create_contract_source_navigation_router(),
             create_contract_graph_router(),
             create_contract_temporal_truth_router(),
             create_contract_contradiction_router(),

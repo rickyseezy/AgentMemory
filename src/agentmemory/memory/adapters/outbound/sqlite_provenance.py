@@ -65,6 +65,8 @@ JOIN memory_revisions AS r
   ON r.memory_id=m.id AND r.revision=m.current_revision
 JOIN memory_consolidations AS c
   ON c.idempotency_key=m.consolidation_key
+JOIN memory_lifecycle AS ml
+  ON ml.memory_id=m.id AND ml.brain_id=m.brain_id
 JOIN scope_grants AS g
   ON g.id=:grant AND g.principal_id=:actor AND g.brain_id=m.brain_id
  AND (g.project_id IS NULL OR g.project_id=m.project_id)
@@ -72,6 +74,13 @@ JOIN scope_grants AS g
 JOIN principals AS p ON p.id=g.principal_id AND p.status='active'
 JOIN brains AS b ON b.id=g.brain_id AND b.status='active'
 WHERE m.id=:memory AND m.brain_id=:brain
+  AND ml.recall_state<>'forgotten'
+  AND NOT EXISTS (
+    SELECT 1 FROM deletion_tombstones AS dt
+    WHERE dt.brain_id=m.brain_id AND dt.target_type='memory'
+      AND dt.target_id_hash=:memory_hash
+      AND dt.purge_state IN ('tombstoned','completed')
+  )
   AND g.role IN ('owner','admin','editor','reader','auditor','worker')
   AND g.valid_from<=:authorized_at
   AND (g.valid_to IS NULL OR g.valid_to>:authorized_at)
@@ -108,6 +117,7 @@ class SqliteMemoryRepository:
             "actor": access.actor_id,
             "grant": access.grant_id,
             "authorized_at": _micros(access.authorized_at),
+            "memory_hash": hashlib.sha256(access.memory_id.encode()).digest(),
         }
         try:
             async with self._store.engine.connect() as connection:

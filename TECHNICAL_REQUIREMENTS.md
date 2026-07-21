@@ -2299,6 +2299,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### MEM-005 — Pin, expire, archive, and forget memory
 
+**Implementation record:** [`docs/implementation/MEM-005.md`](docs/implementation/MEM-005.md) and
+[`docs/runbooks/MEM-005-LIFECYCLE.md`](docs/runbooks/MEM-005-LIFECYCLE.md).
+
 **User story:** As a user, I control whether and how memory participates in recall.
 
 **Acceptance criteria**
@@ -2312,6 +2315,18 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 - Implement PinMemoryCommand, ArchiveMemoryCommand, SetMemoryExpiryCommand, and ForgetMemoryCommand as separate handlers.
 - Lifecycle transitions are enforced by Memory state machine; direct status writes are prohibited.
 - Scheduler emits MemoryExpired using injected Clock; Forget delegates to governance deletion after tombstone commit.
+- Persist lifecycle as a root-memory overlay so recall participation never rewrites semantic
+  correction history. Every change uses a guarded aggregate-version compare-and-swap transaction
+  that appends the request-bound receipt, lifecycle event, projection source, outbox message, and
+  tamper-evident audit record atomically.
+- Store one deletion manifest plus the complete immutable target set for the root and all correction
+  assertions. A durable local scheduler executor advances `tombstoned → purging → verification →
+  completed`, deletes matching relational and Neo4j projection records, verifies both stores, and
+  seals only that manifest's tombstones. PF-002 checks those tombstones during every replay page.
+- Expose authenticated `POST /memories/{memory_id}:pin`, `POST
+  /memories/{memory_id}:archive`, `POST /memories/{memory_id}:expiry`, and `DELETE
+  /memories/{memory_id}` routes. Transport models are strict and receipts contain lifecycle metadata
+  and digests only, never memory content.
 
 **Mandatory tests:** state-transition table; clock boundary; ranking; authorization; deletion cascade/non-resurrection; audit.
 

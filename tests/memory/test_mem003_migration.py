@@ -4,23 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from alembic import command
+from sqlalchemy import text
 
-from agentmemory.memory.adapters.outbound.sqlite_deduplication import (
-    SqliteMemoryDeduplicationRepository,
-    SqliteMemoryDeduplicationUnitOfWorkFactory,
-)
-from agentmemory.memory.application.deduplicate_memories import (
-    DeduplicateMemoriesCommand,
-    DeduplicateMemoriesHandler,
-)
-from agentmemory.memory.domain.deduplication import MemoryCompatibilityPolicy
 from tests.core.support import write_secret
-from tests.memory.test_mem001_consolidation_domain import NOW
 from tests.memory.test_mem002_migration import (
     _config,  # pyright: ignore[reportPrivateUsage]
     _store,  # pyright: ignore[reportPrivateUsage]
@@ -31,26 +21,6 @@ from tests.memory.test_mem002_sqlite_repository import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from agentmemory.memory.domain.deduplication import (
-        MemoryDeduplicationProfile,
-        SemanticMemoryCandidate,
-    )
-
-
-class _NoCandidates:
-    async def find(
-        self,
-        target: MemoryDeduplicationProfile,
-        limit: int,
-    ) -> tuple[SemanticMemoryCandidate, ...]:
-        del target, limit
-        return ()
-
-
-class _Clock:
-    def now(self) -> datetime:
-        return NOW + timedelta(seconds=10)
 
 
 @pytest.mark.migration
@@ -96,27 +66,13 @@ async def test_mem003_downgrade_refuses_after_deduplication_evidence(
     try:
         consolidation = await _persist_memory(store, key_file)
         memory_id = consolidation.memories[0].memory_id
-        repository = SqliteMemoryDeduplicationRepository(store)
-        handler = DeduplicateMemoriesHandler(
-            repository,
-            _NoCandidates(),
-            SqliteMemoryDeduplicationUnitOfWorkFactory(store),
-            MemoryCompatibilityPolicy(),
-            _Clock(),
-        )
-        await handler.execute(
-            DeduplicateMemoriesCommand(
-                "018f0000-0000-7000-8000-000000000461",
-                consolidation.actor_id,
-                consolidation.grant_id,
-                consolidation.scope.brain_id,
-                "018f0000-0000-7000-8000-000000000462",
-                "018f0000-0000-7000-8000-000000000463",
-                memory_id,
-                NOW + timedelta(seconds=5),
-                NOW + timedelta(minutes=1),
+        # Seed the irreversible lifecycle evidence directly at the historical
+        # MEM-003 schema boundary. Current adapters intentionally require head.
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE memories SET aggregate_version=2 WHERE id=:memory"),
+                {"memory": memory_id},
             )
-        )
     finally:
         await store.close()
     with pytest.raises(RuntimeError, match="MEM-003 downgrade refused"):

@@ -96,6 +96,7 @@ class SqliteMemoryDeduplicationRepository:
             f"SELECT {_PROFILE_COLUMNS} FROM memories m "  # noqa: S608  # nosec B608 -- fixed projection.
             "JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=m.current_revision "
             "JOIN memory_consolidations c ON c.idempotency_key=m.consolidation_key "
+            "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
             "JOIN scope_grants g ON g.id=:grant AND g.principal_id=:actor "
             "AND g.brain_id=m.brain_id "
             " AND (g.project_id IS NULL OR g.project_id=m.project_id) "
@@ -103,6 +104,7 @@ class SqliteMemoryDeduplicationRepository:
             "JOIN principals p ON p.id=g.principal_id AND p.status='active' "
             "JOIN brains b ON b.id=g.brain_id AND b.status='active' "
             "WHERE m.id=:memory AND m.brain_id=:brain AND m.status='active' "
+            "AND l.recall_state='active' AND (l.expires_at IS NULL OR l.expires_at>:at) "
             "AND g.role IN ('owner','admin','editor','worker') AND g.valid_from<=:at "
             "AND (g.valid_to IS NULL OR g.valid_to>:at) LIMIT 1"
         )
@@ -125,7 +127,9 @@ class SqliteMemoryDeduplicationRepository:
             f"SELECT {_PROFILE_COLUMNS} FROM memories m "  # noqa: S608  # nosec B608 -- fixed projection.
             "JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=m.current_revision "
             "JOIN memory_consolidations c ON c.idempotency_key=m.consolidation_key "
+            "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
             "WHERE m.brain_id=:brain AND m.status='active' AND m.id<>:memory "
+            "AND l.recall_state='active' "
             "AND m.content_hash=:content AND m.classification=:classification "
             "AND m.retention_policy_id=:retention ORDER BY m.recorded_from,m.id LIMIT :limit"
         )
@@ -182,7 +186,9 @@ class SqliteSemanticMemoryCandidateFinder:
             f"SELECT {_PROFILE_COLUMNS} FROM memories m "  # noqa: S608  # nosec B608 -- fixed projection.
             "JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=m.current_revision "
             "JOIN memory_consolidations c ON c.idempotency_key=m.consolidation_key "
+            "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
             "WHERE m.brain_id=:brain AND m.status='active' AND m.id<>:memory "
+            "AND l.recall_state='active' "
             "AND m.memory_class=:class AND m.project_id=:project AND m.repository_id=:repository "
             "AND m.checkout_id IS :checkout AND m.valid_from=:valid_from "
             "AND m.valid_to IS :valid_to "
@@ -434,7 +440,9 @@ async def _verify_profiles(connection: AsyncConnection, commit: DeduplicationCom
                         "JOIN memory_revisions r ON r.memory_id=m.id "
                         "AND r.revision=m.current_revision "
                         "JOIN memory_consolidations c ON c.idempotency_key=m.consolidation_key "
-                        "WHERE m.id=:memory AND m.brain_id=:brain AND m.status='active'"
+                        "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
+                        "WHERE m.id=:memory AND m.brain_id=:brain AND m.status='active' "
+                        "AND l.recall_state='active'"
                     ),
                     {"memory": expected.memory_id, "brain": commit.brain_id},
                 )

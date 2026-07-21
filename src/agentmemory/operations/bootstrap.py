@@ -134,9 +134,14 @@ from agentmemory.memory.adapters.inbound.http_api import (
     create_contract_memory_router,
     create_memory_router,
 )
+from agentmemory.memory.adapters.inbound.lifecycle_http_api import (
+    create_contract_memory_lifecycle_router,
+    create_memory_lifecycle_router,
+)
 from agentmemory.memory.adapters.outbound.local_extractor import (
     LocalMemoryCandidateHttpAdapter,
 )
+from agentmemory.memory.adapters.outbound.memory_deletion import MemoryDeletionExecutor
 from agentmemory.memory.adapters.outbound.sqlite_consolidation import (
     SqliteMemoryConsolidationAccessPolicy,
     SqliteMemoryConsolidationReceiptQuery,
@@ -152,6 +157,10 @@ from agentmemory.memory.adapters.outbound.sqlite_deduplication import (
     SqliteMemoryDeduplicationUnitOfWorkFactory,
     SqliteSemanticMemoryCandidateFinder,
 )
+from agentmemory.memory.adapters.outbound.sqlite_lifecycle import (
+    SqliteMemoryLifecycleRepository,
+    SqliteMemoryLifecycleUnitOfWorkFactory,
+)
 from agentmemory.memory.adapters.outbound.sqlite_lineage_backfill import (
     SqliteTaskLineageBackfillRepository,
 )
@@ -165,6 +174,13 @@ from agentmemory.memory.application.correct_memory import CorrectMemoryHandler
 from agentmemory.memory.application.deduplicate_memories import DeduplicateMemoriesHandler
 from agentmemory.memory.application.explain_memory import ExplainMemoryHandler
 from agentmemory.memory.application.lineage_backfill import TaskLineageBackfillWorker
+from agentmemory.memory.application.memory_lifecycle import (
+    ArchiveMemoryHandler,
+    ForgetMemoryHandler,
+    MemoryExpiryScheduler,
+    PinMemoryHandler,
+    SetMemoryExpiryHandler,
+)
 from agentmemory.memory.application.query_memory_corrections import (
     GetMemoryCorrectionHistoryHandler,
 )
@@ -437,12 +453,25 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         clock,
         memory_deduplication,
     )
+    lifecycle_repository = SqliteMemoryLifecycleRepository(store)
+    lifecycle_unit_of_work = SqliteMemoryLifecycleUnitOfWorkFactory(store)
+    memory_expiry_scheduler = MemoryExpiryScheduler(
+        lifecycle_repository,
+        lifecycle_unit_of_work,
+        clock,
+    )
+    memory_deletion = MemoryDeletionExecutor(
+        store,
+        neo4j_driver,
+        resolved.neo4j_database,
+        clock,
+    )
     queue_limits = resolved.queue_limits
     storage_capacity = LocalDiskSpaceProbe(resolved.state_directory)
     scheduler_repository = SqliteJobSchedulerRepository(store, storage_capacity)
     scheduler_worker = JobSchedulerWorker(
         scheduler_repository,
-        ScheduledJobExecutorRegistry({}),
+        ScheduledJobExecutorRegistry({"governance.memory_deletion": memory_deletion}),
         RetryPolicy.default(),
         queue_limits,
         clock,
@@ -512,6 +541,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(scheduler_worker.run(stop)),
                 asyncio.create_task(memory_backfill_worker.run(stop)),
                 asyncio.create_task(memory_worker.run(stop)),
+                asyncio.create_task(memory_expiry_scheduler.run(stop)),
             )
             yield
         finally:
@@ -552,6 +582,15 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 clock,
             ),
             clock,
+        )
+    )
+    application.include_router(
+        create_memory_lifecycle_router(
+            authenticator,
+            PinMemoryHandler(lifecycle_repository, lifecycle_unit_of_work, clock),
+            ArchiveMemoryHandler(lifecycle_repository, lifecycle_unit_of_work, clock),
+            SetMemoryExpiryHandler(lifecycle_repository, lifecycle_unit_of_work, clock),
+            ForgetMemoryHandler(lifecycle_repository, lifecycle_unit_of_work, clock),
         )
     )
     _include_ingestion_runtime_routers(
@@ -608,6 +647,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_retrieval_router(),
             create_contract_memory_router(),
             create_contract_memory_correction_router(),
+            create_contract_memory_lifecycle_router(),
             create_contract_ordered_replay_router(),
             create_contract_backpressure_router(),
         )

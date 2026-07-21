@@ -34,6 +34,11 @@ if TYPE_CHECKING:
         MemoryExplanation,
         MemoryExplanationAccess,
     )
+    from agentmemory.memory.domain.lifecycle import (
+        MemoryLifecycleCommit,
+        MemoryLifecycleResult,
+        MemoryLifecycleSnapshot,
+    )
     from agentmemory.memory.domain.lineage_backfill import (
         TaskLineageBackfillOutcome,
         TaskLineageBackfillProgress,
@@ -274,6 +279,75 @@ class MemoryCorrectionUnitOfWorkFactory(Protocol):
 
     def __call__(self) -> MemoryCorrectionUnitOfWork:
         """Return one unopened correction Unit of Work."""
+        ...
+
+
+class MemoryLifecycleReadRepository(Protocol):
+    """Read lifecycle receipts, authorized roots, and bounded due expiry snapshots."""
+
+    async def get_result(self, idempotency_key: str) -> MemoryLifecycleResult | None:
+        """Return one authenticated request-bound lifecycle receipt or None."""
+        ...
+
+    async def load_authorized(
+        self,
+        memory_id: str,
+        brain_id: str,
+        actor_id: str,
+        grant_id: str,
+        at: datetime,
+    ) -> MemoryLifecycleSnapshot | None:
+        """Collapse absent, forgotten, and unauthorized root memories into None."""
+        ...
+
+    async def list_due(
+        self,
+        at: datetime,
+        limit: int,
+    ) -> tuple[MemoryLifecycleSnapshot, ...]:
+        """Return a bounded stable sequence whose expiry is at or before the clock."""
+        ...
+
+
+class MemoryLifecycleRepository(MemoryLifecycleReadRepository, Protocol):
+    """Stage lifecycle state, event, outbox, audit, and optional deletion saga atomically."""
+
+    async def add(self, commit: MemoryLifecycleCommit) -> None:
+        """Stage the complete compare-and-swap lifecycle transition."""
+        ...
+
+
+class MemoryLifecycleUnitOfWork(Protocol):
+    """Own one short serialized MEM-005 lifecycle transaction."""
+
+    @property
+    def repository(self) -> MemoryLifecycleRepository:
+        """Return the transaction-bound lifecycle repository."""
+        ...
+
+    async def __aenter__(self) -> Self:
+        """Acquire the local writer and open the transaction."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        """Rollback incomplete work and release the writer."""
+        ...
+
+    async def commit(self) -> None:
+        """Commit exactly once."""
+        ...
+
+
+class MemoryLifecycleUnitOfWorkFactory(Protocol):
+    """Create unopened MEM-005 lifecycle Units of Work."""
+
+    def __call__(self) -> MemoryLifecycleUnitOfWork:
+        """Return one unopened lifecycle Unit of Work."""
         ...
 
 

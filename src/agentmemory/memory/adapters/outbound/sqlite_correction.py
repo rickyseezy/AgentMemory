@@ -288,12 +288,14 @@ async def _load_target(
     root_query = text(
         f"SELECT {_ROOT_COLUMNS} FROM memories m "  # noqa: S608  # nosec B608 -- fixed columns.
         "JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=m.current_revision "
+        "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
         "JOIN scope_grants g ON g.id=:grant AND g.principal_id=:actor AND g.brain_id=m.brain_id "
         "AND (g.project_id IS NULL OR g.project_id=m.project_id) "
         "AND (g.repository_id IS NULL OR g.repository_id=m.repository_id) "
         "JOIN principals p ON p.id=g.principal_id AND p.status='active' AND p.type='owner' "
         "JOIN brains b ON b.id=g.brain_id AND b.status='active' "
         "WHERE m.id=:assertion AND m.brain_id=:brain "
+        "AND l.recall_state='active' AND (l.expires_at IS NULL OR l.expires_at>:at) "
         "AND g.role IN ('owner','admin','editor') AND g.valid_from<=:at "
         "AND (g.valid_to IS NULL OR g.valid_to>:at) LIMIT 1"
     )
@@ -302,12 +304,14 @@ async def _load_target(
         return await _root_target(connection, root)
     correction_query = text(
         f"SELECT {_CORRECTION_COLUMNS} FROM memory_corrections c "  # noqa: S608  # nosec B608.
+        "JOIN memory_lifecycle l ON l.memory_id=c.root_memory_id AND l.brain_id=c.brain_id "
         "JOIN scope_grants g ON g.id=:grant AND g.principal_id=:actor AND g.brain_id=c.brain_id "
         "AND (g.project_id IS NULL OR g.project_id=c.project_id) "
         "AND (g.repository_id IS NULL OR g.repository_id=c.repository_id) "
         "JOIN principals p ON p.id=g.principal_id AND p.status='active' AND p.type='owner' "
         "JOIN brains b ON b.id=g.brain_id AND b.status='active' "
         "WHERE c.id=:assertion AND c.brain_id=:brain "
+        "AND l.recall_state='active' AND (l.expires_at IS NULL OR l.expires_at>:at) "
         "AND g.role IN ('owner','admin','editor') AND g.valid_from<=:at "
         "AND (g.valid_to IS NULL OR g.valid_to>:at) LIMIT 1"
     )
@@ -393,9 +397,34 @@ async def _history(
     connection: AsyncConnection,
     parameters: Mapping[str, object],
 ) -> MemoryCorrectionHistory | None:
-    root = await _load_target(connection, parameters)
-    if root is None or root.assertion_id != root.root_memory_id:
+    root_row = (
+        (
+            await connection.execute(
+                text(
+                    f"SELECT {_ROOT_COLUMNS} FROM memories m "  # noqa: S608  # nosec B608.
+                    "JOIN memory_revisions r ON r.memory_id=m.id AND r.revision=m.current_revision "
+                    "JOIN memory_lifecycle l ON l.memory_id=m.id AND l.brain_id=m.brain_id "
+                    "JOIN scope_grants g ON g.id=:grant AND g.principal_id=:actor "
+                    "AND g.brain_id=m.brain_id "
+                    "AND (g.project_id IS NULL OR g.project_id=m.project_id) "
+                    "AND (g.repository_id IS NULL OR g.repository_id=m.repository_id) "
+                    "JOIN principals p ON p.id=g.principal_id AND p.status='active' "
+                    "AND p.type='owner' "
+                    "JOIN brains b ON b.id=g.brain_id AND b.status='active' "
+                    "WHERE m.id=:assertion AND m.brain_id=:brain "
+                    "AND l.recall_state IN ('active','archived','expired') "
+                    "AND g.role IN ('owner','admin','editor','reader','auditor') "
+                    "AND g.valid_from<=:at AND (g.valid_to IS NULL OR g.valid_to>:at) LIMIT 1"
+                ),
+                parameters,
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if root_row is None:
         return None
+    root = await _root_target(connection, root_row)
     rows = list(
         (
             await connection.execute(

@@ -984,6 +984,60 @@ func OpenVerified(ctx context.Context, path string, wantDirectory, writable, str
 	return file, identity, nil
 }
 
+// OpenVerifiedForDelete opens one regular owner-private file with DELETE
+// authority while denying concurrent write/delete sharing. Callers can verify
+// content through this same handle before marking that exact object for deletion.
+func OpenVerifiedForDelete(ctx context.Context, path string) (*os.File, FileIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, FileIdentity{}, err
+	}
+	if err := ValidateLocalPath(path); err != nil {
+		return nil, FileIdentity{}, err
+	}
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, FileIdentity{}, err
+	}
+	handle, err := windows.CreateFile(
+		pathPointer,
+		windows.GENERIC_READ|windows.READ_CONTROL|windows.DELETE,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, FileIdentity{}, err
+	}
+	file := os.NewFile(uintptr(handle), filepath.Base(path))
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, FileIdentity{}, errors.New("delete-authorized Windows file descriptor is invalid")
+	}
+	identity, err := verifyHandle(ctx, handle, false, true)
+	if err != nil {
+		_ = file.Close()
+		return nil, FileIdentity{}, err
+	}
+	return file, identity, nil
+}
+
+// DeleteOpenedFile marks the exact retained handle for deletion on close.
+// No pathname lookup occurs after the caller has authenticated its contents.
+func DeleteOpenedFile(ctx context.Context, file *os.File) error {
+	if ctx == nil || file == nil {
+		return errors.New("Windows delete handle is invalid")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deleteFile := byte(1)
+	return windows.SetFileInformationByHandle(
+		windows.Handle(file.Fd()), windows.FileDispositionInfo, &deleteFile, 1,
+	)
+}
+
 // OpenVerifiedLockedRead opens an owner-only object while denying concurrent
 // write and delete access. It is used when another process must consume a
 // stable protected pathname while the launcher retains the identity handle.

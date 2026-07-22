@@ -65,5 +65,11 @@ func composeNativeProduction(
 		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
 	}
 	composition.runtime.readyForPlan = ready
+	sessions, err := newNativeProductSessionFactory(ctx, composition, production.Release)
+	if err != nil || production.Factory.bindProductSessions(sessions) != nil {
+		_ = production.Supervisor.Close(context.WithoutCancel(ctx))
+		_ = production.Release.Close(context.WithoutCancel(ctx))
+		return nativeProductionFirstStart{}, errNativeInstallerIntegrity
+	}
 	return production, nil
 }

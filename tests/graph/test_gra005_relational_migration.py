@@ -26,7 +26,7 @@ async def test_gra005_schema_is_closed_append_only_and_adds_assertion_polarity(
         head = (
             await connection.execute(text("SELECT version_num FROM alembic_version"))
         ).scalar_one()
-        assert head == "0034_pf003_adapter_extensions"
+        assert head == "0035_pf005_mcp_sessions"
         columns = {
             str(row["name"])
             for row in (

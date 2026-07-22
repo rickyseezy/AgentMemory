@@ -277,6 +277,7 @@ def test_settings_pin_internal_services_and_derive_selected_port_hosts() -> None
         "127.0.0.1:12345",
         "[::1]:12345",
         "localhost:12345",
+        "core:12345",
     )
     assert settings.listen_host == "0.0.0.0"  # noqa: S104 -- Certified container bind.
     assert settings.neo4j_database == "neo4j"

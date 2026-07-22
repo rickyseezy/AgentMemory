@@ -4,6 +4,8 @@ package argvprocess
 import (
 	"context"
 	"errors"
+	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -523,6 +525,36 @@ type Result struct {
 	OutputTruncated bool
 }
 
+// Streams binds a child's standard streams without granting environment,
+// working-directory, executable, or argument authority.
+type Streams struct {
+	input       io.Reader
+	output      io.Writer
+	diagnostics io.Writer
+}
+
+// NewStreams rejects nil and typed-nil streams before process creation.
+func NewStreams(input io.Reader, output, diagnostics io.Writer) (Streams, error) {
+	if nilStream(input) || nilStream(output) || nilStream(diagnostics) {
+		return Streams{}, ErrInvalidInvocation
+	}
+	return Streams{input: input, output: output, diagnostics: diagnostics}, nil
+}
+
+// Input returns the exact caller-owned standard input stream.
+func (s Streams) Input() io.Reader { return s.input }
+
+// Output returns the exact caller-owned standard output stream.
+func (s Streams) Output() io.Writer { return s.output }
+
+// Diagnostics returns the exact caller-owned standard error stream.
+func (s Streams) Diagnostics() io.Writer { return s.diagnostics }
+
+// Valid reports whether every stream capability is present.
+func (s Streams) Valid() bool {
+	return !nilStream(s.input) && !nilStream(s.output) && !nilStream(s.diagnostics)
+}
+
 // ConversationStep is one immutable newline-delimited request or
 // notification in a sequential local protocol exchange. AwaitResponse keeps
 // lifecycle ordering in the process adapter instead of pre-buffering later
@@ -601,4 +633,26 @@ type Runner interface {
 type ConversationRunner interface {
 	Runner
 	RunLineConversation(context.Context, Invocation, LineConversation) (Result, error)
+}
+
+// StreamingRunner attaches caller-owned stdio to one constrained process.
+type StreamingRunner interface {
+	Runner
+	RunStreaming(context.Context, Invocation, Streams) error
+}
+
+func nilStream(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	//nolint:exhaustive // Non-nilable concrete stream implementations are valid.
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	case reflect.Invalid:
+		return true
+	default:
+		return false
+	}
 }

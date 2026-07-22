@@ -1790,6 +1790,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PF-005 — Start an isolated MCP session automatically from any directory
 
+**Implementation record:** [`docs/implementation/PF-005.md`](docs/implementation/PF-005.md) and
+[`docs/runbooks/PF-005-MCP-SESSIONS.md`](docs/runbooks/PF-005-MCP-SESSIONS.md).
+
 **User story:** As a developer, starting a configured agent in a directory automatically connects that directory to my local Brain without a separate service or indexing command.
 
 **Acceptance criteria**

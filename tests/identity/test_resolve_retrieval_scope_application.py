@@ -225,3 +225,34 @@ async def test_broad_reader_grant_cannot_launder_narrow_admin_global_permission(
         await ResolveRetrievalScopeHandler(authorization, _Graph()).execute(
             _query(RetrievalScopeMode.GLOBAL, selected=(P2,))
         )
+
+
+@pytest.mark.asyncio
+async def test_session_global_derives_all_authorized_projects_without_caller_ids() -> None:
+    authorization = _Authorization()
+    handler = ResolveRetrievalScopeHandler(authorization, _Graph())
+
+    result = await handler.execute_session_scoped(_query(RetrievalScopeMode.GLOBAL))
+
+    assert result.scope.mode is RetrievalScopeMode.GLOBAL
+    assert result.scope.project_ids == (P1, P2, P3)
+    assert authorization.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_session_scope_rejects_selected_or_caller_supplied_projects() -> None:
+    handler = ResolveRetrievalScopeHandler(_Authorization(), _Graph())
+    with pytest.raises(IdentityValidationError):
+        await handler.execute_session_scoped(_query(RetrievalScopeMode.SELECTED, selected=(P1,)))
+    with pytest.raises(IdentityValidationError):
+        await handler.execute_session_scoped(_query(RetrievalScopeMode.CURRENT, selected=(P2,)))
+
+
+@pytest.mark.asyncio
+async def test_session_global_requires_owner_or_admin() -> None:
+    handler = ResolveRetrievalScopeHandler(
+        _Authorization(role=RetrievalRole.READER),
+        _Graph(),
+    )
+    with pytest.raises(IdentityAuthorizationError):
+        await handler.execute_session_scoped(_query(RetrievalScopeMode.GLOBAL))

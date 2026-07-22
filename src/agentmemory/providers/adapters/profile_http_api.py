@@ -332,13 +332,13 @@ class _ContractDependency:
     async def authenticate(self, authorization: str | None) -> None:
         del authorization
 
-    async def execute(self, value: object) -> object:
+    async def execute(self, value: object) -> object:  # pragma: no mutate block
         del value
         raise RuntimeError(_ERR_CONTRACT_DEPENDENCY)
 
 
 class _ContractClock:
-    def now(self) -> datetime:
+    def now(self) -> datetime:  # pragma: no mutate block
         raise RuntimeError(_ERR_CONTRACT_CLOCK)
 
 

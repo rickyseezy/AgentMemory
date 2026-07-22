@@ -96,10 +96,11 @@ class CoreSettings(BaseSettings):
         )
 
     @property
-    def allowed_hosts(self) -> tuple[str, str, str]:
+    def allowed_hosts(self) -> tuple[str, str, str, str]:
         """Derive the closed Host allowlist from the validated selected port."""
         return (
             f"127.0.0.1:{self.port}",
             f"[::1]:{self.port}",
             f"localhost:{self.port}",
+            f"core:{self.port}",
         )

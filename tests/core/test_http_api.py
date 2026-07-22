@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+
 # pyright: reportPrivateUsage=false
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import httpx
@@ -31,6 +33,11 @@ from agentmemory.operations.domain.active_release import (
 )
 from agentmemory.operations.domain.bootstrap import BootstrapDisposition, BootstrapRequest
 from agentmemory.operations.domain.errors import ErrorCode, OperationError
+from agentmemory.operations.domain.mcp_session import (
+    McpSession,
+    McpSessionRegistration,
+    McpSessionState,
+)
 from agentmemory.operations.domain.projection_rebuild import (
     ProjectionRebuild,
     RebuildState,
@@ -43,11 +50,28 @@ from agentmemory.operations.domain.readiness import (
     ReadinessProbe,
     ReadinessReceipt,
 )
-from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest
-from tests.core.support import NOW, active_pointer, binding, bootstrap_request, receipt
+from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest, Uuid7Id
+from agentmemory.operations.domain.workspace_checkpoint import (
+    WorkspaceCheckpointBatch,
+    WorkspaceIndexCoverage,
+)
+from tests.core.support import (
+    BRAIN_ID,
+    GRANT_ID,
+    INSTALLATION_ID,
+    NOW,
+    OWNER_ID,
+    FixedClock,
+    active_pointer,
+    binding,
+    bootstrap_request,
+    digest,
+    receipt,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from datetime import datetime, timedelta
 
 
 @dataclass(slots=True)
@@ -177,6 +201,77 @@ class _ProjectionRebuilds:
         return self.value
 
 
+@dataclass(slots=True)
+class _McpSessions:
+    values: dict[Uuid7Id, McpSession] = field(default_factory=dict[Uuid7Id, McpSession])
+
+    async def execute(self, registration: McpSessionRegistration) -> tuple[McpSession, bool]:
+        existing = self.values.get(registration.session_id)
+        if existing is not None:
+            return existing, False
+        session = McpSession.register(registration)
+        self.values[registration.session_id] = session
+        return session, True
+
+    async def begin(self, session_id: Uuid7Id, now: datetime, lease: timedelta) -> McpSession:
+        current = self.values[session_id].begin(now, lease)
+        self.values[session_id] = current
+        return current
+
+    async def heartbeat(self, session_id: Uuid7Id, now: datetime) -> McpSession:
+        current = self.values[session_id].heartbeat(now)
+        self.values[session_id] = current
+        return current
+
+    async def finish(
+        self, session_id: Uuid7Id, state: McpSessionState, now: datetime
+    ) -> McpSession:
+        current = self.values[session_id].finish(state, now)
+        self.values[session_id] = current
+        return current
+
+    async def revoke(self, digest: Sha256Digest, now: datetime) -> tuple[McpSession | None, bool]:
+        previous = next(
+            (
+                value
+                for value in self.values.values()
+                if value.registration.credential_digest == digest
+            ),
+            None,
+        )
+        if previous is None or previous.revoked_at is not None:
+            return previous, False
+        current = previous.revoke(now)
+        self.values[previous.registration.session_id] = current
+        return current, True
+
+
+@dataclass(slots=True)
+class _SessionAuthenticator:
+    sessions: _McpSessions
+
+    async def authenticate(self, authorization: str | None, session_id: str) -> McpSession:
+        identifier = Uuid7Id(session_id)
+        session = self.sessions.values.get(identifier)
+        if authorization != "Bearer session" or session is None:
+            raise OperationError(ErrorCode.UNAUTHENTICATED, "session authentication is required")
+        return session
+
+
+@dataclass(slots=True)
+class _WorkspaceCheckpoints:
+    digests: set[Sha256Digest] = field(default_factory=set[Sha256Digest])
+
+    async def execute(self, batch: WorkspaceCheckpointBatch) -> bool:
+        created = batch.batch_digest not in self.digests
+        self.digests.add(batch.batch_digest)
+        return created
+
+    async def coverage(self, session_id: Uuid7Id) -> WorkspaceIndexCoverage:
+        del session_id
+        return WorkspaceIndexCoverage.COMPLETE
+
+
 def _dependencies(
     *,
     stored_receipt: ReadinessReceipt | None = None,
@@ -187,6 +282,8 @@ def _dependencies(
     readiness = _ReadinessHandler(execute_ready=execute_ready)
     runtime_readiness = _RuntimeReadiness(ready=live_ready)
     rebuilds = _ProjectionRebuilds()
+    mcp_sessions = _McpSessions()
+    workspace_checkpoints = _WorkspaceCheckpoints()
     return (
         ApiDependencies(
             authenticator=authenticator,
@@ -197,6 +294,12 @@ def _dependencies(
             status_query=_Status(stored_receipt),
             projection_rebuild=rebuilds,
             projection_rebuild_query=rebuilds,
+            register_mcp_session=mcp_sessions,
+            mcp_session_lifecycle=mcp_sessions,
+            session_authenticator=_SessionAuthenticator(mcp_sessions),
+            workspace_checkpoint=workspace_checkpoints,
+            workspace_coverage=workspace_checkpoints,
+            clock=FixedClock(),
             allowed_hosts=frozenset({"127.0.0.1:9411"}),
         ),
         authenticator,
@@ -250,6 +353,154 @@ def _rebuild_json() -> dict[str, object]:
             "implementation_fingerprint": Sha256Digest.from_bytes(b"implementation").value,
         },
     }
+
+
+def _mcp_registration_json() -> dict[str, object]:
+    return {
+        "session_id": "019f4d50-4154-7902-b2a0-7c164ae2549f",
+        "installation_id": INSTALLATION_ID,
+        "brain_id": BRAIN_ID,
+        "actor_id": OWNER_ID,
+        "grant_id": GRANT_ID,
+        "agent_id": "codex",
+        "workspace_fingerprint": digest("workspace").value,
+        "device_identity": "dev:1",
+        "git_repository_id": "",
+        "git_worktree_id": "",
+        "git_coverage": "none",
+        "security_epoch": 1,
+        "credential_digest": digest("credential").value,
+        "issued_at": "2026-07-14T08:09:10.123456Z",
+        "expires_at": "2026-07-14T09:09:10.123456Z",
+    }
+
+
+def _workspace_checkpoint_json(session_id: str) -> dict[str, object]:
+    content = b"package brain\n"
+    document: dict[str, object] = {
+        "session_id": session_id,
+        "workspace_fingerprint": digest("workspace").value,
+        "batch_digest": "",
+        "partial": False,
+        "changes": [
+            {
+                "relative_path": "internal/brain.go",
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "content_base64": "cGFja2FnZSBicmFpbgo=",
+                "deleted": False,
+            }
+        ],
+    }
+    canonical = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
+    document["batch_digest"] = hashlib.sha256(canonical).hexdigest()
+    return document
+
+
+@pytest.mark.asyncio
+async def test_pf005_session_http_contract_is_strict_idempotent_and_content_free() -> None:
+    dependencies, _, _ = _dependencies()
+    registration = _mcp_registration_json()
+    session_id = cast("str", registration["session_id"])
+    credential_digest = cast("str", registration["credential_digest"])
+    headers = {"Authorization": "Bearer valid", "Idempotency-Key": session_id}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(dependencies)),
+        base_url="http://127.0.0.1:9411",
+    ) as client:
+        created = await client.post(
+            "/v1/launcher/sessions/credentials", headers=headers, json=registration
+        )
+        replay = await client.post(
+            "/v1/launcher/sessions/credentials", headers=headers, json=registration
+        )
+        session_status = await client.get(
+            "/v1/session/status",
+            headers={
+                "Authorization": "Bearer session",
+                "X-AgentMemory-Session-ID": session_id,
+            },
+        )
+        denied_session_status = await client.get(
+            "/v1/session/status",
+            headers={
+                "Authorization": "Bearer valid",
+                "X-AgentMemory-Session-ID": session_id,
+            },
+        )
+        began = await client.post(
+            "/v1/launcher/sessions:begin",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "started_at": "2026-07-14T08:09:10.123456Z",
+                "lease_seconds": 120,
+            },
+        )
+        checkpoint_document = _workspace_checkpoint_json(session_id)
+        checkpoint_headers = {
+            "Authorization": "Bearer valid",
+            "Idempotency-Key": cast("str", checkpoint_document["batch_digest"]),
+        }
+        checkpointed = await client.post(
+            "/v1/launcher/sessions:checkpoint",
+            headers=checkpoint_headers,
+            json=checkpoint_document,
+        )
+        checkpoint_replay = await client.post(
+            "/v1/launcher/sessions:checkpoint",
+            headers=checkpoint_headers,
+            json=checkpoint_document,
+        )
+        heartbeat = await client.post(
+            "/v1/launcher/sessions:heartbeat",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "heartbeat_at": "2026-07-14T08:09:40.123456Z",
+            },
+        )
+        revoke_headers = {
+            "Authorization": "Bearer valid",
+            "Idempotency-Key": credential_digest,
+        }
+        revoked = await client.post(
+            "/v1/launcher/sessions/credentials:revoke",
+            headers=revoke_headers,
+            json={"credential_digest": credential_digest},
+        )
+        revoke_replay = await client.post(
+            "/v1/launcher/sessions/credentials:revoke",
+            headers=revoke_headers,
+            json={"credential_digest": credential_digest},
+        )
+        finished = await client.post(
+            "/v1/launcher/sessions:finish",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "status": "completed",
+                "finished_at": "2026-07-14T08:09:42.123456Z",
+            },
+        )
+    assert created.status_code == 201
+    assert created.json()["status"] == "registered"
+    assert "credential" not in created.text.replace("credential_digest", "")
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "already_registered"
+    assert session_status.status_code == 200
+    assert session_status.json()["workspace_fingerprint"] == registration["workspace_fingerprint"]
+    assert session_status.json()["git_coverage"] == "none"
+    assert session_status.json()["index_coverage"] == "complete"
+    assert denied_session_status.status_code == 401
+    assert began.json() == {"session_id": session_id, "state": "active", "revision": 1}
+    assert heartbeat.json()["revision"] == 2
+    assert checkpointed.status_code == 201, checkpointed.text
+    assert checkpointed.json()["status"] == "checkpointed"
+    assert checkpoint_replay.status_code == 200
+    assert checkpoint_replay.json()["status"] == "already_checkpointed"
+    assert revoked.json()["status"] == "revoked"
+    assert revoke_replay.json()["status"] == "already_revoked"
+    assert finished.json() == {"session_id": session_id, "state": "completed", "revision": 4}
 
 
 @pytest.mark.asyncio
@@ -530,6 +781,13 @@ def test_openapi_export_is_deterministic_closed_and_serializable() -> None:
         "/v1/active-release:stage",
         "/v1/active-release:commit",
         "/v1/active-release:matches",
+        "/v1/launcher/sessions/credentials",
+        "/v1/launcher/sessions/credentials:revoke",
+        "/v1/launcher/sessions:begin",
+        "/v1/launcher/sessions:heartbeat",
+        "/v1/launcher/sessions:finish",
+        "/v1/launcher/sessions:checkpoint",
+        "/v1/session/status",
     }
     components = first["components"]
     assert isinstance(components, dict)

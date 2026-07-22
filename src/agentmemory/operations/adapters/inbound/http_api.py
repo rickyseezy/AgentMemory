@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 from uuid import uuid7
 
@@ -21,6 +24,12 @@ from agentmemory.operations.domain.errors import (
     ErrorCode,
     OperationError,
 )
+from agentmemory.operations.domain.mcp_session import (
+    McpGitCoverage,
+    McpSession,
+    McpSessionRegistration,
+    McpSessionState,
+)
 from agentmemory.operations.domain.projection_rebuild import (
     ProjectionRebuild,
     ProjectionType,
@@ -34,6 +43,11 @@ from agentmemory.operations.domain.value_objects import (
     Sha256Digest,
     Uuid7Id,
     format_rfc3339_microseconds,
+)
+from agentmemory.operations.domain.workspace_checkpoint import (
+    WorkspaceCheckpointBatch,
+    WorkspaceCheckpointChange,
+    WorkspaceIndexCoverage,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +67,10 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessReceipt
 
 _IDEMPOTENCY_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_RFC3339_MICROSECONDS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 _MAX_REQUEST_BYTES = 64 * 1024
+_MAX_CHECKPOINT_REQUEST_BYTES = 24 * 1024 * 1024
+_WORKSPACE_CHECKPOINT_PATH = "/v1/launcher/sessions:checkpoint"
 _MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH"})
 _AUTHORIZATION = APIKeyHeader(
     name="Authorization",
@@ -235,6 +252,161 @@ class ActiveReleaseMatchesResponseModel(_StrictRequest):
     matches: bool
 
 
+class SessionCredentialRegistrationRequestModel(_StrictRequest):
+    """Exact hash-only PF-005 credential scope from the trusted launcher."""
+
+    session_id: str
+    installation_id: str
+    brain_id: str
+    actor_id: str
+    grant_id: str
+    agent_id: str
+    workspace_fingerprint: str
+    device_identity: str
+    git_repository_id: str
+    git_worktree_id: str
+    git_coverage: str
+    security_epoch: int = Field(ge=1)
+    credential_digest: str
+    issued_at: str
+    expires_at: str
+
+    def to_domain(self) -> McpSessionRegistration:
+        """Translate strict transport values into the session authority aggregate."""
+        return McpSessionRegistration(
+            session_id=Uuid7Id(self.session_id),
+            installation_id=Uuid7Id(self.installation_id),
+            brain_id=Uuid7Id(self.brain_id),
+            actor_id=Uuid7Id(self.actor_id),
+            grant_id=Uuid7Id(self.grant_id),
+            agent_id=self.agent_id,
+            workspace_fingerprint=Sha256Digest(self.workspace_fingerprint),
+            device_identity=self.device_identity,
+            git_repository_id=self.git_repository_id or None,
+            git_worktree_id=self.git_worktree_id or None,
+            git_coverage=McpGitCoverage(self.git_coverage),
+            security_epoch=self.security_epoch,
+            credential_digest=Sha256Digest(self.credential_digest),
+            issued_at=_parse_rfc3339_microseconds(self.issued_at),
+            expires_at=_parse_rfc3339_microseconds(self.expires_at),
+        )
+
+
+class SessionCredentialRevokeRequestModel(_StrictRequest):
+    """Hash-only credential revocation request."""
+
+    credential_digest: str
+
+
+class SessionBeginRequestModel(_StrictRequest):
+    """Bounded initial session lease request."""
+
+    session_id: str
+    started_at: str
+    lease_seconds: int = Field(ge=1, le=120)
+
+
+class SessionHeartbeatRequestModel(_StrictRequest):
+    """Monotonic session heartbeat request."""
+
+    session_id: str
+    heartbeat_at: str
+
+
+class SessionFinishRequestModel(_StrictRequest):
+    """Exact terminal session outcome request."""
+
+    session_id: str
+    status: Literal["completed", "interrupted"]
+    finished_at: str
+
+
+class WorkspaceCheckpointChangeModel(_StrictRequest):
+    """One bounded relative file delta encoded without a host path."""
+
+    relative_path: str = Field(min_length=1, max_length=4096)
+    sha256: str
+    content_base64: str = Field(max_length=2_796_208)
+    deleted: bool
+
+    def to_domain(self) -> WorkspaceCheckpointChange:
+        """Strictly decode canonical Base64 before domain digest verification."""
+        try:
+            content = base64.b64decode(self.content_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            message = "workspace checkpoint content is invalid"
+            raise DomainValidationError(message) from error
+        return WorkspaceCheckpointChange(
+            relative_path=self.relative_path,
+            sha256=Sha256Digest(self.sha256),
+            content=content,
+            deleted=self.deleted,
+        )
+
+
+class WorkspaceCheckpointRequestModel(_StrictRequest):
+    """Exact digest-bound terminal workspace batch from the launcher."""
+
+    session_id: str
+    workspace_fingerprint: str
+    batch_digest: str
+    partial: bool
+    changes: list[WorkspaceCheckpointChangeModel] = Field(max_length=10_000)
+
+    def to_domain(self) -> WorkspaceCheckpointBatch:
+        """Construct the bounded canonical batch and independently verify its digest."""
+        return WorkspaceCheckpointBatch(
+            session_id=Uuid7Id(self.session_id),
+            workspace_fingerprint=Sha256Digest(self.workspace_fingerprint),
+            batch_digest=Sha256Digest(self.batch_digest),
+            partial=self.partial,
+            changes=tuple(change.to_domain() for change in self.changes),
+        )
+
+
+class SessionCredentialResponseModel(_StrictRequest):
+    """Registration response that never contains raw credential material."""
+
+    session_id: str
+    credential_digest: str
+    status: Literal["registered", "already_registered"]
+
+
+class SessionCredentialRevocationResponseModel(_StrictRequest):
+    """Idempotent content-free credential revocation response."""
+
+    credential_digest: str
+    status: Literal["revoked", "already_revoked"]
+
+
+class SessionLifecycleResponseModel(_StrictRequest):
+    """Content-free durable session state response."""
+
+    session_id: str
+    state: Literal["registered", "active", "completed", "interrupted"]
+    revision: int = Field(ge=0)
+
+
+class SessionStatusResponseModel(_StrictRequest):
+    """Authenticated bridge-visible scope without host paths or secrets."""
+
+    session_id: str
+    brain_id: str
+    agent_id: str
+    workspace_fingerprint: str
+    git_coverage: Literal["none", "partial", "complete"]
+    index_coverage: Literal["pending", "indexing", "complete", "partial", "degraded"]
+    state: Literal["registered", "active"]
+
+
+class WorkspaceCheckpointResponseModel(_StrictRequest):
+    """Durable content-free acknowledgement for one encrypted batch."""
+
+    session_id: str
+    batch_digest: str
+    status: Literal["checkpointed", "already_checkpointed"]
+
+
 class RebuildManifestModel(_StrictRequest):
     """Complete immutable implementation/provider pin set for PF-002 replay."""
 
@@ -369,6 +541,80 @@ class ProjectionRebuildQueryPort(Protocol):
         ...
 
 
+class RegisterMcpSessionPort(Protocol):
+    """Register hash-only launcher session authority."""
+
+    async def execute(self, registration: McpSessionRegistration) -> tuple[McpSession, bool]:
+        """Return the exact aggregate and whether it was created."""
+        ...
+
+
+class WorkspaceCheckpointPort(Protocol):
+    """Authorize and durably encrypt one PF-005 workspace batch."""
+
+    async def execute(self, batch: WorkspaceCheckpointBatch) -> bool:
+        """Return whether this exact batch was newly staged."""
+        ...
+
+
+class McpSessionLifecyclePort(Protocol):
+    """Apply durable PF-005 lifecycle transitions."""
+
+    async def begin(
+        self,
+        session_id: Uuid7Id,
+        now: datetime,
+        lease: timedelta,
+    ) -> McpSession:
+        """Activate a registered session."""
+        ...
+
+    async def heartbeat(self, session_id: Uuid7Id, now: datetime) -> McpSession:
+        """Renew an active lease."""
+        ...
+
+    async def finish(
+        self,
+        session_id: Uuid7Id,
+        state: McpSessionState,
+        now: datetime,
+    ) -> McpSession:
+        """Persist one terminal outcome."""
+        ...
+
+    async def revoke(
+        self,
+        digest: Sha256Digest,
+        now: datetime,
+    ) -> tuple[McpSession | None, bool]:
+        """Revoke hash-only authority idempotently."""
+        ...
+
+
+class ClockPort(Protocol):
+    """Supply trusted UTC time to transport-owned commands."""
+
+    def now(self) -> datetime:
+        """Return the current time."""
+        ...
+
+
+class SessionAuthenticatorPort(Protocol):
+    """Authenticate only short-lived session scope."""
+
+    async def authenticate(self, authorization: str | None, session_id: str) -> McpSession:
+        """Return the current exact session scope."""
+        ...
+
+
+class WorkspaceCoveragePort(Protocol):
+    """Read content-free indexing coverage for an authenticated session."""
+
+    async def coverage(self, session_id: Uuid7Id) -> WorkspaceIndexCoverage:
+        """Return current checkpoint/index progress."""
+        ...
+
+
 class _ContractAuthenticator:
     async def authenticate(self, authorization: str | None) -> None:
         del authorization
@@ -430,6 +676,60 @@ class _ContractProjectionRebuildQuery:
         raise RuntimeError(msg)
 
 
+class _ContractMcpSessions:
+    async def execute(self, registration: McpSessionRegistration) -> tuple[McpSession, bool]:
+        del registration
+        msg = "contract-only dependency cannot register an MCP session"
+        raise RuntimeError(msg)
+
+    async def begin(self, session_id: Uuid7Id, now: datetime, lease: timedelta) -> McpSession:
+        del session_id, now, lease
+        msg = "contract-only dependency cannot begin an MCP session"
+        raise RuntimeError(msg)
+
+    async def heartbeat(self, session_id: Uuid7Id, now: datetime) -> McpSession:
+        del session_id, now
+        msg = "contract-only dependency cannot heartbeat an MCP session"
+        raise RuntimeError(msg)
+
+    async def finish(
+        self, session_id: Uuid7Id, state: McpSessionState, now: datetime
+    ) -> McpSession:
+        del session_id, state, now
+        msg = "contract-only dependency cannot finish an MCP session"
+        raise RuntimeError(msg)
+
+    async def revoke(self, digest: Sha256Digest, now: datetime) -> tuple[McpSession | None, bool]:
+        del digest, now
+        msg = "contract-only dependency cannot revoke an MCP session"
+        raise RuntimeError(msg)
+
+
+class _ContractClock:
+    def now(self) -> datetime:
+        msg = "contract-only dependency cannot provide time"
+        raise RuntimeError(msg)
+
+
+class _ContractSessionAuthenticator:
+    async def authenticate(self, authorization: str | None, session_id: str) -> McpSession:
+        del authorization, session_id
+        msg = "contract-only dependency cannot authenticate an MCP session"
+        raise RuntimeError(msg)
+
+
+class _ContractWorkspaceCheckpoint:
+    async def execute(self, batch: WorkspaceCheckpointBatch) -> bool:
+        del batch
+        msg = "contract-only dependency cannot checkpoint a workspace"
+        raise RuntimeError(msg)
+
+    async def coverage(self, session_id: Uuid7Id) -> WorkspaceIndexCoverage:
+        del session_id
+        msg = "contract-only dependency cannot query workspace coverage"
+        raise RuntimeError(msg)
+
+
 class _ContractStatusQuery:
     async def latest(self) -> ReadinessReceipt | None:
         msg = "contract-only dependency cannot query status"
@@ -455,6 +755,12 @@ class ApiDependencies:
     status_query: ReadinessStatusPort
     projection_rebuild: ProjectionRebuildHandlerPort
     projection_rebuild_query: ProjectionRebuildQueryPort
+    register_mcp_session: RegisterMcpSessionPort
+    mcp_session_lifecycle: McpSessionLifecyclePort
+    session_authenticator: SessionAuthenticatorPort
+    workspace_checkpoint: WorkspaceCheckpointPort
+    workspace_coverage: WorkspaceCoveragePort
+    clock: ClockPort
     allowed_hosts: frozenset[str]
 
 
@@ -525,6 +831,7 @@ def create_app(
     authenticate = _authentication_dependency(dependencies)
     _register_exception_handlers(application)
     _register_health_routes(application, dependencies, authenticate)
+    _register_session_routes(application, dependencies, authenticate)
     _register_command_routes(application, dependencies, authenticate)
     return application
 
@@ -543,6 +850,12 @@ def export_openapi_schema(
             status_query=_ContractStatusQuery(),
             projection_rebuild=_ContractProjectionRebuildHandler(),
             projection_rebuild_query=_ContractProjectionRebuildQuery(),
+            register_mcp_session=_ContractMcpSessions(),
+            mcp_session_lifecycle=_ContractMcpSessions(),
+            session_authenticator=_ContractSessionAuthenticator(),
+            workspace_checkpoint=_ContractWorkspaceCheckpoint(),
+            workspace_coverage=_ContractWorkspaceCheckpoint(),
+            clock=_ContractClock(),
             allowed_hosts=frozenset({"127.0.0.1:9411"}),
         )
     )
@@ -637,11 +950,170 @@ def _register_health_routes(
     del _registered_routes
 
 
+def _register_session_routes(
+    application: FastAPI,
+    dependencies: ApiDependencies,
+    authenticate: Callable[[str | None], Awaitable[None]],
+) -> None:
+    @application.get(
+        "/v1/session/status",
+        response_model=SessionStatusResponseModel,
+    )
+    async def session_status(
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        session_id: Annotated[str | None, Header(alias="X-AgentMemory-Session-ID")] = None,
+    ) -> SessionStatusResponseModel:
+        """Prove current bridge scope without accepting the root credential implicitly."""
+        session = await dependencies.session_authenticator.authenticate(
+            authorization,
+            session_id or "",
+        )
+        return SessionStatusResponseModel(
+            session_id=session.registration.session_id.value,
+            brain_id=session.registration.brain_id.value,
+            agent_id=session.registration.agent_id,
+            workspace_fingerprint=session.registration.workspace_fingerprint.value,
+            git_coverage=session.registration.git_coverage.value,
+            index_coverage=(
+                await dependencies.workspace_coverage.coverage(session.registration.session_id)
+            ).value,
+            state=cast("Literal['registered', 'active']", session.state.value),
+        )
+
+    @application.post(
+        "/v1/launcher/sessions/credentials",
+        dependencies=[Depends(authenticate)],
+        response_model=SessionCredentialResponseModel,
+    )
+    async def register_session_credential(
+        request: SessionCredentialRegistrationRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        """Persist only the digest of one short-lived scoped credential."""
+        _validate_idempotency(idempotency_key, request.session_id)
+        session, created = await dependencies.register_mcp_session.execute(request.to_domain())
+        return JSONResponse(
+            {
+                "session_id": session.registration.session_id.value,
+                "credential_digest": session.registration.credential_digest.value,
+                "status": "registered" if created else "already_registered",
+            },
+            status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @application.post(
+        "/v1/launcher/sessions/credentials:revoke",
+        dependencies=[Depends(authenticate)],
+        response_model=SessionCredentialRevocationResponseModel,
+    )
+    async def revoke_session_credential(
+        request: SessionCredentialRevokeRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> SessionCredentialRevocationResponseModel:
+        """Revoke a hash-only session credential without disclosing its scope."""
+        _validate_idempotency(idempotency_key, request.credential_digest)
+        _, changed = await dependencies.mcp_session_lifecycle.revoke(
+            Sha256Digest(request.credential_digest),
+            dependencies.clock.now(),
+        )
+        return SessionCredentialRevocationResponseModel(
+            credential_digest=request.credential_digest,
+            status="revoked" if changed else "already_revoked",
+        )
+
+    @application.post(
+        "/v1/launcher/sessions:begin",
+        dependencies=[Depends(authenticate)],
+        response_model=SessionLifecycleResponseModel,
+    )
+    async def begin_session(
+        request: SessionBeginRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> SessionLifecycleResponseModel:
+        """Begin the bounded lease for one registered launcher session."""
+        _validate_idempotency(idempotency_key, request.session_id)
+        session = await dependencies.mcp_session_lifecycle.begin(
+            Uuid7Id(request.session_id),
+            _parse_rfc3339_microseconds(request.started_at),
+            timedelta(seconds=request.lease_seconds),
+        )
+        return _session_lifecycle_response(session)
+
+    @application.post(
+        "/v1/launcher/sessions:heartbeat",
+        dependencies=[Depends(authenticate)],
+        response_model=SessionLifecycleResponseModel,
+    )
+    async def heartbeat_session(
+        request: SessionHeartbeatRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> SessionLifecycleResponseModel:
+        """Renew one active session lease at a monotonic timestamp."""
+        _validate_idempotency(idempotency_key, request.session_id)
+        session = await dependencies.mcp_session_lifecycle.heartbeat(
+            Uuid7Id(request.session_id),
+            _parse_rfc3339_microseconds(request.heartbeat_at),
+        )
+        return _session_lifecycle_response(session)
+
+    @application.post(
+        "/v1/launcher/sessions:finish",
+        dependencies=[Depends(authenticate)],
+        response_model=SessionLifecycleResponseModel,
+    )
+    async def finish_session(
+        request: SessionFinishRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> SessionLifecycleResponseModel:
+        """Persist one exact completed or interrupted terminal state."""
+        _validate_idempotency(idempotency_key, request.session_id)
+        session = await dependencies.mcp_session_lifecycle.finish(
+            Uuid7Id(request.session_id),
+            McpSessionState(request.status),
+            _parse_rfc3339_microseconds(request.finished_at),
+        )
+        return _session_lifecycle_response(session)
+
+    @application.post(
+        _WORKSPACE_CHECKPOINT_PATH,
+        dependencies=[Depends(authenticate)],
+        response_model=WorkspaceCheckpointResponseModel,
+    )
+    async def checkpoint_workspace(
+        request: WorkspaceCheckpointRequestModel,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        """Acknowledge only after the exact encrypted staging transaction commits."""
+        _validate_idempotency(idempotency_key, request.batch_digest)
+        batch = request.to_domain()
+        created = await dependencies.workspace_checkpoint.execute(batch)
+        return JSONResponse(
+            {
+                "session_id": batch.session_id.value,
+                "batch_digest": batch.batch_digest.value,
+                "status": "checkpointed" if created else "already_checkpointed",
+            },
+            status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    _registered_routes = (
+        session_status,
+        register_session_credential,
+        revoke_session_credential,
+        begin_session,
+        heartbeat_session,
+        finish_session,
+        checkpoint_workspace,
+    )
+    del _registered_routes
+
+
 def _register_command_routes(
     application: FastAPI,
     dependencies: ApiDependencies,
     authenticate: Callable[[str | None], Awaitable[None]],
 ) -> None:
+
     @application.post(
         "/v1/bootstrap",
         dependencies=[Depends(authenticate)],
@@ -792,6 +1264,27 @@ def _validate_idempotency(supplied: str | None, expected: str) -> None:
         raise OperationError(ErrorCode.VALIDATION, "Idempotency-Key is invalid")
 
 
+def _parse_rfc3339_microseconds(value: str) -> datetime:
+    message = "timestamp is invalid"
+    if _RFC3339_MICROSECONDS_PATTERN.fullmatch(value) is None:
+        raise DomainValidationError(message)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise DomainValidationError(message) from error
+    if parsed.isoformat(timespec="microseconds").replace("+00:00", "Z") != value:
+        raise DomainValidationError(message)
+    return parsed
+
+
+def _session_lifecycle_response(session: McpSession) -> SessionLifecycleResponseModel:
+    return SessionLifecycleResponseModel(
+        session_id=session.registration.session_id.value,
+        state=session.state.value,
+        revision=session.revision,
+    )
+
+
 def _request_size_rejection(request: Request) -> JSONResponse | None:
     content_lengths = request.headers.getlist("content-length")
     transfer_encodings = request.headers.getlist("transfer-encoding")
@@ -811,7 +1304,12 @@ def _request_size_rejection(request: Request) -> JSONResponse | None:
         )
     if content_lengths and not content_lengths[0].isdigit():
         return _problem(ErrorCode.VALIDATION, 400, "Content-Length is invalid", request)
-    if content_lengths and int(content_lengths[0]) > _MAX_REQUEST_BYTES:
+    maximum = (
+        _MAX_CHECKPOINT_REQUEST_BYTES
+        if request.url.path == _WORKSPACE_CHECKPOINT_PATH
+        else _MAX_REQUEST_BYTES
+    )
+    if content_lengths and int(content_lengths[0]) > maximum:
         return _problem(ErrorCode.VALIDATION, 413, "request body is too large", request)
     return None
 

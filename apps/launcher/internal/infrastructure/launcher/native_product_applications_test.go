@@ -200,7 +200,7 @@ func TestPF001NativeProductApplicationsFailClosedBeforeDelegation(t *testing.T) 
 		t.Fatalf("nil context error=%v", err)
 	}
 
-	executors, _ := nativeProductExecutors(t)
+	executors := nativeProductExecutors(t)
 	storeRoot := filepath.Join(nativeReleaseAuthorityBundleRoot(t), "product-cas")
 	if err := ensureNativePrivateDirectory(t.Context(), storeRoot); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func nativeProductEndpoint(t testing.TB) containerengine.Endpoint {
 	return endpoint
 }
 
-func nativeProductExecutors(t testing.TB) (dockercli.Executors, *nativeProductRunner) {
+func nativeProductExecutors(t testing.TB) dockercli.Executors {
 	t.Helper()
 	release := sha256.Sum256([]byte("release"))
 	plan := sha256.Sum256([]byte("plan"))
@@ -300,7 +300,7 @@ func nativeProductExecutors(t testing.TB) (dockercli.Executors, *nativeProductRu
 	if err != nil {
 		t.Fatal(err)
 	}
-	return executors, dockerRunner
+	return executors
 }
 
 type nativeProductRunner struct {
@@ -316,6 +316,15 @@ func (r *nativeProductRunner) ExecutableAuthority() argvprocess.ExecutableAuthor
 func (r *nativeProductRunner) Run(context.Context, argvprocess.Invocation) (argvprocess.Result, error) {
 	r.calls++
 	return argvprocess.Result{StandardOutput: append([]byte(nil), r.output...)}, nil
+}
+
+func (r *nativeProductRunner) RunStreaming(
+	context.Context,
+	argvprocess.Invocation,
+	argvprocess.Streams,
+) error {
+	r.calls++
+	return nil
 }
 
 type nativeProductResourceRepository struct{}

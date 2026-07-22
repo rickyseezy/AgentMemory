@@ -113,6 +113,39 @@ func (r *Runner) Run(ctx context.Context, invocation argvprocess.Invocation) (ar
 	return result, nil
 }
 
+// RunStreaming executes one verified process with exact caller-owned stdio.
+// It preserves the same executable lease, native publisher proof, scrubbed
+// environment, process-tree cancellation, and post-execution identity check as Run.
+func (r *Runner) RunStreaming(
+	ctx context.Context,
+	invocation argvprocess.Invocation,
+	streams argvprocess.Streams,
+) error {
+	if !streams.Valid() || len(invocation.StandardInput()) != 0 {
+		return argvprocess.ErrInvalidInvocation
+	}
+	command, lease, err := r.prepareCommand(ctx, invocation)
+	if err != nil {
+		return err
+	}
+	defer lease.close()
+	command.Stdin = streams.Input()
+	command.Stdout = streams.Output()
+	command.Stderr = streams.Diagnostics()
+	runError := runCommandInProcessTree(ctx, command)
+	if verifyError := lease.verify(context.WithoutCancel(ctx), r.authority); verifyError != nil {
+		return argvprocess.ErrInvalidInvocation
+	}
+	if runError != nil {
+		if errors.Is(runError, context.Canceled) || errors.Is(runError, context.DeadlineExceeded) ||
+			ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("argv streaming process exited unsuccessfully: %w", runError)
+	}
+	return nil
+}
+
 func (r *Runner) prepareCommand(
 	ctx context.Context,
 	invocation argvprocess.Invocation,

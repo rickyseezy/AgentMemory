@@ -93,6 +93,21 @@ func run(
 		writeCode(stderr, "AM_BOOTSTRAP_INTEGRITY")
 		return exitBootstrapIntegrity
 	}
+	if hostSession, ok := runner.(launcher.HostSessionRunner); ok && !nilCapability(hostSession) {
+		workingDirectory, directoryError := os.Getwd()
+		if directoryError != nil {
+			writeCode(stderr, "AM_SESSION_UNAVAILABLE")
+			return exitMCPUnavailable
+		}
+		if err := hostSession.RunHostSession(ctx, workingDirectory, os.Stdin, os.Stdout, stderr); err != nil {
+			if gracefulSignalShutdown(ctx, err) {
+				return exitSuccess
+			}
+			writeCode(stderr, "AM_MCP_UNAVAILABLE")
+			return exitMCPUnavailable
+		}
+		return exitSuccess
+	}
 	if err := runner.Run(ctx, transport); err != nil {
 		if gracefulSignalShutdown(ctx, err) {
 			// statement/return would substitute the same integer zero represented by exitSuccess.

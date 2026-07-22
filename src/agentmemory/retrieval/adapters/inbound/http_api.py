@@ -234,7 +234,7 @@ def create_retrieval_router(
                     requested_at,
                 )
             )
-            return _response(delivered)
+            return briefing_response(delivered)
         except IdentityAuthorizationError, RetrievalAuthorizationError:
             return _problem("AM_FORBIDDEN", 403, "briefing scope is not authorized")
         except IdentityConflictError, RetrievalConflictError:
@@ -291,7 +291,8 @@ def create_contract_retrieval_router() -> APIRouter:
     )
 
 
-def _response(delivered: DeliveredBriefing) -> StartSessionBriefingResponseModel:
+def briefing_response(delivered: DeliveredBriefing) -> StartSessionBriefingResponseModel:
+    """Translate one verified delivery result to the shared strict HTTP model."""
     briefing = delivered.briefing
     if briefing.context_event_id is None:
         raise RetrievalIntegrityError

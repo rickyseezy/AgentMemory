@@ -68,6 +68,18 @@ func TestPF001ExecutorsBindDistinctRolesToOneSignedReleaseAndRuntimePlan(t *test
 	}
 }
 
+func TestPF005ExecutorsExposeOnlyRevalidatedSessionRunners(t *testing.T) {
+	t.Parallel()
+	executors := testExecutors(t, testNoopRunner{}, testNoopRunner{})
+	docker, compose, err := executors.SessionRunners()
+	if err != nil || docker == nil || compose == nil {
+		t.Fatalf("SessionRunners()=(%T,%T,%v)", docker, compose, err)
+	}
+	if docker, compose, err := (Executors{}).SessionRunners(); err == nil || docker != nil || compose != nil {
+		t.Fatalf("zero SessionRunners()=(%T,%T,%v)", docker, compose, err)
+	}
+}
+
 type testRunOnly interface {
 	Run(context.Context, argvprocess.Invocation) (argvprocess.Result, error)
 }
@@ -84,6 +96,15 @@ func (r *testBoundRunner) Run(
 	invocation argvprocess.Invocation,
 ) (argvprocess.Result, error) {
 	return r.delegate.Run(ctx, invocation)
+}
+
+func (r *testBoundRunner) RunStreaming(
+	ctx context.Context,
+	invocation argvprocess.Invocation,
+	_ argvprocess.Streams,
+) error {
+	_, err := r.delegate.Run(ctx, invocation)
+	return err
 }
 
 type testNoopRunner struct{}

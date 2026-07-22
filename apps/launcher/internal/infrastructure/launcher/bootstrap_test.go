@@ -62,6 +62,30 @@ func TestPF001LauncherCompositionBuildsAndRunsOfficialBootstrapMCP(t *testing.T)
 	}
 }
 
+func TestPF005ReadySessionFactoryBypassesHostProductSurfaceExactlyOnce(t *testing.T) {
+	t.Parallel()
+	resolved, runtime := launcherFixture(t)
+	runtimeFactory := &runtimeFactoryStub{runtime: runtime}
+	factory, err := NewFactory(&resolverStub{resolved: resolved}, runtimeFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := &mcpRunnerStub{}
+	sessions := &productSessionFactoryStub{runner: wanted, ready: true}
+	if err := factory.bindProductSessions(sessions); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := factory.BuildMCP(t.Context(), agentconfigdomain.AgentHostGemini)
+	if err != nil || runner != wanted || sessions.calls != 1 ||
+		sessions.host != agentconfigdomain.AgentHostGemini ||
+		sessions.resolved.OperationID() != resolved.OperationID() || runtimeFactory.host != "" {
+		t.Fatalf("runner=%T error=%v sessions=%+v runtime host=%q", runner, err, sessions, runtimeFactory.host)
+	}
+	if err := factory.bindProductSessions(&productSessionFactoryStub{}); err == nil {
+		t.Fatal("session authority rebound")
+	}
+}
+
 func TestPF001LauncherCompositionExposesOneTransportFreeAuthenticatedSurface(t *testing.T) {
 	t.Parallel()
 	resolved, runtime := launcherFixture(t)
@@ -332,6 +356,29 @@ type runtimeFactoryStub struct {
 	host     agentconfigdomain.AgentHost
 	resolved mcpbootstrapapp.ResolvedBootstrap
 }
+
+type productSessionFactoryStub struct {
+	runner   MCPRunner
+	ready    bool
+	err      error
+	host     agentconfigdomain.AgentHost
+	resolved mcpbootstrapapp.ResolvedBootstrap
+	calls    int
+}
+
+func (f *productSessionFactoryStub) BuildReadySession(
+	_ context.Context,
+	host agentconfigdomain.AgentHost,
+	resolved mcpbootstrapapp.ResolvedBootstrap,
+) (MCPRunner, bool, error) {
+	f.calls++
+	f.host, f.resolved = host, resolved
+	return f.runner, f.ready, f.err
+}
+
+type mcpRunnerStub struct{}
+
+func (*mcpRunnerStub) Run(context.Context, mcp.Transport) error { return nil }
 
 func (f *runtimeFactoryStub) BuildBootstrapRuntime(
 	_ context.Context,

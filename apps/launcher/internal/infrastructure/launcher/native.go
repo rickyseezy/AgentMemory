@@ -812,13 +812,24 @@ type nativeRuntimeFactory struct {
 }
 
 type runtimePlanProjection struct {
-	digest         install.PlanDigest
-	operationID    install.OperationID
-	installationID string
-	host           agentconfigdomain.AgentHost
-	totalBytes     uint64
-	coreEndpoint   string
-	credentialPath string
+	digest                   install.PlanDigest
+	operationID              install.OperationID
+	installationID           string
+	generationID             string
+	brainID                  string
+	actorID                  string
+	grantID                  string
+	host                     agentconfigdomain.AgentHost
+	totalBytes               uint64
+	runtimeEndpoint          string
+	securityEpoch            uint64
+	runtimeDirectory         string
+	composeProjectDirectory  string
+	composeConfigurationPath string
+	emptyEnvironmentPath     string
+	coreEndpoint             string
+	credentialPath           string
+	installationRootKeyPath  string
 }
 
 type runtimePlanDecoder func([]byte) (runtimePlanProjection, error)
@@ -831,22 +842,40 @@ func decodeRuntimePlan(canonical []byte) (runtimePlanProjection, error) {
 	}
 	product := plan.Product()
 	credentialPath := ""
+	installationRootKeyPath := ""
 	for _, secret := range product.SecretFiles() {
-		if secret.Purpose() == installplan.SecretAPICredential {
+		switch secret.Purpose() {
+		case installplan.SecretAPICredential:
 			if credentialPath != "" {
 				return runtimePlanProjection{}, installplan.ErrIntegrity
 			}
 			credentialPath = secret.Path()
+		case installplan.SecretInstallationRootKey:
+			if installationRootKeyPath != "" {
+				return runtimePlanProjection{}, installplan.ErrIntegrity
+			}
+			installationRootKeyPath = secret.Path()
+		case installplan.SecretAttestationHMACKey,
+			installplan.SecretNeo4jPassword,
+			installplan.SecretEmbeddingCapability,
+			installplan.SecretRerankerCapability,
+			installplan.SecretExtractorCapability:
 		}
 	}
-	if credentialPath == "" {
+	if credentialPath == "" || installationRootKeyPath == "" {
 		return runtimePlanProjection{}, installplan.ErrIntegrity
 	}
 	return runtimePlanProjection{
 		digest: plan.Digest(), operationID: plan.OperationID(),
-		installationID: plan.InstallationID(), host: plan.AgentConfiguration().AgentHost(),
-		totalBytes:   plan.AcquisitionPlan().Totals().DownloadBytes(),
+		installationID: plan.InstallationID(), generationID: plan.GenerationID(),
+		brainID: product.InitialBrainID(), actorID: product.OwnerPrincipalID(),
+		grantID: product.OwnerGrantID(),
+		host:    plan.AgentConfiguration().AgentHost(), totalBytes: plan.AcquisitionPlan().Totals().DownloadBytes(),
+		runtimeEndpoint: plan.RuntimeEndpoint(), securityEpoch: plan.SecurityEpoch(),
+		runtimeDirectory: product.RuntimeDirectory(), composeProjectDirectory: product.ComposeProjectDirectory(),
+		composeConfigurationPath: product.ComposeConfigurationPath(), emptyEnvironmentPath: product.EmptyEnvironmentPath(),
 		coreEndpoint: product.CoreEndpoint(), credentialPath: credentialPath,
+		installationRootKeyPath: installationRootKeyPath,
 	}, nil
 }
 

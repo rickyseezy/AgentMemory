@@ -120,7 +120,10 @@ from agentmemory.indexing.adapters.inbound.content_policy_http_api import (
     create_content_policy_router,
     create_contract_content_policy_router,
 )
-from agentmemory.indexing.adapters.inbound.http_api import create_contract_indexing_router
+from agentmemory.indexing.adapters.inbound.http_api import (
+    create_contract_indexing_router,
+    create_indexing_router,
+)
 from agentmemory.indexing.adapters.inbound.revision_history_http_api import (
     create_contract_revision_history_router,
     create_revision_history_router,
@@ -142,20 +145,33 @@ from agentmemory.indexing.adapters.outbound.artifact_topology_graph import (
 from agentmemory.indexing.adapters.outbound.artifact_topology_plugins import (
     production_artifact_topology_parsers,
 )
+from agentmemory.indexing.adapters.outbound.git_incremental_source import (
+    LanguagePluginFingerprintProvider,
+)
 from agentmemory.indexing.adapters.outbound.sqlite_api_topology import (
     SqliteApiTopologyRepository,
 )
 from agentmemory.indexing.adapters.outbound.sqlite_artifact_topology import (
     SqliteArtifactTopologyRepository,
 )
+from agentmemory.indexing.adapters.outbound.sqlite_checkpoint_source import (
+    SqliteCheckpointIncrementalRepositorySource,
+)
 from agentmemory.indexing.adapters.outbound.sqlite_content_policy import (
     SqliteIndexContentPolicyAdapter,
     SqliteIndexPolicyProjection,
+)
+from agentmemory.indexing.adapters.outbound.sqlite_incremental_index import (
+    SqliteIncrementalIndexRepository,
+)
+from agentmemory.indexing.adapters.outbound.sqlite_index_projection import (
+    SqliteIndexProjectionConsumer,
 )
 from agentmemory.indexing.adapters.outbound.sqlite_revision_history import (
     SqliteCommitGraphAdapter,
     SqliteSourceRevisionRepository,
 )
+from agentmemory.indexing.adapters.outbound.tree_sitter_plugin import TreeSitterLanguagePlugin
 from agentmemory.indexing.application.api_topology import (
     ExtractAndRegisterApiTopologyHandler,
     LinkApiTopologyHandler,
@@ -170,6 +186,13 @@ from agentmemory.indexing.application.content_policy import (
     ActivateIndexPolicyHandler,
     GetIndexPolicyChangeHandler,
     PolicyReconciliationWorker,
+)
+from agentmemory.indexing.application.incremental_index import (
+    CancelIndexRunHandler,
+    GetIndexRunHandler,
+    IncrementalIndexWorker,
+    IndexProjectionWorker,
+    StartIndexRunHandler,
 )
 from agentmemory.indexing.application.revision_history import (
     ProcessSourceRevisionHandler,
@@ -325,6 +348,9 @@ from agentmemory.operations.adapters.inbound.http_api import (
     create_app,
     export_openapi_schema,
 )
+from agentmemory.operations.adapters.inbound.session_authentication import (
+    SessionCredentialAuthenticator,
+)
 from agentmemory.operations.adapters.outbound.egress_attestation import (
     AuthenticatedEgressAttestationCheck,
 )
@@ -357,6 +383,13 @@ from agentmemory.operations.adapters.outbound.sqlite_checks import (
     SqliteReadinessChecks,
     SqliteSemanticSmokeStore,
 )
+from agentmemory.operations.adapters.outbound.sqlite_mcp_session import (
+    SqliteMcpSessionRepository,
+)
+from agentmemory.operations.adapters.outbound.sqlite_mcp_workspace_scope import (
+    SqliteMcpWorkspaceScopeProvisioner,
+    SqliteMcpWorkspaceScopeResolver,
+)
 from agentmemory.operations.adapters.outbound.sqlite_projection_rebuild import (
     SqliteProjectionRebuildAdapter,
 )
@@ -365,6 +398,16 @@ from agentmemory.operations.adapters.outbound.sqlite_store import (
     SqliteRuntimePolicy,
 )
 from agentmemory.operations.adapters.outbound.sqlite_uow import SqliteUnitOfWorkFactory
+from agentmemory.operations.adapters.outbound.sqlite_workspace_checkpoint import (
+    SqliteWorkspaceCheckpointRepository,
+)
+from agentmemory.operations.adapters.outbound.workspace_checkpoint_indexing import (
+    WorkspaceCheckpointIndexProjection,
+)
+from agentmemory.operations.adapters.outbound.workspace_checkpoint_ingestion import (
+    CanonicalWorkspaceCheckpointIngestor,
+    SqlitePreparedWorkspaceChangeRepository,
+)
 from agentmemory.operations.application.commands.active_release import (
     ActiveReleaseTransactionHandler,
 )
@@ -376,6 +419,13 @@ from agentmemory.operations.application.commands.projection_rebuild import (
     StartProjectionRebuildHandler,
 )
 from agentmemory.operations.application.commands.verify_readiness import VerifyReadinessHandler
+from agentmemory.operations.application.mcp_session import (
+    McpSessionLifecycleHandler,
+    ReconcileWorkspaceCheckpointHandler,
+    RegisterMcpSessionCredentialHandler,
+    StageWorkspaceCheckpointHandler,
+    WorkspaceCheckpointRecoveryWorker,
+)
 from agentmemory.operations.application.projection_worker import ProjectionRebuildWorker
 from agentmemory.operations.application.runtime_readiness import RuntimeReadinessCoordinator
 from agentmemory.operations.domain.projection_rebuild import RebuildManifest
@@ -412,6 +462,10 @@ from agentmemory.retrieval.adapters.inbound.http_api import (
     create_contract_retrieval_router,
     create_retrieval_router,
 )
+from agentmemory.retrieval.adapters.inbound.session_http_api import (
+    create_contract_session_retrieval_router,
+    create_session_retrieval_router,
+)
 from agentmemory.retrieval.adapters.outbound.sqlite_briefing import (
     SqliteCodeRevisionQuery,
     SqliteContextInjectionRepository,
@@ -432,6 +486,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from fastapi import APIRouter, FastAPI
+
+_INDEX_LANGUAGE_LOCK_DIGEST = "89c2e97fe98e4a39656ab2aec27c2e6cc15ebccb4a4142e1f05eb192a60fa601"
+_INDEX_EXTRACTION_CONFIG_DIGEST = "1963268d58f94842373ea4356f1402748f48085cb86daa3367704c6b9408ce4a"
 
 
 @dataclass(slots=True)
@@ -714,6 +771,91 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         ),
     )
     authenticator = ApiAuthenticator(resolved.api_credential_file)
+    mcp_session_repository = SqliteMcpSessionRepository(store)
+    mcp_session_lifecycle = McpSessionLifecycleHandler(mcp_session_repository)
+    session_authenticator = SessionCredentialAuthenticator(mcp_session_repository, clock)
+    checkpoint_repository = SqliteWorkspaceCheckpointRepository(
+        store,
+        resolved.installation_root_key_file,
+        clock,
+    )
+    workspace_checkpoints = StageWorkspaceCheckpointHandler(
+        mcp_session_repository,
+        checkpoint_repository,
+    )
+    checkpoint_keys = SqliteWrappedBrainKeyProvider(
+        store,
+        resolved.installation_root_key_file,
+        clock,
+    )
+    checkpoint_preparations = SqlitePreparedWorkspaceChangeRepository(
+        store,
+        checkpoint_keys,
+        clock,
+    )
+    index_plugin = TreeSitterLanguagePlugin()
+    checkpoint_index_source = SqliteCheckpointIncrementalRepositorySource(
+        store,
+        checkpoint_preparations,
+    )
+    incremental_index_repository = SqliteIncrementalIndexRepository(store, clock)
+    index_fingerprints = LanguagePluginFingerprintProvider(
+        index_plugin,
+        language_lock_digest=_INDEX_LANGUAGE_LOCK_DIGEST,
+        extraction_config_digest=_INDEX_EXTRACTION_CONFIG_DIGEST,
+        privacy_policy_version="capture-policy-v1",
+    )
+    start_index_run = StartIndexRunHandler(
+        checkpoint_index_source,
+        index_fingerprints,
+        incremental_index_repository,
+    )
+    index_scope_resolver = ResolveRetrievalScopeHandler(
+        SqliteRetrievalScopeAuthorizationRepository(store.engine),
+        SqliteRelatedProjectGraph(store.engine),
+    )
+    incremental_index_worker = IncrementalIndexWorker(
+        checkpoint_index_source,
+        index_plugin,
+        incremental_index_repository,
+        clock,
+    )
+    index_projection_worker = IndexProjectionWorker(
+        incremental_index_repository,
+        SqliteIndexProjectionConsumer(
+            store,
+            embeddings,
+            SqliteAssertionRepositoryFactory(store),
+        ),
+        clock,
+    )
+    checkpoint_worker = WorkspaceCheckpointRecoveryWorker(
+        ReconcileWorkspaceCheckpointHandler(
+            mcp_session_repository,
+            checkpoint_repository,
+            CanonicalWorkspaceCheckpointIngestor(
+                checkpoint_preparations,
+                CapturePolicyPipeline(SqliteCapturePolicyRepository(store)),
+                SqliteCapturePolicyDecisionRepository(store),
+                SqliteAgentEventScopeResolver(store.engine, clock),
+                AppendAgentEventHandler(
+                    CanonicalAgentEventEncoder(),
+                    AesGcmAgentEventEncryptor(checkpoint_keys),
+                    SqliteAgentEventUnitOfWorkFactory(
+                        store,
+                        clock,
+                        SqliteCaptureCapacityEnforcer(storage_capacity, queue_limits),
+                    ),
+                ),
+                clock,
+            ),
+            WorkspaceCheckpointIndexProjection(
+                index_scope_resolver,
+                start_index_run,
+                clock,
+            ),
+        )
+    )
     dependencies = ApiDependencies(
         authenticator=authenticator,
         bootstrap=BootstrapLocalBrainHandler(unit_of_work),
@@ -727,6 +869,16 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             projection_adapter,
         ),
         projection_rebuild_query=projection_adapter,
+        register_mcp_session=RegisterMcpSessionCredentialHandler(
+            mcp_session_repository,
+            SqliteMcpWorkspaceScopeResolver(store),
+            SqliteMcpWorkspaceScopeProvisioner(store, clock),
+        ),
+        mcp_session_lifecycle=mcp_session_lifecycle,
+        session_authenticator=session_authenticator,
+        workspace_checkpoint=workspace_checkpoints,
+        workspace_coverage=checkpoint_repository,
+        clock=clock,
         allowed_hosts=frozenset(resolved.allowed_hosts),
     )
     container = CoreContainer(store, neo4j_driver, provider_client)
@@ -738,6 +890,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         tasks: tuple[asyncio.Task[None], ...] = ()
         try:
             await store.observe_and_enforce_policy()
+            await mcp_session_lifecycle.recover_expired(clock.now())
             # Establish the immutable historical watermark before automatic
             # consolidation may claim any task snapshot.
             await memory_backfill_repository.start_or_resume()
@@ -753,6 +906,9 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(memory_backfill_worker.run(stop)),
                 asyncio.create_task(memory_worker.run(stop)),
                 asyncio.create_task(memory_expiry_scheduler.run(stop)),
+                asyncio.create_task(checkpoint_worker.run(stop)),
+                asyncio.create_task(incremental_index_worker.run(stop)),
+                asyncio.create_task(index_projection_worker.run(stop)),
             )
             yield
         finally:
@@ -762,6 +918,16 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             await container.close()
 
     application = create_app(dependencies, lifespan)
+    application.include_router(
+        create_indexing_router(
+            authenticator,
+            index_scope_resolver,
+            start_index_run,
+            GetIndexRunHandler(incremental_index_repository),
+            CancelIndexRunHandler(incremental_index_repository),
+            clock,
+        )
+    )
     _include_identity_graph_and_retrieval_runtime_routers(
         application,
         store,
@@ -776,6 +942,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         provider_client,
         embeddings,
         reranker,
+        session_authenticator,
     )
     application.include_router(
         create_memory_router(
@@ -865,6 +1032,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_adapter_capability_router(),
             create_contract_adapter_extension_router(),
             create_contract_retrieval_router(),
+            create_contract_session_retrieval_router(),
             create_contract_indexing_router(),
             create_contract_revision_history_router(),
             create_contract_api_topology_router(),
@@ -921,6 +1089,7 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
     provider_client: httpx.AsyncClient,
     embeddings: LocalEmbeddingHttpAdapter,
     reranker: LocalRerankingHttpAdapter,
+    session_authenticator: SessionCredentialAuthenticator,
 ) -> None:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
@@ -1101,15 +1270,15 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             clock,
         )
     )
-    application.include_router(
-        _create_retrieval_runtime_router(
-            store,
-            clock,
-            authenticator,
-            retrieval_scope,
-            installation_root_key_file,
-        )
-    )
+    for retrieval_router in _create_retrieval_runtime_routers(
+        store,
+        clock,
+        authenticator,
+        session_authenticator,
+        retrieval_scope,
+        installation_root_key_file,
+    ):
+        application.include_router(retrieval_router)
 
 
 def _graph_rebuild_manifest(settings: CoreSettings) -> RebuildManifest:
@@ -1152,13 +1321,14 @@ def _graph_rebuild_manifest(settings: CoreSettings) -> RebuildManifest:
     )
 
 
-def _create_retrieval_runtime_router(
+def _create_retrieval_runtime_routers(  # noqa: PLR0913 -- Explicit composition.
     store: SqliteCoreStore,
     clock: SystemClock,
     authenticator: ApiAuthenticator,
+    session_authenticator: SessionCredentialAuthenticator,
     retrieval_scope: ResolveRetrievalScopeHandler,
     installation_root_key_file: Path,
-) -> APIRouter:
+) -> tuple[APIRouter, APIRouter]:
     """Compose the host-neutral query and host delivery adapters at the outer boundary."""
     continuity = SqliteContinuityReadRepository(
         store.engine,
@@ -1173,11 +1343,20 @@ def _create_retrieval_runtime_router(
         EmptyProcedureReadRepository(),
         SqliteContextInjectionRepository(store.engine),
     )
-    return create_retrieval_router(
-        authenticator,
-        retrieval_scope,
-        CertifiedDeliveryAdapterRegistry(handler),
-        clock,
+    delivery_adapters = CertifiedDeliveryAdapterRegistry(handler)
+    return (
+        create_retrieval_router(
+            authenticator,
+            retrieval_scope,
+            delivery_adapters,
+            clock,
+        ),
+        create_session_retrieval_router(
+            session_authenticator,
+            retrieval_scope,
+            delivery_adapters,
+            clock,
+        ),
     )
 
 

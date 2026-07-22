@@ -5,10 +5,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, Self
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from types import TracebackType
 
     from agentmemory.operations.domain.active_release import ActiveReleasePointer
     from agentmemory.operations.domain.bootstrap import BootstrapDisposition, BootstrapRequest
+    from agentmemory.operations.domain.mcp_session import (
+        McpSession,
+        McpSessionRegistration,
+        McpWorkspaceScope,
+    )
     from agentmemory.operations.domain.projection_rebuild import (
         ProjectionRebuild,
         ProjectionType,
@@ -25,6 +31,11 @@ if TYPE_CHECKING:
         ReadinessReceipt,
     )
     from agentmemory.operations.domain.value_objects import OperationId, Sha256Digest, Uuid7Id
+    from agentmemory.operations.domain.workspace_checkpoint import (
+        WorkspaceCheckpointBatch,
+        WorkspaceCheckpointIngestionResult,
+        WorkspaceIndexCoverage,
+    )
 
 
 class ReadinessProbePort(Protocol):
@@ -188,6 +199,111 @@ class CoreUnitOfWorkFactory(Protocol):
 
     def __call__(self) -> CoreUnitOfWork:
         """Return an unopened Unit of Work."""
+        ...
+
+
+class McpSessionRepository(Protocol):
+    """Persist append-only PF-005 credential and lease state."""
+
+    async def register(self, registration: McpSessionRegistration) -> tuple[McpSession, bool]:
+        """Create exact registration or return its idempotent prior value."""
+        ...
+
+    async def get(self, session_id: Uuid7Id) -> McpSession | None:
+        """Load one complete aggregate from authenticated append-only state."""
+        ...
+
+    async def get_by_credential(self, digest: Sha256Digest) -> McpSession | None:
+        """Resolve one opaque credential digest without content access."""
+        ...
+
+    async def save(self, previous: McpSession, current: McpSession) -> None:
+        """Append exactly one optimistic lifecycle revision and audit fact."""
+        ...
+
+    async def expired(self, now: datetime, limit: int) -> tuple[McpSession, ...]:
+        """Return a bounded deterministic set of expired active leases."""
+        ...
+
+    async def authorize(
+        self,
+        digest: Sha256Digest,
+        session_id: Uuid7Id,
+        now: datetime,
+    ) -> McpSession | None:
+        """Resolve only current unrevoked authority under the active security epoch."""
+        ...
+
+
+class McpWorkspaceScopeResolver(Protocol):
+    """Resolve only previously governed canonical identity from opaque host evidence."""
+
+    async def resolve(self, registration: McpSessionRegistration) -> McpWorkspaceScope | None:
+        """Return one exact scope, absence, or raise on ambiguity/integrity failure."""
+        ...
+
+
+class McpWorkspaceScopeProvisioner(Protocol):
+    """Create only the missing governed identity needed by an authorized session."""
+
+    async def ensure(
+        self,
+        registration: McpSessionRegistration,
+        resolved: McpWorkspaceScope | None,
+    ) -> McpWorkspaceScope:
+        """Return an exact existing or newly provisioned Project/Repository/Checkout."""
+        ...
+
+
+class WorkspaceCheckpointRepository(Protocol):
+    """Persist encrypted PF-005 workspace batches before launcher acknowledgement."""
+
+    async def stage(self, batch: WorkspaceCheckpointBatch) -> bool:
+        """Create one exact encrypted batch or return its idempotent prior value."""
+        ...
+
+    async def pending(self, limit: int) -> tuple[WorkspaceCheckpointBatch, ...]:
+        """Decrypt a deterministic bounded set without exposing storage envelopes."""
+        ...
+
+    async def acknowledge(
+        self,
+        batch_digest: Sha256Digest,
+        result: WorkspaceCheckpointIngestionResult,
+    ) -> bool:
+        """Append a terminal exact receipt or return its idempotent prior value."""
+        ...
+
+
+class WorkspaceCheckpointIngestor(Protocol):
+    """Translate one staged workspace delta through canonical ingestion contracts."""
+
+    async def ingest(
+        self,
+        batch: WorkspaceCheckpointBatch,
+        registration: McpSessionRegistration,
+    ) -> WorkspaceCheckpointIngestionResult:
+        """Return only after every derived event is durably accepted or replayed."""
+        ...
+
+
+class WorkspaceCheckpointProjector(Protocol):
+    """Queue durable derived work from one fully ingested workspace checkpoint."""
+
+    async def project(
+        self,
+        batch: WorkspaceCheckpointBatch,
+        registration: McpSessionRegistration,
+    ) -> None:
+        """Return only after the checkpoint's derived work is durably queued."""
+        ...
+
+
+class WorkspaceCheckpointCoverageRepository(Protocol):
+    """Read content-free indexing coverage for one authenticated MCP session."""
+
+    async def coverage(self, session_id: Uuid7Id) -> WorkspaceIndexCoverage:
+        """Return current durable coverage without exposing file identities."""
         ...
 
 

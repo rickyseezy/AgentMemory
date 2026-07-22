@@ -62,6 +62,25 @@ func (e Executors) composeBinding() (argvprocess.Runner, string, error) {
 	return e.compose, e.composeAuthority.CanonicalPath(), nil
 }
 
+// SessionRunners returns the independently authorized Docker and Compose
+// capabilities needed by the transient MCP composition. The verified runners
+// remain inseparable from their executable authorities, so callers cannot
+// substitute a PATH lookup or an ambient Compose plugin.
+func (e Executors) SessionRunners() (
+	argvprocess.StreamingRunner,
+	argvprocess.Runner,
+	error,
+) {
+	if !e.valid() {
+		return nil, nil, argvprocess.ErrInvalidInvocation
+	}
+	docker, ok := e.docker.(argvprocess.StreamingRunner)
+	if !ok || nilRunner(docker) {
+		return nil, nil, argvprocess.ErrInvalidInvocation
+	}
+	return docker, e.compose, nil
+}
+
 func nilRunner(runner argvprocess.Runner) bool {
 	if runner == nil {
 		return true

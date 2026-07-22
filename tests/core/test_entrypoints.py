@@ -231,6 +231,19 @@ class _BackfillRepository:
         )
 
 
+@dataclass(slots=True)
+class _McpSessionRepository:
+    recovered: bool = False
+
+    async def expired(self, now: object, limit: int) -> tuple[()]:
+        del now, limit
+        self.recovered = True
+        return ()
+
+    async def authorize(self, digest: object, session_id: object, now: object) -> None:
+        del digest, session_id, now
+
+
 def _patch_composition_resources(
     monkeypatch: pytest.MonkeyPatch,
     store: _Store,
@@ -257,6 +270,10 @@ def _patch_composition_resources(
         del dependencies
         return _BackfillRepository()
 
+    def create_mcp_session_repository(*dependencies: object) -> _McpSessionRepository:
+        del dependencies
+        return _McpSessionRepository()
+
     monkeypatch.setattr(SqliteCoreStore, "create", classmethod(create_store))
     monkeypatch.setattr(AsyncGraphDatabase, "driver", create_driver)
     monkeypatch.setattr(httpx, "AsyncClient", create_provider_client)
@@ -264,6 +281,11 @@ def _patch_composition_resources(
         bootstrap,
         "SqliteTaskLineageBackfillRepository",
         create_backfill_repository,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "SqliteMcpSessionRepository",
+        create_mcp_session_repository,
     )
 
 

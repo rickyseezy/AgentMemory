@@ -39,8 +39,7 @@ func platformVerifyCurrentOwner(info os.FileInfo) error {
 }
 
 func platformEnsurePrivateDirectory(_ context.Context, directory string) error {
-	//nolint:gosec // G703: caller passes the normalized journal parent path; the directory is owner/ACL verified immediately after creation.
-	return os.MkdirAll(directory, 0o700)
+	return os.MkdirAll(directory, 0o700) //nolint:gosec // Parent path is normalized; ownership is verified immediately after creation.
 }
 
 func createProtectedRootTemporary(_ context.Context, root *os.Root, prefix string) (*os.File, string, error) {

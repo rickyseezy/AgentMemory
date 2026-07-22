@@ -4,6 +4,7 @@ package process
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -183,6 +184,56 @@ func TestPF001ArgvRunnerUsesOnlyExplicitBoundedStandardInput(t *testing.T) {
 	}
 	if string(result.StandardOutput) != "verified input;$(id)" {
 		t.Fatalf("stdout = %q", result.StandardOutput)
+	}
+}
+
+func TestPF005ArgvRunnerStreamsExactStdioAndPreservesMetacharacters(t *testing.T) {
+	t.Parallel()
+	executable := testCurrentExecutable(t)
+	invocation, err := argvprocess.NewInvocation(executable, []string{
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "copy-input",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	streams, err := argvprocess.NewStreams(
+		strings.NewReader("MCP $(touch /tmp/never); ünicode"), &output, &diagnostics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mustTestRunner(t, executable).RunStreaming(t.Context(), invocation, streams); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "MCP $(touch /tmp/never); ünicode" || !validChildCoverageDiagnostics(diagnostics.String()) {
+		t.Fatalf("streamed output/diagnostics=%q/%q", output.String(), diagnostics.String())
+	}
+}
+
+func validChildCoverageDiagnostics(value string) bool {
+	return value == "" || value == "warning: GOCOVERDIR not set, no coverage data emitted\n"
+}
+
+func TestPF005ArgvRunnerStreamingRejectsInvalidStreamsAndHonorsCancellation(t *testing.T) {
+	t.Parallel()
+	executable := testCurrentExecutable(t)
+	runner := mustTestRunner(t, executable)
+	invocation, _ := argvprocess.NewInvocation(executable, []string{
+		"-test.run=^TestPF001ArgvRunnerHelper$", "--", "wait",
+	})
+	if err := runner.RunStreaming(t.Context(), invocation, argvprocess.Streams{}); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
+		t.Fatalf("zero streams error=%v", err)
+	}
+	preloaded, _ := argvprocess.NewInvocationWithStandardInput(executable, []string{"version"}, []byte("forbidden"))
+	streams, _ := argvprocess.NewStreams(strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	if err := runner.RunStreaming(t.Context(), preloaded, streams); !errors.Is(err, argvprocess.ErrInvalidInvocation) {
+		t.Fatalf("preloaded input error=%v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := runner.RunStreaming(ctx, invocation, streams); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stream cancellation error=%v", err)
 	}
 }
 

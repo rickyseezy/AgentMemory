@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from agentmemory.identity.domain.errors import (
@@ -116,6 +116,41 @@ class ResolveRetrievalScopeHandler:
         snapshot = await self.authorization.snapshot(
             query.brain_id, query.actor_id, query.grant_id, query.at
         )
+        return await self._resolve(query, snapshot)
+
+    async def execute_session_scoped(
+        self,
+        query: ResolveRetrievalScopeQuery,
+    ) -> RetrievalScopeResolution:
+        """Resolve trusted session-derived IDs and expand owner-global scope internally.
+
+        The session transport is not allowed to accept selected Project IDs. For a
+        global request this method derives the complete authorized owner/admin set
+        from the same immutable authorization snapshot used by resolution.
+        """
+        if query.selected_project_ids or query.mode is RetrievalScopeMode.SELECTED:
+            msg = "session retrieval scope cannot select caller-supplied Projects"
+            raise IdentityValidationError(msg)
+        snapshot = await self.authorization.snapshot(
+            query.brain_id, query.actor_id, query.grant_id, query.at
+        )
+        if query.mode is RetrievalScopeMode.GLOBAL:
+            role = self._effective_role(snapshot)
+            if role not in _GLOBAL_ROLES:
+                raise IdentityAuthorizationError
+            bindings = self._authorized_bindings(snapshot, _GLOBAL_ROLES)
+            query = replace(
+                query,
+                selected_project_ids=tuple(binding.project_id for binding in bindings),
+            )
+        return await self._resolve(query, snapshot)
+
+    async def _resolve(
+        self,
+        query: ResolveRetrievalScopeQuery,
+        snapshot: AuthorizationSnapshot,
+    ) -> RetrievalScopeResolution:
+        """Resolve one query from its already captured authorization snapshot."""
         if snapshot.brain_id != query.brain_id or snapshot.principal_id != query.actor_id:
             raise IdentityAuthorizationError
         role = self._effective_role(snapshot)

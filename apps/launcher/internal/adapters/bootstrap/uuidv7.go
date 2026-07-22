@@ -95,6 +95,15 @@ func (g *UUIDv7Generator) NewOperationID(ctx context.Context) (install.Operation
 	return install.NewOperationID(value)
 }
 
+// NewSessionID reuses the same cryptographic, monotonic RFC 9562 generator for PF-005 sessions.
+func (g *UUIDv7Generator) NewSessionID(ctx context.Context) (string, error) {
+	operationID, err := g.NewOperationID(ctx)
+	if err != nil {
+		return "", err
+	}
+	return operationID.String(), nil
+}
+
 func incrementUUIDv7Random(random *[10]byte) bool {
 	for index := len(random) - 1; index >= 0; index-- {
 		maximum := byte(0xff)

@@ -4,6 +4,7 @@ package launcher
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"time"
 
@@ -62,6 +63,16 @@ type BootstrapRuntimeFactory interface {
 	) (BootstrapRuntime, error)
 }
 
+// ProductSessionFactory constructs PF-005 only when durable state is already Ready.
+// A false result preserves the PF-001 setup surface without guessing readiness.
+type ProductSessionFactory interface {
+	BuildReadySession(
+		context.Context,
+		agentconfigdomain.AgentHost,
+		mcpbootstrapapp.ResolvedBootstrap,
+	) (MCPRunner, bool, error)
+}
+
 // bootstrapSurface is the fully authenticated application/Ready/lifecycle
 // unit consumed by one MCP server. Keeping it transport-free lets the signed
 // portable package bridge adopt the native surface without proxying stdio.
@@ -69,9 +80,13 @@ type bootstrapSurface struct {
 	application mcpbootstrap.BootstrapApplication
 	ready       mcpbootstrap.ReadySurfaceProvider
 	lifecycle   RuntimeLifecycle
+	session     MCPRunner
 }
 
 func (s bootstrapSurface) valid() bool {
+	if !nilCapability(s.session) {
+		return nilCapability(s.application) && nilCapability(s.ready)
+	}
 	return !nilCapability(s.application) && !nilCapability(s.ready) && !nilCapability(s.lifecycle)
 }
 
@@ -80,6 +95,16 @@ type Factory struct {
 	resolver    mcpbootstrapapp.BootstrapResolver
 	runtime     BootstrapRuntimeFactory
 	initializer BootstrapInitializer
+	sessions    ProductSessionFactory
+}
+
+// bindProductSessions is called only by the native production composition before publication.
+func (f *Factory) bindProductSessions(sessions ProductSessionFactory) error {
+	if f == nil || nilCapability(sessions) || !nilCapability(f.sessions) {
+		return mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	f.sessions = sessions
+	return nil
 }
 
 // NewFactory refuses a partial composition.
@@ -147,6 +172,21 @@ func (f *Factory) buildBootstrapSurface(
 	if !resolved.Valid() {
 		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
 	}
+	if !nilCapability(f.sessions) {
+		session, ready, sessionError := f.sessions.BuildReadySession(ctx, host, resolved)
+		if sessionError != nil {
+			return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
+		}
+		if ready {
+			if nilCapability(session) {
+				return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
+			}
+			return bootstrapSurface{session: session, lifecycle: sessionLifecycle(session)}, nil
+		}
+		if !nilCapability(session) {
+			return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapIntegrity
+		}
+	}
 	runtime, err := f.runtime.BuildBootstrapRuntime(ctx, host, resolved)
 	if err != nil {
 		return bootstrapSurface{}, mcpbootstrapapp.ErrBootstrapUnavailable
@@ -168,10 +208,23 @@ func (f *Factory) buildBootstrapSurface(
 	return bootstrapSurface{application: application, ready: runtime.Ready, lifecycle: runtime.Lifecycle}, nil
 }
 
+func sessionLifecycle(session MCPRunner) RuntimeLifecycle {
+	if lifecycle, ok := session.(RuntimeLifecycle); ok && !nilCapability(lifecycle) {
+		return lifecycle
+	}
+	return nil
+}
+
 func newManagedRunner(ctx context.Context, surface bootstrapSurface) (MCPRunner, error) {
 	if ctx == nil || !surface.valid() {
 		_ = closeRuntime(context.Background(), surface.lifecycle) //nolint:contextcheck // No caller context exists at this rejected boundary; owner=launcher expiry=2027-07-15.
 		return nil, mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	if !nilCapability(surface.session) {
+		if nilCapability(surface.lifecycle) {
+			return surface.session, nil
+		}
+		return &managedSessionRunner{session: surface.session, lifecycle: surface.lifecycle}, nil
 	}
 	server, err := mcpbootstrap.NewServer(surface.application, surface.ready)
 	if err != nil {
@@ -180,6 +233,54 @@ func newManagedRunner(ctx context.Context, surface bootstrapSurface) (MCPRunner,
 	}
 	return &managedRunner{server: server, lifecycle: surface.lifecycle}, nil
 }
+
+// managedSessionRunner transfers process-owned native resources to one Ready
+// MCP session and closes them exactly after its raw stdio lifecycle ends.
+type managedSessionRunner struct {
+	session   MCPRunner
+	lifecycle RuntimeLifecycle
+}
+
+func (r *managedSessionRunner) Run(ctx context.Context, transport mcp.Transport) error {
+	if r == nil || ctx == nil || nilCapability(r.session) || nilCapability(r.lifecycle) {
+		return mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	runError := r.session.Run(ctx, transport)
+	return sessionCloseResult(ctx, r.lifecycle, runError)
+}
+
+func (r *managedSessionRunner) RunHostSession(
+	ctx context.Context,
+	workingDirectory string,
+	input io.Reader,
+	output io.Writer,
+	diagnostics io.Writer,
+) error {
+	if r == nil || ctx == nil || nilCapability(r.session) || nilCapability(r.lifecycle) {
+		return mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	host, ok := r.session.(HostSessionRunner)
+	if !ok || nilCapability(host) {
+		_ = closeRuntime(ctx, r.lifecycle)
+		return mcpbootstrapapp.ErrBootstrapIntegrity
+	}
+	runError := host.RunHostSession(ctx, workingDirectory, input, output, diagnostics)
+	return sessionCloseResult(ctx, r.lifecycle, runError)
+}
+
+func sessionCloseResult(ctx context.Context, lifecycle RuntimeLifecycle, runError error) error {
+	closeError := closeRuntime(ctx, lifecycle)
+	if runError != nil {
+		return runError
+	}
+	if closeError != nil {
+		return mcpbootstrapapp.ErrBootstrapUnavailable
+	}
+	return nil
+}
+
+var _ MCPRunner = (*managedSessionRunner)(nil)
+var _ HostSessionRunner = (*managedSessionRunner)(nil)
 
 type managedRunner struct {
 	server    *mcpbootstrap.Server

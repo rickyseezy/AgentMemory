@@ -19,10 +19,11 @@ func TestPRO002SigstorePolicyBindsExactOCIReferenceAndOfflineBundle(t *testing.T
 		t.Fatal(err)
 	}
 	image := "registry.example/provider/custom@sha256:" + digest.Hex()
-	if err := policy.Verify(context.Background(), image, digest, []byte("canonical bundle")); err != nil {
+	ctx := context.WithValue(context.Background(), sigstoreContextKey{}, "authority")
+	if err := policy.Verify(ctx, image, digest, []byte("canonical bundle")); err != nil {
 		t.Fatal(err)
 	}
-	if verifier.calls != 1 || verifier.digest.Hex() != digest.Hex() {
+	if verifier.calls != 1 || verifier.digest.Hex() != digest.Hex() || verifier.context != ctx || string(verifier.bundle) != "canonical bundle" {
 		t.Fatal("signature verifier received substituted subject")
 	}
 	if err := policy.Verify(context.Background(), "registry.example/provider/custom:latest", digest, []byte("bundle")); !errors.Is(err, provideradapterapp.ErrVerification) {
@@ -55,16 +56,30 @@ func TestPRO002SigstorePolicyRejectsMissingAuthorityAndInputs(t *testing.T) {
 			t.Fatalf("invalid input accepted: %#v %v", input, err)
 		}
 	}
+	zeroImage := "registry.example/provider/custom@sha256:" + provideradapter.Digest{}.Hex()
+	if err := policy.Verify(context.Background(), zeroImage, provideradapter.Digest{}, []byte("bundle")); !errors.Is(err, provideradapterapp.ErrVerification) {
+		t.Fatalf("zero digest accepted: %v", err)
+	}
+	var nilPolicy *SigstoreImagePolicy
+	if err := nilPolicy.Verify(context.Background(), image, digest, []byte("bundle")); !errors.Is(err, provideradapterapp.ErrVerification) {
+		t.Fatalf("nil policy accepted: %v", err)
+	}
 }
+
+type sigstoreContextKey struct{}
 
 type sigstoreStub struct {
-	calls  int
-	digest releaseinventory.Digest
-	err    error
+	calls   int
+	digest  releaseinventory.Digest
+	err     error
+	context context.Context
+	bundle  []byte
 }
 
-func (s *sigstoreStub) VerifyArtifactSignature(_ context.Context, digest releaseinventory.Digest, _ []byte) error {
+func (s *sigstoreStub) VerifyArtifactSignature(ctx context.Context, digest releaseinventory.Digest, bundle []byte) error {
 	s.calls++
 	s.digest = digest
+	s.context = ctx
+	s.bundle = append([]byte(nil), bundle...)
 	return s.err
 }

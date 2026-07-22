@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -25,16 +24,16 @@ import (
 
 func TestPF005NativeSessionAssemblyBuildsManagedRunnerFromResolvedAuthorities(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := protectedSessionTestRoot(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeDirectory := filepath.Join(root, "runtime")
-	if err := os.Mkdir(runtimeDirectory, 0o700); err != nil {
+	runtimeDirectory, err := createProtectedSessionTestDirectory(root, "runtime")
+	if err != nil {
 		t.Fatal(err)
 	}
-	credentialDirectory := filepath.Join(root, "credentials")
-	if err := os.Mkdir(credentialDirectory, 0o700); err != nil {
+	credentialDirectory, err := createProtectedSessionTestDirectory(root, "credentials")
+	if err != nil {
 		t.Fatal(err)
 	}
 	credentialPath := protectedSessionTestFile(t, credentialDirectory, "api-credential", bytes.Repeat([]byte{0x42}, 32))
@@ -149,7 +148,7 @@ func TestPF005NativeSessionAssemblyBuildsManagedRunnerFromResolvedAuthorities(t 
 
 func TestPF005NativeSessionFactoryComposesFromVerifiedReleaseAuthorities(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := protectedSessionTestRoot(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,8 +206,8 @@ func TestPF005NativeSessionFactoryComposesFromVerifiedReleaseAuthorities(t *test
 		t.Fatalf("missing runtime signature factory=%T/%v", candidate, buildError)
 	}
 	release.runtimeCatalogSignature = signature
-	credentialDirectory := filepath.Join(root, "session-authority-credentials")
-	if err := os.Mkdir(credentialDirectory, 0o700); err != nil {
+	credentialDirectory, err := createProtectedSessionTestDirectory(root, "session-authority-credentials")
+	if err != nil {
 		t.Fatal(err)
 	}
 	credentialPath := protectedSessionTestFile(
@@ -227,16 +226,16 @@ func TestPF005NativeSessionFactoryComposesFromVerifiedReleaseAuthorities(t *test
 
 func TestPF005NativeSessionAssemblyFailsClosedAtEveryCompositionBoundary(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := protectedSessionTestRoot(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialDirectory := filepath.Join(root, "credentials")
-	runtimeDirectory := filepath.Join(root, "runtime")
-	if err := os.Mkdir(credentialDirectory, 0o700); err != nil {
+	credentialDirectory, err := createProtectedSessionTestDirectory(root, "credentials")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(runtimeDirectory, 0o700); err != nil {
+	runtimeDirectory, err := createProtectedSessionTestDirectory(root, "runtime")
+	if err != nil {
 		t.Fatal(err)
 	}
 	credentialPath := protectedSessionTestFile(t, credentialDirectory, "api", bytes.Repeat([]byte{0x42}, 32))
@@ -517,10 +516,7 @@ func TestPF005NativeSessionCompositionGuardsAndLifecycleFailClosed(t *testing.T)
 func protectedSessionTestFile(t testing.TB, root, name string, value []byte) string {
 	t.Helper()
 	path := filepath.Join(root, name)
-	if err := os.WriteFile(path, value, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0o400); err != nil {
+	if err := writeProtectedSessionTestFile(path, value); err != nil {
 		t.Fatal(err)
 	}
 	return path

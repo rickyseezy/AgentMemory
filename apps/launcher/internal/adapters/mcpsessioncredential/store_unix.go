@@ -150,8 +150,8 @@ func openCredentialRoot(root string) (*os.File, error) {
 		fd = next
 	}
 	var status unix.Stat_t
-	if unix.Fstat(fd, &status) != nil || uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) ||
-		uint32(status.Mode)&0o7777 != 0o700 || status.Uid != uint32(os.Geteuid()) { //nolint:gosec // Native EUID is nonnegative.
+	if unix.Fstat(fd, &status) != nil || uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) || //nolint:unconvert,nolintlint // Darwin and Linux expose different native mode widths.
+		uint32(status.Mode)&0o7777 != 0o700 || status.Uid != uint32(os.Geteuid()) { //nolint:gosec,unconvert,nolintlint // Native EUID is nonnegative; Darwin and Linux expose different native UID widths.
 		_ = unix.Close(fd)
 		return nil, errCredentialAuthority
 	}
@@ -170,9 +170,9 @@ func splitUnixPath(path string) []string {
 func verifyUnixCredential(file *os.File, size int64) error {
 	var status unix.Stat_t
 	if file == nil || unix.Fstat(int(file.Fd()), &status) != nil ||
-		uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFREG) ||
-		uint32(status.Mode)&0o7777 != 0o444 || status.Uid != uint32(os.Geteuid()) || //nolint:gosec // Native EUID is nonnegative.
-		uint64(status.Nlink) != 1 || status.Size != size {
+		uint32(status.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFREG) || //nolint:unconvert,nolintlint // Darwin and Linux expose different native mode widths.
+		uint32(status.Mode)&0o7777 != 0o444 || status.Uid != uint32(os.Geteuid()) || //nolint:gosec,unconvert,nolintlint // Native EUID is nonnegative; Darwin and Linux expose different native UID widths.
+		uint64(status.Nlink) != 1 || status.Size != size { //nolint:unconvert,nolintlint // Darwin and Linux expose different native link-count widths.
 		return errCredentialAuthority
 	}
 	return nil

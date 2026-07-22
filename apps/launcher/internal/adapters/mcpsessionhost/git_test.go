@@ -3,7 +3,9 @@ package mcpsessionhost
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,12 +16,15 @@ import (
 func TestPF005GitResolverReportsCompleteAndPartialCoverageWithoutWideningWorkspace(t *testing.T) {
 	t.Parallel()
 	key := []byte(strings.Repeat("g", 32))
+	repository := testGitPath("/repo")
+	worktreePath := testGitPath("/worktrees/task")
 	completeRunner := &gitRunner{responses: [][]byte{
-		[]byte("/repo\n"), []byte("/repo/.git\n"), []byte("/repo/.git\n"),
+		[]byte(repository + "\n"), []byte(filepath.Join(repository, ".git") + "\n"),
+		[]byte(filepath.Join(repository, ".git") + "\n"),
 	}}
 	complete := mustGitResolver(t, key, completeRunner)
 	identity, err := complete.Resolve(context.Background(), mcpsessionapp.PathIdentity{
-		LogicalPath: "/repo", RealPath: "/repo", DeviceIdentity: "dev:1",
+		LogicalPath: repository, RealPath: repository, DeviceIdentity: "dev:1",
 		PathFingerprint: strings.Repeat("a", 64),
 	})
 	if err != nil {
@@ -31,11 +36,12 @@ func TestPF005GitResolverReportsCompleteAndPartialCoverageWithoutWideningWorkspa
 	}
 
 	partialRunner := &gitRunner{responses: [][]byte{
-		[]byte("/repo\n"), []byte("/repo/.git\n"), []byte("/repo/.git/worktrees/task\n"),
+		[]byte(repository + "\n"), []byte(filepath.Join(repository, ".git") + "\n"),
+		[]byte(filepath.Join(repository, ".git", "worktrees", "task") + "\n"),
 	}}
 	partial := mustGitResolver(t, key, partialRunner)
 	worktree, err := partial.Resolve(context.Background(), mcpsessionapp.PathIdentity{
-		LogicalPath: "/worktrees/task", RealPath: "/worktrees/task", DeviceIdentity: "dev:1",
+		LogicalPath: worktreePath, RealPath: worktreePath, DeviceIdentity: "dev:1",
 		PathFingerprint: strings.Repeat("b", 64),
 	})
 	if err != nil {
@@ -45,13 +51,20 @@ func TestPF005GitResolverReportsCompleteAndPartialCoverageWithoutWideningWorkspa
 		worktree.RepositoryID != identity.RepositoryID || worktree.WorktreeID == identity.WorktreeID {
 		t.Fatalf("partial identity = %#v complete = %#v", worktree, identity)
 	}
-	if partialRunner.directories[0] != "/worktrees/task" {
+	if partialRunner.directories[0] != worktreePath {
 		t.Fatalf("git working directory = %q", partialRunner.directories[0])
 	}
 	wantFirst := []string{"rev-parse", "--path-format=absolute", "--show-toplevel"}
 	if !reflect.DeepEqual(partialRunner.arguments[0], wantFirst) {
 		t.Fatalf("first argv = %#v", partialRunner.arguments[0])
 	}
+}
+
+func testGitPath(unixPath string) string {
+	if runtime.GOOS != "windows" {
+		return unixPath
+	}
+	return `C:\` + strings.ReplaceAll(strings.TrimPrefix(unixPath, "/"), "/", `\`)
 }
 
 func TestPF005GitResolverReturnsNoneOnlyForTypedNonRepository(t *testing.T) {

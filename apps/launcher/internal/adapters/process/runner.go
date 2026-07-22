@@ -129,7 +129,7 @@ func (r *Runner) RunStreaming(
 		return err
 	}
 	defer lease.close()
-	command.Stdin = streams.Input()
+	command.Stdin = &streamingInput{Reader: streams.Input()}
 	command.Stdout = streams.Output()
 	command.Stderr = streams.Diagnostics()
 	runError := runCommandInProcessTree(ctx, command)
@@ -245,6 +245,7 @@ func (r *Runner) prepareCommand(
 
 type conversationPipeReader struct{ *io.PipeReader }
 type conversationPipeWriter struct{ *io.PipeWriter }
+type streamingInput struct{ io.Reader }
 
 // RunLineConversation executes one bounded request/response sequence. It
 // writes the next gated request only after one newline-delimited response has

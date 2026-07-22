@@ -305,6 +305,7 @@ func TestPF001WindowsBrokerRecognizesOnlyBenignPipeClosures(t *testing.T) {
 		{name: "no data", err: windows.ERROR_NO_DATA, want: true},
 		{name: "operation aborted", err: windows.ERROR_OPERATION_ABORTED, want: true},
 		{name: "closed file", err: os.ErrClosed, want: true},
+		{name: "closed Go pipe", err: io.ErrClosedPipe, want: true},
 		{name: "wrapped closure", err: fmt.Errorf("copy: %w", windows.ERROR_BROKEN_PIPE), want: true},
 		{name: "unrelated failure", err: errors.New("disk failure")},
 	}

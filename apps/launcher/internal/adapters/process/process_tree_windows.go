@@ -273,7 +273,8 @@ func (p *windowsBrokerPipes) startCopies(command *exec.Cmd) <-chan error {
 
 func benignWindowsPipeClosure(err error) bool {
 	return err == nil || errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_NO_DATA) ||
-		errors.Is(err, windows.ERROR_OPERATION_ABORTED) || errors.Is(err, os.ErrClosed)
+		errors.Is(err, windows.ERROR_OPERATION_ABORTED) || errors.Is(err, os.ErrClosed) ||
+		errors.Is(err, io.ErrClosedPipe)
 }
 
 func collectWindowsBrokerCopies(results <-chan error) error {
@@ -444,9 +445,11 @@ func validateWindowsBrokerCommand(ctx context.Context, command *exec.Cmd) error 
 	if command.Stdin != nil {
 		input, buffered := command.Stdin.(*bytes.Reader)
 		conversation, interactive := command.Stdin.(*conversationPipeReader)
+		stream, streaming := command.Stdin.(*streamingInput)
 		if buffered && (input == nil || input.Len() <= 0 || input.Len() > maximumWindowsBrokerInputBytes) ||
 			interactive && (conversation == nil || conversation.PipeReader == nil) ||
-			!buffered && !interactive {
+			streaming && (stream == nil || nilInterfaceValue(stream.Reader)) ||
+			!buffered && !interactive && !streaming {
 			return os.ErrInvalid
 		}
 	}

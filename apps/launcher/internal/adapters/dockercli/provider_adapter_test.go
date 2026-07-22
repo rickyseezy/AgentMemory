@@ -33,7 +33,7 @@ func TestPRO002ProviderRuntimeUsesOnlyClosedComposeTemplateAndExactCommands(t *t
 	}
 	for _, invocation := range runner.invocations {
 		arguments := invocation.Arguments()
-		if invocation.Executable() != "/verified/docker-compose" || !slices.Contains(arguments, "--file") ||
+		if invocation.Executable() != testPlatformToolPath("/verified/docker-compose") || !slices.Contains(arguments, "--file") ||
 			!slices.Contains(arguments, "-") || slices.Contains(arguments, "--privileged") || slices.Contains(arguments, "--build") {
 			t.Fatalf("unsafe invocation: %v", arguments)
 		}

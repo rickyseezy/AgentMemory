@@ -300,7 +300,7 @@ func TestPF005NativeSessionAssemblyFailsClosedAtEveryCompositionBoundary(t *test
 			return value
 		}},
 		{name: "uncreatable credential root", projection: func(value runtimePlanProjection) runtimePlanProjection {
-			value.runtimeDirectory = filepath.Join(root, "missing", "runtime")
+			value.runtimeDirectory = rootKeyPath
 			return value
 		}},
 		{name: "invalid brain authority", projection: func(value runtimePlanProjection) runtimePlanProjection {

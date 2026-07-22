@@ -1767,6 +1767,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PF-004 — Degrade safely during dependency failure
 
+**Implementation record:** [`docs/implementation/PF-004.md`](docs/implementation/PF-004.md) and
+[`docs/runbooks/PF-004-SAFE-DEGRADATION.md`](docs/runbooks/PF-004-SAFE-DEGRADATION.md).
+
 **User story:** As a developer, my coding agent remains usable when AgentMemory components or providers fail.
 
 **Acceptance criteria**

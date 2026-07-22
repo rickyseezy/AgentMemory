@@ -262,6 +262,8 @@ only_mutate = [
   "*extensions/adapters/policies.py",
   "*extensions/adapters/probe.py",
   "*extensions/adapters/runtime_registry.py",
+  "*resilience/domain/models.py",
+  "*resilience/application/recall.py",
   "*retrieval/domain/continuity.py",
   "*retrieval/application/start_session_briefing.py",
 ]
@@ -282,6 +284,9 @@ pytest_add_cli_args_test_selection = [
   "tests/indexing/test_idx007_source_navigation_application.py",
   "tests/core/test_projection_rebuild_domain.py",
   "tests/core/test_projection_rebuild_application.py",
+  "tests/resilience/test_pf004_domain.py",
+  "tests/resilience/test_pf004_recall.py",
+  "tests/resilience/test_pf004_capture_recovery.py",
   "tests/graph/test_gra001_domain_application.py",
   "tests/graph/test_gra002_assertion_domain.py",
   "tests/graph/test_gra002_assertion_application.py",

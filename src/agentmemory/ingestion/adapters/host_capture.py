@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import Protocol, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,8 +18,7 @@ from agentmemory.ingestion.adapters.outbound.offline_spool import SpoolCapacityE
 from agentmemory.ingestion.domain.capture import AppendDisposition
 from agentmemory.ingestion.domain.errors import IngestionDependencyError, IngestionValidationError
 
-if TYPE_CHECKING:
-    from agentmemory.ingestion.adapters.outbound.offline_spool import EncryptedSqliteSpool
+_MAXIMUM_HOOK_DEADLINE_SECONDS = 1.0
 
 
 class CaptureStatus(StrEnum):
@@ -31,6 +30,7 @@ class CaptureStatus(StrEnum):
     DEFERRED = "deferred"
     SPOOL_FULL = "spool_full"
     SPOOL_UNAVAILABLE = "spool_unavailable"
+    DEADLINE_EXCEEDED = "deadline_exceeded"
     INVALID = "invalid"
 
 
@@ -55,6 +55,20 @@ class LocalIpcClient(Protocol):
 
     async def append(self, canonical_event: bytes) -> AppendDisposition:
         """Return one terminal durable policy status or raise a transport failure."""
+        ...
+
+
+class FallbackSpool(Protocol):
+    """Persist one canonical event through the bounded host-side fallback."""
+
+    def enqueue(
+        self,
+        event_id: str,
+        ordering_key: str,
+        sequence: int | None,
+        canonical_event: bytes,
+    ) -> bool:
+        """Return only after the exact event is durably committed."""
         ...
 
 
@@ -121,11 +135,31 @@ class AgentEventCaptureHook:
 
     redactor: EventRedactor
     ipc: LocalIpcClient
-    spool: EncryptedSqliteSpool
+    spool: FallbackSpool
     ipc_timeout_seconds: float = 0.035
+    hook_deadline_seconds: float = 0.05
+
+    def __post_init__(self) -> None:
+        """Require enough bounded time for IPC followed by local fallback."""
+        if not (
+            0
+            < self.ipc_timeout_seconds
+            < self.hook_deadline_seconds
+            <= _MAXIMUM_HOOK_DEADLINE_SECONDS
+        ):
+            msg = "capture hook deadlines are invalid"
+            raise ValueError(msg)
 
     async def capture(self, native_event: bytes) -> HookCaptureResult:
         """Return promptly with a content-free status on every expected failure."""
+        try:
+            async with asyncio.timeout(self.hook_deadline_seconds):
+                return await self._capture(native_event)
+        except TimeoutError:
+            return HookCaptureResult(None, CaptureStatus.DEADLINE_EXCEEDED)
+
+    async def _capture(self, native_event: bytes) -> HookCaptureResult:
+        """Perform bounded canonicalization, direct append, and encrypted fallback."""
         try:
             redacted = self.redactor.redact(native_event)
             event = parse_agent_event_json(redacted)

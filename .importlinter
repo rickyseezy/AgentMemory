@@ -112,6 +112,63 @@ forbidden_modules =
     agentmemory.operations
     agentmemory.providers
 
+[importlinter:contract:resilience layers]
+name = Resilience clean architecture layers
+type = layers
+layers =
+    agentmemory.resilience.infrastructure
+    agentmemory.resilience.application
+    agentmemory.resilience.domain
+
+[importlinter:contract:resilience domain independence]
+name = Resilience domain is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.resilience.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.resilience.application
+    agentmemory.resilience.infrastructure
+    agentmemory.extensions
+    agentmemory.graph
+    agentmemory.identity
+    agentmemory.indexing
+    agentmemory.ingestion
+    agentmemory.memory
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval
+
+[importlinter:contract:resilience application independence]
+name = Resilience application is framework and adapter independent
+type = forbidden
+source_modules =
+    agentmemory.resilience.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.resilience.infrastructure
+    agentmemory.extensions
+    agentmemory.graph
+    agentmemory.identity
+    agentmemory.indexing
+    agentmemory.ingestion
+    agentmemory.memory
+    agentmemory.operations
+    agentmemory.providers
+    agentmemory.retrieval
+
 [importlinter:contract:identity layers]
 name = Identity clean architecture layers
 type = layers

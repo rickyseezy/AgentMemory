@@ -65,6 +65,53 @@ forbidden_modules =
     agentmemory.providers.adapters
     agentmemory.providers.infrastructure
 
+[importlinter:contract:extension layers]
+name = Extension clean architecture layers
+type = layers
+layers =
+    agentmemory.extensions.adapters
+    agentmemory.extensions.application
+    agentmemory.extensions.domain
+
+[importlinter:contract:extension domain independence]
+name = Extension domain is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.extensions.domain
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.extensions.application
+    agentmemory.extensions.adapters
+    agentmemory.identity
+    agentmemory.ingestion
+    agentmemory.operations
+    agentmemory.providers
+
+[importlinter:contract:extension application independence]
+name = Extension application is framework and context independent
+type = forbidden
+source_modules =
+    agentmemory.extensions.application
+forbidden_modules =
+    fastapi
+    httpx
+    neo4j
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    uvicorn
+    agentmemory.extensions.adapters
+    agentmemory.identity
+    agentmemory.ingestion
+    agentmemory.operations
+    agentmemory.providers
+
 [importlinter:contract:identity layers]
 name = Identity clean architecture layers
 type = layers

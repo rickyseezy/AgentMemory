@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.local/contracts/adapter-extension-manifest.v1.schema.json",
+  "title": "AgentMemory public adapter extension manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adapter_id",
+    "adapter_version",
+    "kind",
+    "package_digest",
+    "signature_digest",
+    "signer_identity",
+    "protocol_min",
+    "protocol_max",
+    "capabilities",
+    "requested_permissions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "adapter_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "adapter_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "kind": { "enum": ["agent", "provider"] },
+    "package_digest": { "$ref": "#/$defs/digest" },
+    "signature_digest": { "$ref": "#/$defs/digest" },
+    "signer_identity": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "protocol_min": { "$ref": "#/$defs/protocol" },
+    "protocol_max": { "$ref": "#/$defs/protocol" },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "agent.event.capture",
+          "agent.session.resume",
+          "agent.checkpoint.explicit",
+          "provider.embed",
+          "provider.rerank",
+          "provider.extract"
+        ]
+      }
+    },
+    "requested_permissions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "canonical_event.write",
+          "workspace.metadata.read",
+          "transcript.read",
+          "provider.execute",
+          "provider.gateway"
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "agent" } } },
+      "then": {
+        "properties": {
+          "capabilities": {
+            "contains": { "const": "agent.event.capture" },
+            "items": {
+              "enum": [
+                "agent.event.capture",
+                "agent.session.resume",
+                "agent.checkpoint.explicit"
+              ]
+            }
+          },
+          "requested_permissions": {
+            "items": {
+              "enum": [
+                "canonical_event.write",
+                "workspace.metadata.read",
+                "transcript.read"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "provider" } } },
+      "then": {
+        "properties": {
+          "capabilities": {
+            "contains": { "const": "provider.embed" },
+            "items": {
+              "enum": ["provider.embed", "provider.rerank", "provider.extract"]
+            }
+          },
+          "requested_permissions": {
+            "items": { "enum": ["provider.execute", "provider.gateway"] }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "protocol": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,4}\\.(0|[1-9][0-9]{0,4})$"
+    }
+  }
+}

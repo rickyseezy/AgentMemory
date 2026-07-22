@@ -17,6 +17,7 @@ on:
       - "uv.lock"
       - "apps/daemon/**"
       - "migrations/**"
+      - "sdk/python/**"
       - "src/**"
       - "tests/**"
       - "tools/**"
@@ -40,6 +41,7 @@ on:
       - "uv.lock"
       - "apps/daemon/**"
       - "migrations/**"
+      - "sdk/python/**"
       - "src/**"
       - "tests/**"
       - "tools/**"
@@ -95,8 +97,13 @@ jobs:
 
       - name: Enforce strict static types
         run: |
-          uv run mypy src apps tests tools
+          uv run mypy src apps tests tools sdk/python/src sdk/python/tests
           uv run pyright
+
+      - name: Verify the dependency-free public Python SDK
+        run: |
+          uv run --project sdk/python python -m unittest discover -s sdk/python/tests -v
+          uv build --project sdk/python --out-dir ../../build/python-adapter-sdk
 
       - name: Enforce Clean Architecture imports
         run: uv run lint-imports

@@ -1744,6 +1744,10 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PF-003 — Extend the platform without core changes
 
+**Implementation record:** [`docs/implementation/PF-003.md`](docs/implementation/PF-003.md),
+[`docs/integrations/PUBLIC-ADAPTER-SDK.md`](docs/integrations/PUBLIC-ADAPTER-SDK.md), and
+[`docs/runbooks/PF-003-ADAPTER-EXTENSIONS.md`](docs/runbooks/PF-003-ADAPTER-EXTENSIONS.md).
+
 **User story:** As an adapter author, I can add a new agent host or model provider through public contracts.
 
 **Acceptance criteria**

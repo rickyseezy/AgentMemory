@@ -1,0 +1,15 @@
+[build-system]
+requires = ["uv_build==0.11.28"]
+build-backend = "uv_build"
+
+[project]
+name = "agentmemory-adapter-sdk"
+version = "1.0.0"
+description = "Language-neutral AgentMemory agent and provider adapter contract"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[tool.uv.build-backend]
+module-name = "agentmemory_adapter_sdk"
+module-root = "src"

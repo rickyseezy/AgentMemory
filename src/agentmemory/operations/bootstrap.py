@@ -12,6 +12,7 @@ import httpx
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from agentmemory import __version__
+from agentmemory.extensions.adapters.http_api import create_contract_adapter_extension_router
 from agentmemory.graph.adapters.inbound.contradiction_http_api import (
     create_contract_contradiction_router,
     create_contradiction_router,
@@ -862,6 +863,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_identity_router(),
             create_contract_agent_event_router(),
             create_contract_adapter_capability_router(),
+            create_contract_adapter_extension_router(),
             create_contract_retrieval_router(),
             create_contract_indexing_router(),
             create_contract_revision_history_router(),

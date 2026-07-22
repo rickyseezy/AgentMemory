@@ -92,6 +92,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "ARG001", "D", "INP001", "PLR2004", "S101", "SLF001"]
+"sdk/python/tests/**/*.py" = ["INP001", "S101"]
 "migrations/**/*.py" = ["ANN", "D", "INP001"]
 "apps/cli/**/*.py" = ["T201"]
 
@@ -125,8 +126,9 @@ enable_error_code = [
 ]
 
 [tool.pyright]
-include = ["src", "apps", "tests", "tools"]
-exclude = ["**/generated", "**/vendor"]
+include = ["src", "apps", "tests", "tools", "sdk/python"]
+exclude = ["**/.venv", "**/generated", "**/vendor"]
+extraPaths = ["src", "sdk/python/src"]
 pythonVersion = "3.14"
 pythonPlatform = "All"
 typeCheckingMode = "strict"
@@ -139,7 +141,7 @@ addopts = ["--strict-config", "--strict-markers", "-ra"]
 asyncio_mode = "strict"
 xfail_strict = true
 filterwarnings = ["error"]
-norecursedirs = [".git", ".hypothesis", ".mypy_cache", ".pytest_cache", ".venv", "build", "mutants"]
+norecursedirs = [".git", ".hypothesis", ".mypy_cache", ".pytest_cache", ".venv", "build", "mutants", "sdk"]
 markers = [
   "contract: public/repository contract suite",
   "integration: real supported infrastructure",
@@ -255,6 +257,11 @@ only_mutate = [
   "*providers/adapters/gateway_http.py",
   "*providers/adapters/sqlite_profiles.py",
   "*providers/adapters/profile_http_api.py",
+  "*extensions/domain/models.py",
+  "*extensions/application/register_adapter.py",
+  "*extensions/adapters/policies.py",
+  "*extensions/adapters/probe.py",
+  "*extensions/adapters/runtime_registry.py",
   "*retrieval/domain/continuity.py",
   "*retrieval/application/start_session_briefing.py",
 ]
@@ -332,6 +339,10 @@ pytest_add_cli_args_test_selection = [
   "tests/providers/test_pro001_gateway_http.py",
   "tests/providers/test_pro001_sqlite_profiles.py",
   "tests/providers/test_pro001_profile_http_api.py",
+  "tests/extensions/test_pf003_domain.py",
+  "tests/extensions/test_pf003_application.py",
+  "tests/extensions/test_pf003_runtime_registry.py",
+  "tests/extensions/test_pf003_trust_and_probe.py",
   "tests/retrieval/test_adp006_continuity_domain.py",
   "tests/retrieval/test_adp006_cross_host_conformance.py",
   "tests/retrieval/test_mem006_briefing_domain_application.py",

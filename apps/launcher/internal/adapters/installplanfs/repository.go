@@ -58,8 +58,12 @@ func (r *Repository) Save(ctx context.Context, plan installplan.Plan) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// Serialize publication within this repository instance. The platform store
+	// still provides cross-process no-replace semantics, while this lock keeps
+	// same-process replays from observing a winner during its durability and
+	// identity-verification window on Windows.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.store == nil {
 		return installplanapp.ErrPlanIntegrity
 	}

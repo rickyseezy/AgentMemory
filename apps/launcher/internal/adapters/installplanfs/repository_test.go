@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +82,36 @@ func TestRepositoryConcurrentReplayNeverReplacesPlan(t *testing.T) {
 	}
 	if _, err := repository.Load(context.Background(), plan.Digest()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRepositorySerializesSameProcessPublicationWindow(t *testing.T) {
+	t.Parallel()
+	store := &publicationConcurrencyProbe{}
+	repository := &Repository{store: store}
+	plan := filesystemPlan(t)
+	const workers = 12
+	start := make(chan struct{})
+	errorsFound := make(chan error, workers)
+	var group sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			errorsFound <- repository.Save(context.Background(), plan)
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if maximum := store.maximum.Load(); maximum != 1 {
+		t.Fatalf("concurrent platform publications = %d, want 1", maximum)
 	}
 }
 
@@ -665,3 +696,27 @@ func filesystemTestDirectory(t *testing.T) string {
 	}
 	return resolved
 }
+
+type publicationConcurrencyProbe struct {
+	active  atomic.Int32
+	maximum atomic.Int32
+}
+
+func (s *publicationConcurrencyProbe) load(context.Context, string) ([]byte, error) {
+	return nil, errPlanNotFound
+}
+
+func (s *publicationConcurrencyProbe) save(context.Context, string, []byte) error {
+	active := s.active.Add(1)
+	for {
+		maximum := s.maximum.Load()
+		if active <= maximum || s.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	s.active.Add(-1)
+	return nil
+}
+
+func (s *publicationConcurrencyProbe) close() error { return nil }

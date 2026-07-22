@@ -66,8 +66,6 @@ jobs:
     name: Local Core
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      AGENTMEMORY_GRAMMAR_CACHE: ${{ runner.temp }}/agentmemory-grammars
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -91,10 +89,14 @@ jobs:
         run: uv sync --frozen --all-groups
 
       - name: Prefetch the release-locked offline grammar set
-        run: >-
-          uv run python deploy/scripts/prefetch_grammars.py
-          --lock deploy/indexing-language-lock.v1.json
-          --cache "$AGENTMEMORY_GRAMMAR_CACHE"
+        shell: bash
+        run: |
+          set -euo pipefail
+          grammar_cache="$RUNNER_TEMP/agentmemory-grammars"
+          printf 'AGENTMEMORY_GRAMMAR_CACHE=%s\n' "$grammar_cache" >> "$GITHUB_ENV"
+          uv run python deploy/scripts/prefetch_grammars.py \
+            --lock deploy/indexing-language-lock.v1.json \
+            --cache "$grammar_cache"
 
       - name: Enforce formatting and strict lint policy
         run: |

@@ -73,7 +73,8 @@ def test_product_quality_prefetches_locked_grammars_into_explicit_cache() -> Non
     workflow = (
         Path(__file__).parents[2] / ".github" / "workflows" / "product-quality.yml"
     ).read_text()
-    assert "AGENTMEMORY_GRAMMAR_CACHE: ${{ runner.temp }}/agentmemory-grammars" in workflow
+    assert 'grammar_cache="$RUNNER_TEMP/agentmemory-grammars"' in workflow
+    assert "printf 'AGENTMEMORY_GRAMMAR_CACHE=%s\\n'" in workflow
     prefetch = "deploy/scripts/prefetch_grammars.py"
     assert workflow.count('"deploy/indexing-language-lock.v1.json"') == 2
     assert workflow.count('"deploy/locks/python-requirements.txt"') == 2

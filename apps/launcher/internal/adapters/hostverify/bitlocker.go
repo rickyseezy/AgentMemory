@@ -366,7 +366,7 @@ func (w *bitLockerWorker) run() {
 }
 
 func (w *bitLockerWorker) attest(ctx context.Context, path string) bool {
-	if ctx == nil || w == nil || path == "" {
+	if ctx == nil || w == nil || w.backend == nil || path == "" {
 		return false
 	}
 	if err := ctx.Err(); err != nil {

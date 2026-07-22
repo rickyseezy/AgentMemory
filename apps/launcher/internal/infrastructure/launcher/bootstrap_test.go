@@ -86,6 +86,45 @@ func TestPF005ReadySessionFactoryBypassesHostProductSurfaceExactlyOnce(t *testin
 	}
 }
 
+func TestPF005ManagedSessionRunnerClosesLifecycleAndPreservesRunFailure(t *testing.T) {
+	t.Parallel()
+	var absent *managedSessionRunner
+	if err := absent.Run(t.Context(), nil); !errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) {
+		t.Fatalf("absent managed session error = %v", err)
+	}
+
+	lifecycle := &lifecycleStub{}
+	runner := &managedSessionRunner{session: &mcpRunnerStub{}, lifecycle: lifecycle}
+	if err := runner.Run(t.Context(), nil); err != nil || lifecycle.calls.Load() != 1 {
+		t.Fatalf("managed session result = %v, close calls = %d", err, lifecycle.calls.Load())
+	}
+	closeFailure := &lifecycleStub{err: errors.New("close failed")}
+	runner = &managedSessionRunner{session: &mcpRunnerStub{}, lifecycle: closeFailure}
+	if err := runner.Run(t.Context(), nil); !errors.Is(err, mcpbootstrapapp.ErrBootstrapUnavailable) ||
+		closeFailure.calls.Load() != 1 {
+		t.Fatalf("managed close result = %v, close calls = %d", err, closeFailure.calls.Load())
+	}
+
+	unsupportedLifecycle := &lifecycleStub{}
+	unsupported := &managedSessionRunner{
+		session: &mcpRunnerStub{}, lifecycle: unsupportedLifecycle,
+	}
+	if err := unsupported.RunHostSession(
+		t.Context(), "/workspace", nil, nil, nil,
+	); !errors.Is(err, mcpbootstrapapp.ErrBootstrapIntegrity) || unsupportedLifecycle.calls.Load() != 1 {
+		t.Fatalf("unsupported host session result = %v, close calls = %d", err, unsupportedLifecycle.calls.Load())
+	}
+
+	runFailure := errors.New("session failed")
+	failingLifecycle := &lifecycleStub{err: errors.New("close failed")}
+	runner = &managedSessionRunner{
+		session: &mcpRunnerStub{err: runFailure}, lifecycle: failingLifecycle,
+	}
+	if err := runner.Run(t.Context(), nil); !errors.Is(err, runFailure) || failingLifecycle.calls.Load() != 1 {
+		t.Fatalf("failed managed session result = %v, close calls = %d", err, failingLifecycle.calls.Load())
+	}
+}
+
 func TestPF001LauncherCompositionExposesOneTransportFreeAuthenticatedSurface(t *testing.T) {
 	t.Parallel()
 	resolved, runtime := launcherFixture(t)
@@ -376,9 +415,9 @@ func (f *productSessionFactoryStub) BuildReadySession(
 	return f.runner, f.ready, f.err
 }
 
-type mcpRunnerStub struct{}
+type mcpRunnerStub struct{ err error }
 
-func (*mcpRunnerStub) Run(context.Context, mcp.Transport) error { return nil }
+func (r *mcpRunnerStub) Run(context.Context, mcp.Transport) error { return r.err }
 
 func (f *runtimeFactoryStub) BuildBootstrapRuntime(
 	_ context.Context,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -49,3 +51,32 @@ def test_language_lock_covers_every_supported_release_platform() -> None:
         "windows-x86_64",
     }
     assert all(len(value) == 64 for value in bundles.values())
+
+
+def test_container_requirement_lock_covers_every_product_dependency() -> None:
+    root = Path(__file__).parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+    requirements = (root / "deploy" / "locks" / "python-requirements.txt").read_text()
+    locked_names = {
+        match.group(1).lower().replace("_", "-")
+        for line in requirements.splitlines()
+        if (match := re.match(r"^([A-Za-z0-9_.-]+)==", line)) is not None
+    }
+    declared_names = {
+        re.split(r"[<>=!~]", str(requirement), maxsplit=1)[0].lower().replace("_", "-")
+        for requirement in cast("list[object]", project["project"]["dependencies"])
+    }
+    assert declared_names <= locked_names
+
+
+def test_product_quality_prefetches_locked_grammars_into_explicit_cache() -> None:
+    workflow = (
+        Path(__file__).parents[2] / ".github" / "workflows" / "product-quality.yml"
+    ).read_text()
+    assert "AGENTMEMORY_GRAMMAR_CACHE: ${{ runner.temp }}/agentmemory-grammars" in workflow
+    prefetch = "deploy/scripts/prefetch_grammars.py"
+    assert workflow.count('"deploy/indexing-language-lock.v1.json"') == 2
+    assert workflow.count('"deploy/locks/python-requirements.txt"') == 2
+    assert workflow.count(f'"{prefetch}"') == 2
+    assert prefetch in workflow
+    assert workflow.index(prefetch) < workflow.index("uv run pytest tests")

@@ -19,12 +19,16 @@ import (
 )
 
 type cancellationWriter struct {
-	cancel context.CancelFunc
-	once   sync.Once
+	cancelledAt chan<- time.Time
+	cancel      context.CancelFunc
+	once        sync.Once
 }
 
 func (w *cancellationWriter) Write(value []byte) (int, error) {
-	w.once.Do(w.cancel)
+	w.once.Do(func() {
+		w.cancelledAt <- time.Now()
+		w.cancel()
+	})
 	return len(value), nil
 }
 
@@ -66,10 +70,10 @@ func TestPF001UnixProcessTreeEscalatesIgnoredTermination(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, "-test.run=^TestPF001ArgvRunnerHelper$", "--", "ignore-termination") // #nosec G204 -- current test executable and fixed argv.
-	command.Stdout = &cancellationWriter{cancel: cancel}
-	started := time.Now()
+	cancelledAt := make(chan time.Time, 1)
+	command.Stdout = &cancellationWriter{cancelledAt: cancelledAt, cancel: cancel}
 	err := runCommandInProcessTree(ctx, command)
-	elapsed := time.Since(started)
+	elapsed := time.Since(<-cancelledAt)
 	if err == nil {
 		t.Fatal("termination-resistant process exited successfully")
 	}

@@ -1817,6 +1817,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PF-006 — Provision the local container runtime without Docker knowledge
 
+**Implementation record:** [`docs/implementation/PF-006.md`](docs/implementation/PF-006.md) and
+[`docs/runbooks/PF-006-RUNTIME-PROVISIONING.md`](docs/runbooks/PF-006-RUNTIME-PROVISIONING.md).
+
 **User story:** As a user unfamiliar with Docker, I can install AgentMemory through my AI agent while the product securely installs and operates its container runtime for me.
 
 **Acceptance criteria**

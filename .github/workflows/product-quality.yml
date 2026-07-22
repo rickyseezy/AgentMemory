@@ -23,6 +23,9 @@ on:
       - "tools/**"
       - "deploy/model-source-lock.v1.json"
       - "deploy/event-schema-compatibility.v1.json"
+      - "deploy/indexing-language-lock.v1.json"
+      - "deploy/locks/python-requirements.txt"
+      - "deploy/scripts/prefetch_grammars.py"
   push:
     branches:
       - main
@@ -47,6 +50,9 @@ on:
       - "tools/**"
       - "deploy/model-source-lock.v1.json"
       - "deploy/event-schema-compatibility.v1.json"
+      - "deploy/indexing-language-lock.v1.json"
+      - "deploy/locks/python-requirements.txt"
+      - "deploy/scripts/prefetch_grammars.py"
 
 permissions:
   contents: read
@@ -60,6 +66,8 @@ jobs:
     name: Local Core
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      AGENTMEMORY_GRAMMAR_CACHE: ${{ runner.temp }}/agentmemory-grammars
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -81,6 +89,12 @@ jobs:
 
       - name: Restore the exact reviewed environment
         run: uv sync --frozen --all-groups
+
+      - name: Prefetch the release-locked offline grammar set
+        run: >-
+          uv run python deploy/scripts/prefetch_grammars.py
+          --lock deploy/indexing-language-lock.v1.json
+          --cache "$AGENTMEMORY_GRAMMAR_CACHE"
 
       - name: Enforce formatting and strict lint policy
         run: |

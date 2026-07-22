@@ -33,6 +33,9 @@ class CoreSettings(BaseSettings):
     embedding_capability_file: Path = Path("/run/secrets/agentmemory_embedding_capability")
     reranking_capability_file: Path = Path("/run/secrets/agentmemory_reranking_capability")
     extraction_capability_file: Path = Path("/run/secrets/agentmemory_extraction_capability")
+    provider_gateway_capability_file: Path = Path(
+        "/run/secrets/agentmemory_provider_gateway_capability"
+    )
     egress_attestation_file: Path = Path("/run/secrets/agentmemory_egress_attestation")
     relational_migrations_directory: Path = Path("/opt/agentmemory/migrations/relational")
     neo4j_migrations_directory: Path = Path("/opt/agentmemory/migrations/neo4j")
@@ -48,6 +51,7 @@ class CoreSettings(BaseSettings):
     embedding_url: Literal["http://local-embedding:8080"] = "http://local-embedding:8080"
     reranking_url: Literal["http://local-reranker:8080"] = "http://local-reranker:8080"
     extraction_url: Literal["http://local-extractor:8080"] = "http://local-extractor:8080"
+    provider_gateway_url: Literal["http://provider-gateway:8080"] = "http://provider-gateway:8080"
     embedding_model_id: Literal["Qwen/Qwen3-Embedding-0.6B"] = "Qwen/Qwen3-Embedding-0.6B"
     reranking_model_id: Literal["Qwen/Qwen3-Reranker-0.6B"] = "Qwen/Qwen3-Reranker-0.6B"
     extraction_model_id: Literal["Qwen/Qwen3-4B-GGUF-Q4_K_M"] = "Qwen/Qwen3-4B-GGUF-Q4_K_M"

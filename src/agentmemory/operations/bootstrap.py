@@ -348,6 +348,7 @@ from agentmemory.operations.adapters.outbound.provider_checks import (
     LocalProviderSetCheck,
     SemanticWriteIndexRecallCheck,
 )
+from agentmemory.operations.adapters.outbound.qwen_profile_probe import QwenProfileProbeAdapter
 from agentmemory.operations.adapters.outbound.readiness_status import SqliteReadinessStatusQuery
 from agentmemory.operations.adapters.outbound.sqlite_checks import (
     EXPECTED_MIGRATION_HEAD,
@@ -380,6 +381,29 @@ from agentmemory.operations.domain.projection_rebuild import RebuildManifest
 from agentmemory.operations.domain.readiness import ReadinessProbe
 from agentmemory.operations.domain.value_objects import Sha256Digest
 from agentmemory.operations.infrastructure.configuration import CoreSettings
+from agentmemory.providers.adapters.builtins.cohere import CohereProviderAdapter
+from agentmemory.providers.adapters.builtins.google import GoogleProviderAdapter
+from agentmemory.providers.adapters.builtins.openai import OpenAIProviderAdapter
+from agentmemory.providers.adapters.builtins.openai_compatible import (
+    OpenAICompatibleProviderAdapter,
+)
+from agentmemory.providers.adapters.builtins.qwen_local import QwenLocalProviderAdapter
+from agentmemory.providers.adapters.builtins.registry import CertifiedProviderAdapterRegistry
+from agentmemory.providers.adapters.builtins.voyage import VoyageProviderAdapter
+from agentmemory.providers.adapters.gateway_http import ProviderGatewayHttpTransport
+from agentmemory.providers.adapters.profile_http_api import (
+    create_contract_provider_profile_router,
+    create_provider_profile_router,
+)
+from agentmemory.providers.adapters.profile_identity import (
+    SystemProviderProfileIdentityGenerator,
+)
+from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
+from agentmemory.providers.application.profiles import (
+    CreateProviderProfileHandler,
+    GetProviderProfileHandler,
+    ProbeProviderHandler,
+)
 from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
 )
@@ -748,6 +772,9 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
         resolved,
         projection_adapter,
         content_policy_repository,
+        provider_client,
+        embeddings,
+        reranker,
     )
     application.include_router(
         create_memory_router(
@@ -851,6 +878,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_memory_lifecycle_router(),
             create_contract_ordered_replay_router(),
             create_contract_backpressure_router(),
+            create_contract_provider_profile_router(),
         )
     )
 
@@ -888,6 +916,9 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
     settings: CoreSettings,
     projection_adapter: SqliteProjectionRebuildAdapter,
     content_policy_repository: SqliteIndexContentPolicyAdapter,
+    provider_client: httpx.AsyncClient,
+    embeddings: LocalEmbeddingHttpAdapter,
+    reranker: LocalRerankingHttpAdapter,
 ) -> None:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
@@ -901,6 +932,36 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             retrieval_scope,
             ActivateIndexPolicyHandler(content_policy_repository),
             GetIndexPolicyChangeHandler(content_policy_repository),
+            clock,
+        )
+    )
+    gateway = ProviderGatewayHttpTransport(
+        provider_client,
+        settings.provider_gateway_url,
+        settings.provider_gateway_capability_file,
+    )
+    provider_adapters = CertifiedProviderAdapterRegistry(
+        (
+            OpenAIProviderAdapter(gateway),
+            CohereProviderAdapter(gateway),
+            VoyageProviderAdapter(gateway),
+            GoogleProviderAdapter(gateway),
+            QwenLocalProviderAdapter(QwenProfileProbeAdapter(embeddings, reranker)),
+            OpenAICompatibleProviderAdapter(gateway),
+        )
+    )
+    provider_profiles = SqliteProviderProfileRepository(store)
+    application.include_router(
+        create_provider_profile_router(
+            authenticator,
+            retrieval_scope,
+            CreateProviderProfileHandler(
+                provider_profiles,
+                provider_adapters,
+                SystemProviderProfileIdentityGenerator(),
+            ),
+            ProbeProviderHandler(provider_profiles, provider_adapters),
+            GetProviderProfileHandler(provider_profiles),
             clock,
         )
     )

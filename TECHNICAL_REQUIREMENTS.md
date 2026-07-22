@@ -2668,6 +2668,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-001 — Configure certified built-in providers
 
+**Implementation evidence:** [PRO-001 implementation record](docs/implementation/PRO-001.md) and
+[provider-profile operations runbook](docs/runbooks/PRO-001-PROVIDER-PROFILES.md).
+
 **User story:** As an administrator, I can configure OpenAI, Cohere, Voyage, Google, Qwen/local, and OpenAI-compatible providers through one model.
 
 **Acceptance criteria**

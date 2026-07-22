@@ -138,7 +138,11 @@ def active_pointer(  # noqa: PLR0913 -- Test builder mirrors the complete pointe
 def migrated_store(tmp_path: Path) -> SqliteCoreStore:
     """Apply the real Alembic bundle and open a permissive test-policy store."""
     database_path = tmp_path / "agentmemory.sqlite3"
-    migrations = Path(__file__).parents[2] / "migrations" / "relational"
+    root = Path(__file__).resolve().parents[2]
+    if not (root / "migrations").is_dir():
+        # mutmut executes copied tests from <repo>/mutants while migrations remain at repo root.
+        root = root.parent
+    migrations = root / "migrations" / "relational"
     configuration = Config(str(migrations / "alembic.ini"))
     configuration.set_main_option("script_location", str(migrations))
     configuration.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")

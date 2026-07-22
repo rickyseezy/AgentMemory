@@ -205,12 +205,11 @@ func TestPF001BitLockerBackendRebindsExactVolumeAndRejectsNoncompliance(t *testi
 func TestPF001BitLockerWorkerSerializesRequestsAndShutsDown(t *testing.T) {
 	backend := newBlockingBitLockerWorkerBackend()
 	worker := newBitLockerWorker(backend)
+	results := make(chan bool, 2)
+	go func() { results <- worker.attest(context.Background(), `C:\first`) }()
 	if !waitClosed(backend.opened) {
 		t.Fatal("worker did not initialize")
 	}
-
-	results := make(chan bool, 2)
-	go func() { results <- worker.attest(context.Background(), `C:\first`) }()
 	if !waitClosed(backend.started) {
 		t.Fatal("first request did not start")
 	}
@@ -243,12 +242,12 @@ func TestPF001BitLockerWorkerSerializesRequestsAndShutsDown(t *testing.T) {
 func TestPF001BitLockerWorkerHonorsCancellationWithoutUnboundedWork(t *testing.T) {
 	backend := newBlockingBitLockerWorkerBackend()
 	worker := newBitLockerWorker(backend)
-	if !waitClosed(backend.opened) {
-		t.Fatal("worker did not initialize")
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bool, 1)
 	go func() { result <- worker.attest(ctx, `C:\blocked`) }()
+	if !waitClosed(backend.opened) {
+		t.Fatal("worker did not initialize")
+	}
 	if !waitClosed(backend.started) {
 		t.Fatal("blocked work did not start")
 	}
@@ -274,6 +273,18 @@ func TestPF001BitLockerWorkerHonorsCancellationWithoutUnboundedWork(t *testing.T
 	var absent context.Context
 	if worker.attest(absent, `C:\nil`) {
 		t.Fatal("nil-context request succeeded")
+	}
+}
+
+func TestPF001BitLockerWorkerDoesNotInitializeCOMWhenClosedUnused(t *testing.T) {
+	t.Parallel()
+	backend := &fixedBitLockerWorkerBackend{}
+	worker := newBitLockerWorker(backend)
+	if err := worker.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if backend.openCalls != 0 || !backend.closed {
+		t.Fatalf("unused worker initialization/close = %d/%v", backend.openCalls, backend.closed)
 	}
 }
 
@@ -549,11 +560,15 @@ func (b *blockingBitLockerWorkerBackend) wasClosed() bool {
 }
 
 type fixedBitLockerWorkerBackend struct {
-	openErr error
-	closed  bool
+	openErr   error
+	openCalls int
+	closed    bool
 }
 
-func (b *fixedBitLockerWorkerBackend) open() error                         { return b.openErr }
+func (b *fixedBitLockerWorkerBackend) open() error {
+	b.openCalls++
+	return b.openErr
+}
 func (b *fixedBitLockerWorkerBackend) attest(context.Context, string) bool { return true }
 func (b *fixedBitLockerWorkerBackend) close()                              { b.closed = true }
 

@@ -314,13 +314,14 @@ type bitLockerRequest struct {
 // a replacement goroutine; if WMI stalls, future requests remain bounded by
 // the same worker and fail when their contexts expire.
 type bitLockerWorker struct {
-	backend  bitLockerWorkerBackend
-	requests chan bitLockerRequest
-	ready    chan struct{}
-	stop     chan struct{}
-	stopped  chan struct{}
-	closeOne sync.Once
-	opened   bool
+	backend     bitLockerWorkerBackend
+	requests    chan bitLockerRequest
+	ready       chan struct{}
+	stop        chan struct{}
+	stopped     chan struct{}
+	closeOne    sync.Once
+	initialized bool
+	opened      bool
 }
 
 func newBitLockerWorker(backend bitLockerWorkerBackend) *bitLockerWorker {
@@ -342,12 +343,7 @@ func (w *bitLockerWorker) run() {
 		return
 	}
 	defer w.backend.close()
-	w.opened = w.backend.open() == nil
 	close(w.ready)
-	if !w.opened {
-		<-w.stop
-		return
-	}
 	for {
 		select {
 		case <-w.stop:
@@ -358,7 +354,11 @@ func (w *bitLockerWorker) run() {
 		case <-w.stop:
 			return
 		case request := <-w.requests:
-			accepted := request.ctx.Err() == nil && w.backend.attest(request.ctx, request.path)
+			if !w.initialized {
+				w.opened = w.backend.open() == nil
+				w.initialized = true
+			}
+			accepted := w.opened && request.ctx.Err() == nil && w.backend.attest(request.ctx, request.path)
 			accepted = accepted && request.ctx.Err() == nil
 			request.result <- accepted
 		}
@@ -378,9 +378,6 @@ func (w *bitLockerWorker) attest(ctx context.Context, path string) bool {
 	case <-w.stop:
 		return false
 	case <-w.ready:
-		if !w.opened {
-			return false
-		}
 	}
 	select {
 	case <-w.stop:

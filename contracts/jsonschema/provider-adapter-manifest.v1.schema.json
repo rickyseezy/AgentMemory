@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.local/schemas/provider-adapter-manifest.v1.schema.json",
+  "title": "AgentMemory custom provider adapter manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "adapter_id", "image", "image_digest", "protocol", "transport", "operations", "permissions", "limits", "evidence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "adapter_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "image": {"type": "string", "pattern": "^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$"},
+    "image_digest": {"$ref": "#/$defs/digest"},
+    "protocol": {
+      "type": "object", "additionalProperties": false, "required": ["minimum", "maximum"],
+      "properties": {"minimum": {"const": 1}, "maximum": {"const": 1}}
+    },
+    "transport": {"enum": ["framed_stdio", "authenticated_http"]},
+    "operations": {
+      "type": "array", "minItems": 7, "uniqueItems": true,
+      "items": {"enum": ["get_manifest", "validate_configuration", "probe", "health", "list_models", "embed_documents", "embed_queries", "rerank", "estimate_cost", "cancel", "shutdown"]},
+      "allOf": [
+        {"contains": {"const": "get_manifest"}}, {"contains": {"const": "validate_configuration"}},
+        {"contains": {"const": "probe"}}, {"contains": {"const": "health"}},
+        {"contains": {"enum": ["embed_documents", "embed_queries", "rerank"]}},
+        {"contains": {"const": "cancel"}}, {"contains": {"const": "shutdown"}}
+      ]
+    },
+    "permissions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gateway_access", "host_network", "publish_port", "docker_socket", "project_mount", "writable_mount", "additional_secrets", "direct_egress", "privileged"],
+      "properties": {
+        "gateway_access": {"type": "boolean"}, "host_network": {"const": false},
+        "publish_port": {"const": false}, "docker_socket": {"const": false},
+        "project_mount": {"const": false}, "writable_mount": {"const": false},
+        "additional_secrets": {"const": false}, "direct_egress": {"const": false},
+        "privileged": {"const": false}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cpus_milli", "memory_bytes", "pids", "timeout_milliseconds", "scratch_bytes"],
+      "properties": {
+        "cpus_milli": {"type": "integer", "minimum": 1, "maximum": 8000},
+        "memory_bytes": {"type": "integer", "minimum": 67108864, "maximum": 8589934592},
+        "pids": {"type": "integer", "minimum": 1, "maximum": 512},
+        "timeout_milliseconds": {"type": "integer", "minimum": 100, "maximum": 300000},
+        "scratch_bytes": {"type": "integer", "minimum": 1, "maximum": 1073741824}
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["signature_bundle", "cyclonedx_sbom", "spdx_sbom", "provenance", "license", "vulnerability"],
+      "properties": {
+        "signature_bundle": {"$ref": "#/$defs/digest"}, "cyclonedx_sbom": {"$ref": "#/$defs/digest"},
+        "spdx_sbom": {"$ref": "#/$defs/digest"}, "provenance": {"$ref": "#/$defs/digest"},
+        "license": {"$ref": "#/$defs/digest"}, "vulnerability": {"$ref": "#/$defs/digest"}
+      }
+    }
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

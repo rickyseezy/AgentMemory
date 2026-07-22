@@ -190,6 +190,12 @@ jobs:
           - name: setup-http-request
             package: ./apps/launcher/internal/adapters/setuphttp
             target: FuzzPF001SetupHTTPStrictRequestParsers
+          - name: provider-adapter-manifest
+            package: ./apps/launcher/internal/domain/provideradapter
+            target: FuzzPRO002ManifestCodecNeverPanicsOrAcceptsUnboundedInput
+          - name: provider-adapter-framing
+            package: ./apps/launcher/internal/domain/providerprotocol
+            target: FuzzPRO002DecodeFrameNeverPanicsOrAllocatesBeyondBound
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

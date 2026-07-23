@@ -36,6 +36,11 @@ _MIGRATIONS = (
         8,
         "7c584d5179398f7de2ad91b4757535d6415d1d4e4c511da707bd888688413d9f",
     ),
+    (
+        "0005_pro004_embedding_space_constraints.cypher",
+        4,
+        "af5a2192de1afc8edbae3b1f51d6b6bf802e205e1be0795fb0026589a8d86768",
+    ),
 )
 
 

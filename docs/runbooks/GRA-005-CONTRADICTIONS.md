@@ -2,7 +2,7 @@
 
 ## Healthy state
 
-- Core reports Ready at relational head `0036_pro003_capability_attestations`.
+- Core reports Ready at relational head `0037_pro004_embedding_spaces`.
 - Detection operations are append-only and exact retries return the same conflict IDs.
 - Every conflict links two current canonical assertion IDs and all supporting evidence IDs.
 - Unresolved conflicts cause retrieval to qualify or abstain; rank never hides them.

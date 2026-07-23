@@ -2746,6 +2746,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-004 — Isolate immutable embedding spaces
 
+**Implementation record:** [`docs/implementation/PRO-004.md`](docs/implementation/PRO-004.md) and
+[`docs/runbooks/PRO-004-EMBEDDING-SPACES.md`](docs/runbooks/PRO-004-EMBEDDING-SPACES.md).
+
 **User story:** As a retriever, only semantically compatible vectors share an index.
 
 **Acceptance criteria**

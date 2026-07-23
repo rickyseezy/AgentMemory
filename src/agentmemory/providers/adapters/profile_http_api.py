@@ -261,7 +261,12 @@ def create_provider_profile_router(  # noqa: PLR0913 -- Router wires five narrow
             await authenticator.authenticate(authorization)
             _require_idempotency(idempotency_key, body.operation_id)
             now = clock.now()
-            scope = await _scope(scope_resolver, body, now, "provider.profile.create")
+            scope = await resolve_provider_scope(
+                scope_resolver,
+                body,
+                now,
+                "provider.profile.create",
+            )
             profile = await create_handler.execute(
                 CreateProviderProfileCommand(
                     body.operation_id,
@@ -293,7 +298,12 @@ def create_provider_profile_router(  # noqa: PLR0913 -- Router wires five narrow
             _require_idempotency(idempotency_key, body.operation_id)
             expected_version, expected_digest = _require_if_match(if_match, profile_id)
             now = clock.now()
-            scope = await _scope(scope_resolver, body, now, "provider.profile.probe")
+            scope = await resolve_provider_scope(
+                scope_resolver,
+                body,
+                now,
+                "provider.profile.probe",
+            )
             profile = await probe_handler.execute(
                 ProbeProviderCommand(
                     body.operation_id,
@@ -323,7 +333,12 @@ def create_provider_profile_router(  # noqa: PLR0913 -- Router wires five narrow
         try:
             await authenticator.authenticate(authorization)
             now = clock.now()
-            scope = await _scope(scope_resolver, scope_model, now, "provider.profile.read")
+            scope = await resolve_provider_scope(
+                scope_resolver,
+                scope_model,
+                now,
+                "provider.profile.read",
+            )
             profile = await get_handler.execute(GetProviderProfileQuery(scope, profile_id, now))
             response.headers["ETag"] = _profile_etag(profile)
             return _response(profile)
@@ -385,12 +400,15 @@ def _configuration(body: CreateProviderProfileRequestModel) -> ProviderProfileCo
     )
 
 
-async def _scope(
+async def resolve_provider_scope(
     resolver: RetrievalScopeResolverPort,
     request: ProviderScopeModel,
     at: datetime,
     action: str,
+    *,
+    purpose: str = "provider_administration",
 ) -> AuthorizedScope:
+    """Resolve current workspace authority and bind one provider action."""
     operation_id = getattr(request, "operation_id", f"provider-read-{round(at.timestamp())}")
     resolution = await resolver.execute(
         ResolveRetrievalScopeQuery(
@@ -419,7 +437,7 @@ async def _scope(
         policy_version=source.policy_version,
         security_epoch=source.security_epoch,
         action=action,
-        purpose="provider_administration",
+        purpose=purpose,
     )
 
 

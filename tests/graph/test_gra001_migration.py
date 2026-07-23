@@ -27,7 +27,7 @@ async def test_gra001_migration_installs_every_stable_label_and_relationship_con
         Path(__file__).parents[2] / "migrations" / "neo4j",
     )
     source = "\n".join(query for query, _ in driver.calls)
-    assert NEO4J_SCHEMA_HEAD == "0004_gra003_materialized_edge_indexes"
+    assert NEO4J_SCHEMA_HEAD == "0005_pro004_embedding_space_constraints"
     assert "FOR (entity:GraphEntity)" in source
     for entity_type in GraphEntityType:
         assert f"FOR (entity:{entity_type.value})" in source
@@ -35,6 +35,8 @@ async def test_gra001_migration_installs_every_stable_label_and_relationship_con
         assert f"[relationship:{relationship_type.value}]" in source
     assert "(entity.brain_id, entity.id) IS UNIQUE" in source
     assert "schema.community_property_guard = 'repository+startup_integrity'" in source
+    assert "MATCH (schema:AgentMemorySchema {brain_id: 'installation', id: 'singleton'})" in source
+    assert "schema.schema_version = 5" in source
     assert "db.awaitIndex" in driver.calls[-1][0]
 
 

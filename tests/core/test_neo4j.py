@@ -113,7 +113,7 @@ def _vector(content_id: str = "canary", dimension: int = 1024) -> EmbeddingVecto
 async def test_graph_compatibility_checks_live_version_schema_and_filtered_index() -> None:
     driver = _Driver()
     proof = await _adapter(driver).verify(binding())
-    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0004_gra003_materialized_edge_indexes")
+    assert proof == ("neo4j:2026.06.0:driver:6.2.0:schema:0005_pro004_embedding_space_constraints")
     assert any("SHOW VECTOR INDEXES" in query for query, _ in driver.calls)
 
 
@@ -174,7 +174,7 @@ async def test_graph_migration_runs_closed_ordered_schema_and_awaits_index() -> 
     driver = _Driver()
     migration_directory = Path(__file__).parents[2] / "migrations" / "neo4j"
     await migrate_neo4j(cast("AsyncDriver", driver), "agentmemory", migration_directory)
-    assert len(driver.calls) == 71
+    assert len(driver.calls) == 75
     assert "CREATE CONSTRAINT" in driver.calls[0][0]
     assert "CREATE VECTOR INDEX" in driver.calls[2][0]
     assert NEO4J_SCHEMA_HEAD in driver.calls[-2][0]

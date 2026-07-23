@@ -63,3 +63,19 @@ class ProviderProfileDependencyError(RuntimeError):
 
 class ProviderModelDriftError(ProviderProfileConflictError):
     """Prevent a mutable provider alias from changing an active model generation."""
+
+
+class EmbeddingSpaceValidationError(ValueError):
+    """Reject malformed or semantically incompatible embedding-space data."""
+
+
+class EmbeddingSpaceAuthorizationError(PermissionError):
+    """Reject an embedding-space action without current Brain-wide authority."""
+
+
+class EmbeddingSpaceConflictError(RuntimeError):
+    """Reject immutable-space, generation, or idempotency conflicts."""
+
+
+class EmbeddingSpaceDependencyError(RuntimeError):
+    """Expose a content-free canonical or graph storage dependency failure."""

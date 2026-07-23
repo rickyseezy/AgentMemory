@@ -28,7 +28,7 @@ async def test_gra003_migration_indexes_every_materialized_predicate_and_advance
         Path(__file__).parents[2] / "migrations" / "neo4j",
     )
     source = "\n".join(item for item, _ in driver.calls)
-    assert NEO4J_SCHEMA_HEAD == "0004_gra003_materialized_edge_indexes"
+    assert NEO4J_SCHEMA_HEAD == "0005_pro004_embedding_space_constraints"
     for predicate in AssertionPredicate:
         relationship_type = PredicateRegistry.relationship_type(predicate).value
         assert f"[edge:{relationship_type}]" in source

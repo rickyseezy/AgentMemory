@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -33,6 +34,20 @@ from agentmemory.operations.adapters.outbound.neo4j_graph import Neo4jGraphAdapt
 from agentmemory.operations.domain.errors import ErrorCode, OperationError
 from agentmemory.operations.domain.value_objects import Uuid7Id
 from agentmemory.operations.infrastructure.neo4j_migrations import migrate_neo4j
+from agentmemory.providers.adapters.neo4j_embedding_spaces import (
+    Neo4jIndexGenerationProvisioner,
+    Neo4jVectorWriteRepository,
+)
+from agentmemory.providers.domain.embedding_spaces import (
+    EmbeddingSpace,
+    IndexGeneration,
+    IndexGenerationState,
+    VectorRecord,
+    VectorWriteBatch,
+)
+from agentmemory.providers.domain.errors import EmbeddingSpaceConflictError
+from tests.core.support import FixedClock, digest
+from tests.providers.test_pro004_embedding_spaces_domain import descriptor
 
 if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
@@ -46,6 +61,10 @@ PROJECT_ID = "018f0000-0000-7000-8000-000000000076"
 REPOSITORY_ID = "018f0000-0000-7000-8000-000000000077"
 ENTITY_ID = "018f0000-0000-7000-8000-000000000078"
 DUPLICATE_ID = "018f0000-0000-7000-8000-000000000079"
+SPACE_ID = "018f0000-0000-7000-8000-000000000081"
+PROFILE_ID = "018f0000-0000-7000-8000-000000000082"
+GENERATION_ID = "018f0000-0000-7000-8000-000000000083"
+VECTOR_ID = "018f0000-0000-7000-8000-000000000084"
 
 pytestmark = [
     pytest.mark.integration,
@@ -87,9 +106,72 @@ async def test_live_constraints_concurrent_merge_and_cross_brain_canary() -> Non
         )
         assert records[0]["count"] == 1
 
+        embedding_space = EmbeddingSpace.create(
+            space_id=SPACE_ID,
+            profile_id=PROFILE_ID,
+            capability_attestation_id=digest("live-pro004-attestation").value,
+            descriptor=descriptor(),
+            created_at=datetime(2026, 7, 21, 12, tzinfo=UTC),
+        )
+        index_generation = IndexGeneration.create(
+            generation_id=GENERATION_ID,
+            brain_id=BRAIN_ID,
+            space=embedding_space,
+            state=IndexGenerationState.CREATING,
+            created_at=datetime(2026, 7, 21, 12, tzinfo=UTC),
+        )
+        await Neo4jIndexGenerationProvisioner(driver, "neo4j").ensure(
+            embedding_space,
+            index_generation,
+        )
+        writable_generation = replace(
+            index_generation,
+            state=IndexGenerationState.POPULATING,
+        )
+        vector = VectorRecord(
+            record_id=VECTOR_ID,
+            brain_id=BRAIN_ID,
+            project_id=PROJECT_ID,
+            repository_id=REPOSITORY_ID,
+            checkout_id=None,
+            source_entity_id=ENTITY_ID,
+            source_content_hash="a" * 64,
+            space_id=SPACE_ID,
+            space_fingerprint=embedding_space.immutable_fingerprint,
+            generation_id=GENERATION_ID,
+            provider_profile_id=PROFILE_ID,
+            purpose=embedding_space.descriptor.purpose,
+            classification="internal",
+            vector=(0.6, 0.8),
+            embedded_at=datetime(2026, 7, 21, 12, tzinfo=UTC),
+        )
+        batch = VectorWriteBatch.create(
+            embedding_space,
+            writable_generation,
+            (vector,),
+        )
+        receipt = await Neo4jVectorWriteRepository(driver, "neo4j", FixedClock()).write(batch)
+        assert receipt.record_count == 1
+        with pytest.raises(EmbeddingSpaceConflictError, match="source content"):
+            await Neo4jVectorWriteRepository(driver, "neo4j", FixedClock()).write(
+                VectorWriteBatch.create(
+                    embedding_space,
+                    writable_generation,
+                    (replace(vector, source_content_hash="b" * 64),),
+                )
+            )
+        records, _, _ = await driver.execute_query(
+            "CYPHER 25 MATCH (vector:VectorRecord {brain_id: $brain_id, id: $id}) "
+            "RETURN count(vector) AS count",
+            brain_id=BRAIN_ID,
+            id=VECTOR_ID,
+            database_="neo4j",
+        )
+        assert records[0]["count"] == 1
+
         readiness_binding = cast("ReadinessBinding", object())
         proof = await Neo4jGraphAdapter(driver, "neo4j", _Brain()).verify(readiness_binding)
-        assert "schema:0004_gra003_materialized_edge_indexes" in proof
+        assert "schema:0005_pro004_embedding_space_constraints" in proof
 
         malformed_id = "018f0000-0000-7000-8000-000000000080"
         await driver.execute_query(

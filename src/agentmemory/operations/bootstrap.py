@@ -441,7 +441,17 @@ from agentmemory.providers.adapters.builtins.openai_compatible import (
 from agentmemory.providers.adapters.builtins.qwen_local import QwenLocalProviderAdapter
 from agentmemory.providers.adapters.builtins.registry import CertifiedProviderAdapterRegistry
 from agentmemory.providers.adapters.builtins.voyage import VoyageProviderAdapter
+from agentmemory.providers.adapters.embedding_space_http_api import (
+    create_contract_embedding_space_router,
+    create_embedding_space_router,
+)
+from agentmemory.providers.adapters.embedding_space_identity import (
+    SystemEmbeddingSpaceIdentityGenerator,
+)
 from agentmemory.providers.adapters.gateway_http import ProviderGatewayHttpTransport
+from agentmemory.providers.adapters.neo4j_embedding_spaces import (
+    Neo4jIndexGenerationProvisioner,
+)
 from agentmemory.providers.adapters.profile_http_api import (
     create_contract_provider_profile_router,
     create_provider_profile_router,
@@ -449,7 +459,11 @@ from agentmemory.providers.adapters.profile_http_api import (
 from agentmemory.providers.adapters.profile_identity import (
     SystemProviderProfileIdentityGenerator,
 )
+from agentmemory.providers.adapters.sqlite_embedding_spaces import (
+    SqliteEmbeddingSpaceRepository,
+)
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
+from agentmemory.providers.application.embedding_spaces import EnsureIndexGenerationHandler
 from agentmemory.providers.application.profiles import (
     CreateProviderProfileHandler,
     GetProviderProfileHandler,
@@ -1049,6 +1063,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_ordered_replay_router(),
             create_contract_backpressure_router(),
             create_contract_provider_profile_router(),
+            create_contract_embedding_space_router(),
         )
     )
 
@@ -1133,6 +1148,18 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             ),
             ProbeProviderHandler(provider_profiles, provider_adapters),
             GetProviderProfileHandler(provider_profiles),
+            clock,
+        )
+    )
+    application.include_router(
+        create_embedding_space_router(
+            authenticator,
+            retrieval_scope,
+            EnsureIndexGenerationHandler(
+                SqliteEmbeddingSpaceRepository(store),
+                Neo4jIndexGenerationProvisioner(neo4j_driver, neo4j_database),
+                SystemEmbeddingSpaceIdentityGenerator(),
+            ),
             clock,
         )
     )

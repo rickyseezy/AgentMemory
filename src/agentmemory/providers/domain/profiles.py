@@ -77,7 +77,9 @@ class CanonicalPurpose(StrEnum):
 class VectorDtype(StrEnum):
     """Numeric representations accepted by the first-party conformance suite."""
 
+    FLOAT16 = "float16"
     FLOAT32 = "float32"
+    FLOAT64 = "float64"
 
 
 class VectorNormalization(StrEnum):

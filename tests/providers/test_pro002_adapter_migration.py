@@ -23,7 +23,7 @@ def test_pro002_adapter_schema_is_strict_append_only_and_downgrade_safe(tmp_path
     digest = "a" * 64
     with closing(sqlite3.connect(database)) as connection:
         head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        assert head == ("0035_pf005_mcp_sessions",)
+        assert head == ("0036_pro003_capability_attestations",)
         connection.execute(
             "INSERT INTO provider_adapters "
             "(id,protocol_version,package_digest,signature,manifest_digest,plan_digest,"

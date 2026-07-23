@@ -40,6 +40,7 @@ class ProviderGatewayResponse:
     body: bytes
     model_revision: str
     revision_fingerprint: str
+    endpoint_fingerprint: str
     cancellation_verified: bool
 
 

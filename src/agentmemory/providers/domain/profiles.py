@@ -58,6 +58,7 @@ class ProviderProfileStatus(StrEnum):
     """Activation lifecycle exposed by PRO-001."""
 
     DRAFT = "draft"
+    REPROBE_REQUIRED = "reprobe_required"
     ACTIVE = "active"
 
 
@@ -372,6 +373,7 @@ class ProviderProbeResult:
     model_id: str
     model_revision: str
     revision_fingerprint: str
+    endpoint_fingerprint: str
     operation: ProviderOperation
     purposes: tuple[CanonicalPurpose, ...]
     dimension: int | None
@@ -380,6 +382,10 @@ class ProviderProbeResult:
     similarity: SimilarityMetric | None
     max_items: int
     cancellation_verified: bool
+    suite_digest: str
+    canary_digest: str
+    validation_digest: str
+    validated_batches: int
 
     def __post_init__(self) -> None:
         """Reject incomplete, non-finite, or operation-incompatible probe facts."""
@@ -389,8 +395,14 @@ class ProviderProbeResult:
             or _MODEL.fullmatch(self.model_id) is None
             or _VERSION.fullmatch(self.model_revision) is None
             or _DIGEST.fullmatch(self.revision_fingerprint) is None
+            or _DIGEST.fullmatch(self.endpoint_fingerprint) is None
+            or any(
+                _DIGEST.fullmatch(value) is None
+                for value in (self.suite_digest, self.canary_digest, self.validation_digest)
+            )
             or not self.purposes
             or tuple(sorted(set(self.purposes), key=str)) != self.purposes
+            or self.validated_batches != len(self.purposes)
             or not 1 <= self.max_items <= _MAX_ITEMS
             or not self.cancellation_verified
             or (
@@ -415,12 +427,44 @@ class ProviderProbeResult:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderProbeBinding:
+    """Immutable configuration and implementation identity for one live probe."""
+
+    profile_id: str
+    manifest_digest: str
+    adapter_digest: str
+    configuration_digest: str
+
+    def __post_init__(self) -> None:
+        """Reject bindings that cannot be content-addressed or profile-scoped."""
+        if any(
+            _DIGEST.fullmatch(value) is None
+            for value in (
+                self.manifest_digest,
+                self.adapter_digest,
+                self.configuration_digest,
+            )
+        ):
+            _invalid()
+        try:
+            profile = UUID(self.profile_id)
+        except (TypeError, ValueError) as error:
+            raise ProviderProfileValidationError(_ERR_INPUT) from error
+        if profile.version != _UUID_VERSION:
+            _invalid()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ProviderProbeEvidence:
     """Content-free, immutable live capability attestation."""
 
     evidence_id: str
     profile_id: str
     manifest_digest: str
+    adapter_digest: str
+    endpoint_fingerprint: str
+    configuration_digest: str
+    suite_digest: str
     result: ProviderProbeResult
     probed_at: datetime
 
@@ -429,6 +473,17 @@ class ProviderProbeEvidence:
         if (
             _DIGEST.fullmatch(self.evidence_id) is None
             or _DIGEST.fullmatch(self.manifest_digest) is None
+            or any(
+                _DIGEST.fullmatch(value) is None
+                for value in (
+                    self.adapter_digest,
+                    self.endpoint_fingerprint,
+                    self.configuration_digest,
+                    self.suite_digest,
+                )
+            )
+            or self.endpoint_fingerprint != self.result.endpoint_fingerprint
+            or self.suite_digest != self.result.suite_digest
             or self.probed_at.tzinfo is None
             or self.probed_at.utcoffset() != UTC.utcoffset(self.probed_at)
         ):
@@ -443,8 +498,7 @@ class ProviderProbeEvidence:
     @classmethod
     def create(
         cls,
-        profile_id: str,
-        manifest_digest: str,
+        binding: ProviderProbeBinding,
         result: ProviderProbeResult,
         probed_at: datetime,
     ) -> ProviderProbeEvidence:
@@ -452,10 +506,14 @@ class ProviderProbeEvidence:
         payload = _canonical_json(
             {
                 "adapter_id": result.adapter_id,
+                "adapter_digest": binding.adapter_digest,
+                "canary_digest": result.canary_digest,
                 "cancellation_verified": result.cancellation_verified,
+                "configuration_digest": binding.configuration_digest,
                 "dimension": result.dimension,
                 "dtype": None if result.dtype is None else result.dtype.value,
-                "manifest_digest": manifest_digest,
+                "endpoint_fingerprint": result.endpoint_fingerprint,
+                "manifest_digest": binding.manifest_digest,
                 "max_items": result.max_items,
                 "model_id": result.model_id,
                 "model_revision": result.model_revision,
@@ -464,16 +522,23 @@ class ProviderProbeEvidence:
                 ),
                 "operation": result.operation.value,
                 "probed_at": _micros(probed_at),
-                "profile_id": profile_id,
+                "profile_id": binding.profile_id,
                 "purposes": [item.value for item in result.purposes],
                 "revision_fingerprint": result.revision_fingerprint,
                 "similarity": None if result.similarity is None else result.similarity.value,
+                "suite_digest": result.suite_digest,
+                "validated_batches": result.validated_batches,
+                "validation_digest": result.validation_digest,
             }
         )
         return cls(
             evidence_id=hashlib.sha256(payload).hexdigest(),
-            profile_id=profile_id,
-            manifest_digest=manifest_digest,
+            profile_id=binding.profile_id,
+            manifest_digest=binding.manifest_digest,
+            adapter_digest=binding.adapter_digest,
+            endpoint_fingerprint=result.endpoint_fingerprint,
+            configuration_digest=binding.configuration_digest,
+            suite_digest=result.suite_digest,
             result=result,
             probed_at=probed_at,
         )
@@ -490,9 +555,13 @@ class ProviderProbeEvidence:
         return _canonical_json(
             {
                 "adapter_id": result.adapter_id,
+                "adapter_digest": self.adapter_digest,
+                "canary_digest": result.canary_digest,
                 "cancellation_verified": result.cancellation_verified,
+                "configuration_digest": self.configuration_digest,
                 "dimension": result.dimension,
                 "dtype": None if result.dtype is None else result.dtype.value,
+                "endpoint_fingerprint": self.endpoint_fingerprint,
                 "manifest_digest": self.manifest_digest,
                 "max_items": result.max_items,
                 "model_id": result.model_id,
@@ -506,6 +575,9 @@ class ProviderProbeEvidence:
                 "purposes": [item.value for item in result.purposes],
                 "revision_fingerprint": result.revision_fingerprint,
                 "similarity": None if result.similarity is None else result.similarity.value,
+                "suite_digest": self.suite_digest,
+                "validated_batches": result.validated_batches,
+                "validation_digest": result.validation_digest,
             }
         )
 
@@ -538,12 +610,13 @@ class ProviderProfile:
             or self.created_at.utcoffset() != UTC.utcoffset(self.created_at)
             or self.updated_at.utcoffset() != UTC.utcoffset(self.updated_at)
             or self.updated_at < self.created_at
-            or (self.status is ProviderProfileStatus.DRAFT) != (self.active_probe is None)
+            or ((self.status is ProviderProfileStatus.ACTIVE) != (self.active_probe is not None))
             or (
                 self.active_probe is not None
                 and (
                     self.active_probe.profile_id != self.profile_id
                     or self.active_probe.manifest_digest != self.manifest_digest
+                    or self.active_probe.configuration_digest != self.configuration.digest
                 )
             )
         ):
@@ -580,11 +653,12 @@ class ProviderProfile:
         if (
             evidence.profile_id != self.profile_id
             or evidence.manifest_digest != self.manifest_digest
+            or evidence.configuration_digest != configuration.digest
             or evidence.probed_at < self.updated_at
             or result.adapter_id != configuration.adapter_id
             or result.model_id != configuration.model_id
             or result.operation is not configuration.operation
-            or not set(configuration.purposes).issubset(result.purposes)
+            or result.purposes != configuration.purposes
             or result.max_items < configuration.limits.max_items
         ):
             _invalid()

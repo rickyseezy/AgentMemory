@@ -26,11 +26,12 @@ from agentmemory.providers.domain.errors import (
     ProviderProfileAuthorizationError,
     ProviderProfileConflictError,
 )
-from agentmemory.providers.domain.profiles import ProviderProbeEvidence, ProviderProfileStatus
+from agentmemory.providers.domain.profiles import ProviderProfileStatus
 from tests.core.support import NOW, FixedClock, bootstrap_request, digest, migrated_store
 from tests.providers.test_pro001_profiles_domain_application import (
     PROFILE_ID,
     manifest,
+    probe_evidence,
     probe_result,
     remote_configuration,
     scope,
@@ -143,11 +144,10 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
                 NOW,
             )
 
-        first_evidence = ProviderProbeEvidence.create(
-            PROFILE_ID,
-            provider_manifest.digest,
-            probe_result(),
-            NOW + timedelta(seconds=1),
+        first_evidence = probe_evidence(
+            at=NOW + timedelta(seconds=1),
+            configuration=configuration,
+            provider_manifest=provider_manifest,
         )
         active = await repository.activate(
             probe_scope,
@@ -179,11 +179,10 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
             == active
         )
 
-        second_evidence = ProviderProbeEvidence.create(
-            PROFILE_ID,
-            provider_manifest.digest,
-            probe_result(),
-            NOW + timedelta(seconds=2),
+        second_evidence = probe_evidence(
+            at=NOW + timedelta(seconds=2),
+            configuration=configuration,
+            provider_manifest=provider_manifest,
         )
         refreshed = await repository.activate(
             probe_scope,
@@ -197,11 +196,10 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
                 probe_scope,
                 "pro001-probe-stale",
                 2,
-                ProviderProbeEvidence.create(
-                    PROFILE_ID,
-                    provider_manifest.digest,
-                    probe_result(),
-                    NOW + timedelta(seconds=3),
+                probe_evidence(
+                    at=NOW + timedelta(seconds=3),
+                    configuration=configuration,
+                    provider_manifest=provider_manifest,
                 ),
             )
         with pytest.raises(ProviderModelDriftError):
@@ -209,11 +207,11 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
                 probe_scope,
                 "pro001-probe-drift",
                 3,
-                ProviderProbeEvidence.create(
-                    PROFILE_ID,
-                    provider_manifest.digest,
-                    probe_result(fingerprint=digest("drifted-model").value),
-                    NOW + timedelta(seconds=3),
+                probe_evidence(
+                    result=probe_result(fingerprint=digest("drifted-model").value),
+                    at=NOW + timedelta(seconds=3),
+                    configuration=configuration,
+                    provider_manifest=provider_manifest,
                 ),
             )
 
@@ -230,6 +228,7 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
                     "provider_profiles",
                     "provider_profile_revisions",
                     "provider_probe_evidence",
+                    "provider_capability_attestations",
                     "provider_profile_operations",
                 )
             }
@@ -273,6 +272,7 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
             "provider_profiles": 1,
             "provider_profile_revisions": 3,
             "provider_probe_evidence": 2,
+            "provider_capability_attestations": 2,
             "provider_profile_operations": 3,
         }
         assert [str(row["topic"]) for row in outbox] == [
@@ -309,6 +309,13 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
                 )
             with pytest.raises(IntegrityError, match="immutable provider evidence"):
                 await connection.execute(text("DELETE FROM provider_probe_evidence"))
+            with pytest.raises(IntegrityError, match="immutable provider capability attestation"):
+                await connection.execute(
+                    text(
+                        "UPDATE provider_capability_attestations SET endpoint_fingerprint=:digest"
+                    ),
+                    {"digest": "0" * 64},
+                )
 
         expires = NOW + timedelta(seconds=4)
         async with store.engine.begin() as connection:
@@ -321,8 +328,111 @@ async def test_sqlite_profile_lifecycle_is_replayable_audited_and_secret_value_f
     finally:
         await store.close()
 
-    with pytest.raises(RuntimeError, match="PRO-001 downgrade refused"):
+    with pytest.raises(RuntimeError, match="PRO-003 downgrade refused"):
         alembic_command.downgrade(_alembic(database), "0031_idx006_content_policy")
+
+
+@pytest.mark.asyncio
+async def test_legacy_probe_requires_reprobe_and_new_attestation_tampering_fails_closed(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    provider_manifest = manifest()
+    configuration = remote_configuration()
+    repository = SqliteProviderProfileRepository(store)
+    create_scope = scope("provider.profile.create")
+    probe_scope = scope("provider.profile.probe")
+    read_scope = scope("provider.profile.read")
+    try:
+        await _seed(store)
+        await repository.create(
+            create_scope,
+            "pro003-legacy-create",
+            PROFILE_ID,
+            configuration,
+            provider_manifest.digest,
+            NOW,
+        )
+        legacy_evidence = probe_evidence(
+            at=NOW + timedelta(seconds=1),
+            configuration=configuration,
+            provider_manifest=provider_manifest,
+        )
+        await repository.activate(
+            probe_scope,
+            "pro003-legacy-probe",
+            1,
+            legacy_evidence,
+        )
+        # Reproduce an installation upgraded from PRO-001: its evidence predates
+        # schema-v2 attestations and therefore cannot be trusted retroactively.
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("DROP TRIGGER trg_provider_capability_attestations_immutable_delete")
+            )
+            await connection.execute(
+                text("DROP TRIGGER trg_provider_probe_evidence_immutable_update")
+            )
+            await connection.execute(
+                text("DELETE FROM provider_capability_attestations WHERE attestation_id=:evidence"),
+                {"evidence": legacy_evidence.evidence_id},
+            )
+            await connection.execute(
+                text(
+                    "UPDATE provider_probe_evidence SET schema_version=1 "
+                    "WHERE evidence_id=:evidence"
+                ),
+                {"evidence": legacy_evidence.evidence_id},
+            )
+
+        reprobe = await repository.get(
+            read_scope,
+            PROFILE_ID,
+            NOW + timedelta(seconds=2),
+        )
+        assert reprobe is not None
+        assert reprobe.status is ProviderProfileStatus.REPROBE_REQUIRED
+        assert reprobe.active_probe is None
+        assert reprobe.version == 2
+
+        replacement = probe_evidence(
+            at=NOW + timedelta(seconds=3),
+            configuration=configuration,
+            provider_manifest=provider_manifest,
+        )
+        active = await repository.activate(
+            probe_scope,
+            "pro003-reprobe",
+            reprobe.version,
+            replacement,
+        )
+        assert active.status is ProviderProfileStatus.ACTIVE
+        assert active.version == 3
+        async with store.engine.connect() as connection:
+            schema_version = (
+                await connection.execute(
+                    text(
+                        "SELECT schema_version FROM provider_probe_evidence "
+                        "WHERE evidence_id=:evidence"
+                    ),
+                    {"evidence": replacement.evidence_id},
+                )
+            ).scalar_one()
+        assert int(schema_version) == 2
+
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM provider_capability_attestations WHERE attestation_id=:evidence"),
+                {"evidence": replacement.evidence_id},
+            )
+        with pytest.raises(ProviderProfileConflictError):
+            await repository.get(
+                read_scope,
+                PROFILE_ID,
+                NOW + timedelta(seconds=4),
+            )
+    finally:
+        await store.close()
 
 
 def _digest_bytes(value: bytes) -> bytes:

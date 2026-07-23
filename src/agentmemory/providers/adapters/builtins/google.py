@@ -8,11 +8,13 @@ from agentmemory.providers.adapters.builtins.base import (
     CertifiedRemoteAdapter,
     ParsedProbe,
     certified_manifest,
+    probe_content_ids,
     probe_inputs,
     require_list,
     require_object,
     require_vector,
 )
+from agentmemory.providers.domain.capability_probe import EmbeddingProbeBatch
 from agentmemory.providers.domain.errors import ProviderAdapterError, ProviderErrorCode
 from agentmemory.providers.domain.profiles import (
     CanonicalPurpose,
@@ -87,6 +89,12 @@ class GoogleProtocol:
             VectorDtype.FLOAT32,
             VectorNormalization.PROVIDER_DEFINED,
             SimilarityMetric.COSINE,
+            EmbeddingProbeBatch(
+                probe_content_ids(),
+                tuple(vectors),
+                VectorDtype.FLOAT32,
+                VectorNormalization.PROVIDER_DEFINED,
+            ),
         )
 
 

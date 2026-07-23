@@ -9,7 +9,7 @@ or active pointers to force a repair.
 ## Preconditions
 
 - AgentMemory Core is Ready and its SQLite/Neo4j migration heads are the exact heads certified by the
-  active release (currently `0025_gra006_graph_integrity` and
+  active release (currently `0036_pro003_capability_attestations` and
   `0004_gra003_materialized_edge_indexes`). PF-002 introduced the earlier `0002` schemas; do not downgrade
   an active installation to match an old example.
 - The operator has an active grant for the target Brain.
@@ -37,7 +37,7 @@ Content-Type: application/json
   "requested_watermark": null,
   "manifest": {
     "application_build": "<immutable-build>",
-    "relational_schema": "0025_gra006_graph_integrity",
+    "relational_schema": "0036_pro003_capability_attestations",
     "graph_schema": "0004_gra003_materialized_edge_indexes",
     "parser_version": "<immutable-parser-revision>",
     "extractor_version": "<immutable-extractor-revision>",

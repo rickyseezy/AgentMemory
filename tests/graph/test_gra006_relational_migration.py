@@ -25,7 +25,7 @@ async def test_gra006_schema_keeps_migration_and_repair_lineage_outside_graph(
     async with store.engine.connect() as connection:
         assert (
             await connection.execute(text("SELECT version_num FROM alembic_version"))
-        ).scalar_one() == "0035_pf005_mcp_sessions"
+        ).scalar_one() == "0036_pro003_capability_attestations"
         tables = {
             str(row[0])
             for row in (

@@ -8,7 +8,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 from agentmemory.providers.adapters.strict_json import StrictJsonError, canonical_bytes, loads
-from agentmemory.providers.domain.errors import ProviderAdapterError, ProviderErrorCode
+from agentmemory.providers.domain.capability_probe import (
+    EmbeddingProbeBatch,
+    ProviderProbeSuite,
+    RerankingProbeBatch,
+    ValidatedProbeBatch,
+    VectorValidator,
+    probe_canaries,
+)
+from agentmemory.providers.domain.errors import (
+    ProviderAdapterError,
+    ProviderErrorCode,
+    ProviderProfileValidationError,
+)
 from agentmemory.providers.domain.profile_ports import ProviderGatewayRequest
 from agentmemory.providers.domain.profiles import (
     CanonicalPurpose,
@@ -27,9 +39,8 @@ if TYPE_CHECKING:
         ProviderGatewayResponse,
         ProviderGatewayTransport,
     )
-    from agentmemory.providers.domain.profiles import ProviderProfile
+    from agentmemory.providers.domain.profiles import ProviderProfile, ProviderProfileConfiguration
 
-_PROBE_INPUTS = ("AgentMemory provider probe alpha", "AgentMemory provider probe beta")
 _PROBE_QUERY = "AgentMemory provider probe"
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SUCCESS_STATUS = 200
@@ -58,6 +69,15 @@ class ParsedProbe:
     dtype: VectorDtype | None
     normalization: VectorNormalization | None
     similarity: SimilarityMetric | None
+    batch: EmbeddingProbeBatch | RerankingProbeBatch
+
+
+@dataclass(frozen=True, slots=True)
+class _PurposeProbe:
+    parsed: ParsedProbe
+    validated: ValidatedProbeBatch
+    revision: tuple[str, str, str]
+    cancellation_verified: bool
 
 
 class RemoteProtocol(Protocol):
@@ -109,39 +129,17 @@ class CertifiedRemoteAdapter:
         self._manifest.validate_configuration(configuration)
         if configuration.endpoint_policy_ref is None or configuration.secret_ref is None:
             raise ProviderAdapterError(ProviderErrorCode.INVALID_CONFIGURATION)
-        parsed_results: list[ParsedProbe] = []
-        revisions: set[tuple[str, str]] = set()
+        purpose_results: list[_PurposeProbe] = []
+        revisions: set[tuple[str, str, str]] = set()
         cancellation = True
+        suite = ProviderProbeSuite()
+        expected_dimension: int | None = None
         for purpose in configuration.purposes:
-            path, body = self._protocol.request(
-                configuration.operation,
-                purpose,
-                configuration.model_id,
-            )
-            response = await self._transport.execute(
-                ProviderGatewayRequest(
-                    adapter_id=self._manifest.adapter_id,
-                    endpoint_policy_ref=configuration.endpoint_policy_ref,
-                    secret_ref=configuration.secret_ref,
-                    method="POST",
-                    path=path,
-                    body=canonical_bytes(body),
-                    timeout_milliseconds=configuration.limits.timeout_milliseconds,
-                    max_response_bytes=_MAX_RESPONSE_BYTES,
-                )
-            )
-            _require_success(response)
-            try:
-                parsed = self._protocol.parse(
-                    configuration.operation,
-                    configuration.model_id,
-                    loads(response.body),
-                )
-            except (StrictJsonError, TypeError, ValueError, KeyError, IndexError) as error:
-                raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
-            parsed_results.append(parsed)
-            revisions.add((response.model_revision, response.revision_fingerprint))
-            cancellation = cancellation and response.cancellation_verified
+            result = await self._probe_purpose(configuration, purpose, expected_dimension)
+            purpose_results.append(result)
+            expected_dimension = result.validated.dimension
+            revisions.add(result.revision)
+            cancellation = cancellation and result.cancellation_verified
         if len(revisions) != 1 or not cancellation:
             code = (
                 ProviderErrorCode.MODEL_DRIFT
@@ -149,15 +147,29 @@ class CertifiedRemoteAdapter:
                 else ProviderErrorCode.CANCELLATION
             )
             raise ProviderAdapterError(code)
-        if len(set(parsed_results)) != 1:
+        contracts = {
+            (item.dimension, item.dtype, item.normalization, item.similarity)
+            for item in (result.parsed for result in purpose_results)
+        }
+        if len(contracts) != 1:
             raise ProviderAdapterError(ProviderErrorCode.DIMENSION_MISMATCH)
-        model_revision, revision_fingerprint = revisions.pop()
-        parsed = parsed_results[0]
+        model_revision, revision_fingerprint, endpoint_fingerprint = revisions.pop()
+        parsed = purpose_results[0].parsed
+        try:
+            suite_result = suite.finalize(
+                configuration.operation,
+                configuration.purposes,
+                tuple(result.validated for result in purpose_results),
+                cancellation_verified=cancellation,
+            )
+        except ProviderProfileValidationError as error:
+            raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
         return ProviderProbeResult(
             adapter_id=self._manifest.adapter_id,
             model_id=configuration.model_id,
             model_revision=model_revision,
             revision_fingerprint=revision_fingerprint,
+            endpoint_fingerprint=endpoint_fingerprint,
             operation=configuration.operation,
             purposes=configuration.purposes,
             dimension=parsed.dimension,
@@ -166,7 +178,105 @@ class CertifiedRemoteAdapter:
             similarity=parsed.similarity,
             max_items=self._manifest.limits.max_items,
             cancellation_verified=True,
+            suite_digest=suite_result.suite_digest,
+            canary_digest=suite_result.canary_digest,
+            validation_digest=suite_result.validation_digest,
+            validated_batches=suite_result.validated_batches,
         )
+
+    async def _probe_purpose(
+        self,
+        configuration: ProviderProfileConfiguration,
+        purpose: CanonicalPurpose,
+        expected_dimension: int | None,
+    ) -> _PurposeProbe:
+        path, body = self._protocol.request(
+            configuration.operation,
+            purpose,
+            configuration.model_id,
+        )
+        response = await self._transport.execute(
+            ProviderGatewayRequest(
+                adapter_id=self._manifest.adapter_id,
+                endpoint_policy_ref=configuration.endpoint_policy_ref or "",
+                secret_ref=configuration.secret_ref or "",
+                method="POST",
+                path=path,
+                body=canonical_bytes(body),
+                timeout_milliseconds=configuration.limits.timeout_milliseconds,
+                max_response_bytes=_MAX_RESPONSE_BYTES,
+            )
+        )
+        _require_success(response)
+        try:
+            parsed = self._protocol.parse(
+                configuration.operation,
+                configuration.model_id,
+                loads(response.body),
+            )
+        except (StrictJsonError, TypeError, ValueError, KeyError, IndexError) as error:
+            raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
+        validated = _validate_parsed_batch(
+            configuration.operation,
+            purpose,
+            parsed,
+            expected_dimension,
+        )
+        return _PurposeProbe(
+            parsed=parsed,
+            validated=validated,
+            revision=(
+                response.model_revision,
+                response.revision_fingerprint,
+                response.endpoint_fingerprint,
+            ),
+            cancellation_verified=response.cancellation_verified,
+        )
+
+
+def _validate_parsed_batch(
+    operation: ProviderOperation,
+    purpose: CanonicalPurpose,
+    parsed: ParsedProbe,
+    expected_dimension: int | None,
+) -> ValidatedProbeBatch:
+    validator = VectorValidator()
+    if operation is ProviderOperation.EMBEDDING and not isinstance(
+        parsed.batch, EmbeddingProbeBatch
+    ):
+        raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE)
+    if operation is ProviderOperation.RERANKING and not isinstance(
+        parsed.batch, RerankingProbeBatch
+    ):
+        raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE)
+    if (
+        operation is ProviderOperation.EMBEDDING
+        and expected_dimension is not None
+        and parsed.dimension != expected_dimension
+    ):
+        raise ProviderAdapterError(ProviderErrorCode.DIMENSION_MISMATCH)
+    try:
+        if operation is ProviderOperation.EMBEDDING:
+            embedding_batch = cast("EmbeddingProbeBatch", parsed.batch)
+            validated = validator.validate_embedding(
+                operation,
+                purpose,
+                probe_canaries(),
+                embedding_batch,
+                expected_dimension=expected_dimension,
+            )
+        else:
+            reranking_batch = cast("RerankingProbeBatch", parsed.batch)
+            validated = validator.validate_reranking(
+                purpose,
+                probe_canaries(),
+                reranking_batch,
+            )
+    except ProviderProfileValidationError as error:
+        raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
+    if parsed.dimension != validated.dimension:
+        raise ProviderAdapterError(ProviderErrorCode.DIMENSION_MISMATCH)
+    return validated
 
 
 def certified_manifest(
@@ -199,7 +309,14 @@ def certified_manifest(
 
 def probe_inputs() -> tuple[str, str]:
     """Return the fixed non-sensitive conformance inputs."""
-    return _PROBE_INPUTS
+    first, second = probe_canaries()
+    return first.content, second.content
+
+
+def probe_content_ids() -> tuple[str, str]:
+    """Return the exact ordered content identities for the fixed canaries."""
+    first, second = probe_canaries()
+    return first.content_id, second.content_id
 
 
 def probe_query() -> str:

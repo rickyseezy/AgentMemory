@@ -29,15 +29,16 @@ from agentmemory.providers.domain.errors import (
     ProviderErrorCode,
     ProviderProfileAuthorizationError,
 )
-from agentmemory.providers.domain.profiles import ProviderProbeEvidence, ProviderProfile
 from tests.core.support import BRAIN_ID, GRANT_ID, NOW, OWNER_ID, FixedClock
 from tests.providers.test_pro001_profiles_domain_application import (
     PROFILE_ID,
     PROJECT_ID,
     REPOSITORY_ID,
     manifest,
+    probe_evidence,
     probe_result,
     profile,
+    remote_configuration,
     scope,
 )
 
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from agentmemory.identity.application.queries.resolve_retrieval_scope import (
         ResolveRetrievalScopeQuery,
     )
+    from agentmemory.providers.domain.profiles import ProviderProfile
 
 
 @dataclass(slots=True)
@@ -110,12 +112,7 @@ class _Get:
 
 def _active_profile() -> ProviderProfile:
     draft = profile()
-    evidence = ProviderProbeEvidence.create(
-        PROFILE_ID,
-        manifest().digest,
-        probe_result(),
-        NOW + timedelta(seconds=1),
-    )
+    evidence = probe_evidence(at=NOW + timedelta(seconds=1))
     return draft.activate(evidence)
 
 
@@ -239,6 +236,12 @@ async def test_create_probe_and_get_are_authenticated_strict_and_credential_free
         assert probed.json()["active_probe"]["revision_fingerprint"] == (
             probe_result().revision_fingerprint
         )
+        probe_document = probed.json()["active_probe"]
+        assert probe_document["adapter_digest"] == manifest().implementation_digest
+        assert probe_document["configuration_digest"] == remote_configuration().digest
+        assert probe_document["endpoint_fingerprint"] == probe_result().endpoint_fingerprint
+        assert probe_document["suite_digest"] == probe_result().suite_digest
+        assert probe_document["validation_digest"] == probe_result().validation_digest
         assert len(probe.commands) == 1
 
         read = await client.get(

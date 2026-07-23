@@ -27,6 +27,17 @@ MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024
 EMBEDDING_DIMENSION = 1024
 _SERVER_ERROR_STATUS = 500
 _MAX_TCP_PORT = 65_535
+_EMBEDDING_PURPOSES = frozenset(
+    {
+        "retrieval_query",
+        "retrieval_document",
+        "code_query",
+        "code_document",
+        "semantic_similarity",
+        "classification",
+        "clustering",
+    }
+)
 
 
 class _StrictModel(BaseModel):
@@ -225,6 +236,20 @@ class LocalEmbeddingHttpAdapter(_LocalHttpAdapter):
         return await self._embed(content_id, content, "retrieval_query")
 
     async def _embed(self, content_id: str, content: str, purpose: str) -> EmbeddingVector:
+        results = await self.embed_probe(purpose, ((content_id, content),))
+        return results[0]
+
+    async def embed_probe(
+        self,
+        purpose: str,
+        items: tuple[tuple[str, str], ...],
+    ) -> tuple[EmbeddingVector, ...]:
+        """Embed one ordered PRO-003 canary batch with exact content identities."""
+        if purpose not in _EMBEDDING_PURPOSES or not items:
+            raise OperationError(
+                ErrorCode.INTEGRITY_VIOLATION,
+                "embedding probe purpose or items were invalid",
+            )
         raw = await self._post(
             "/v1/embed",
             {
@@ -233,7 +258,9 @@ class LocalEmbeddingHttpAdapter(_LocalHttpAdapter):
                 "model_revision": self._model_revision,
                 "purpose": purpose,
                 "classification": "internal",
-                "items": [{"content_id": content_id, "content": content}],
+                "items": [
+                    {"content_id": content_id, "content": content} for content_id, content in items
+                ],
             },
         )
         try:
@@ -242,23 +269,32 @@ class LocalEmbeddingHttpAdapter(_LocalHttpAdapter):
             raise OperationError(
                 ErrorCode.INTEGRITY_VIOLATION, "embedding response was malformed"
             ) from error
+        expected_ids = tuple(content_id for content_id, _ in items)
+        result_ids = tuple(result.content_id for result in response.results)
         if (
             response.model_id != self._model_id
             or response.model_revision != self._model_revision
             or response.dimension != EMBEDDING_DIMENSION
-            or len(response.results) != 1
-            or response.results[0].content_id != content_id
-            or len(response.results[0].values) != EMBEDDING_DIMENSION
-            or not all(math.isfinite(value) for value in response.results[0].values)
+            or len(response.results) != len(items)
+            or result_ids != expected_ids
+            or len(set(result_ids)) != len(result_ids)
+            or any(
+                len(result.values) != EMBEDDING_DIMENSION
+                or not all(math.isfinite(value) for value in result.values)
+                for result in response.results
+            )
         ):
             raise OperationError(
                 ErrorCode.INTEGRITY_VIOLATION, "embedding response violated its space"
             )
-        return EmbeddingVector(
-            content_id=content_id,
-            values=response.results[0].values,
-            model_id=response.model_id,
-            model_revision=response.model_revision,
+        return tuple(
+            EmbeddingVector(
+                content_id=result.content_id,
+                values=result.values,
+                model_id=response.model_id,
+                model_revision=response.model_revision,
+            )
+            for result in response.results
         )
 
 

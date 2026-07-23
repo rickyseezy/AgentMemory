@@ -2724,6 +2724,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-003 — Validate provider capabilities with a live probe
 
+**Implementation record:** [`docs/implementation/PRO-003.md`](docs/implementation/PRO-003.md) and
+[`docs/runbooks/PRO-003-CAPABILITY-PROBES.md`](docs/runbooks/PRO-003-CAPABILITY-PROBES.md).
+
 **User story:** As an administrator, I cannot activate a provider based on untrusted manifest claims.
 
 **Acceptance criteria**

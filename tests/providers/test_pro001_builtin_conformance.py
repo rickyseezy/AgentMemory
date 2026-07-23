@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from agentmemory.operations.adapters.outbound.qwen_profile_probe import QwenProfileProbeAdapter
-from agentmemory.operations.domain.dependency_ports import ProviderAttestation
+from agentmemory.operations.domain.dependency_ports import (
+    EmbeddingVector,
+    ProviderAttestation,
+    RerankItem,
+)
 from agentmemory.providers.adapters.builtins.base import (
     CertifiedRemoteAdapter,
     require_list,
@@ -30,6 +35,7 @@ from agentmemory.providers.adapters.builtins.qwen_local import (
 from agentmemory.providers.adapters.builtins.registry import CertifiedProviderAdapterRegistry
 from agentmemory.providers.adapters.builtins.voyage import VoyageProtocol, VoyageProviderAdapter
 from agentmemory.providers.adapters.strict_json import canonical_bytes, loads, require_object
+from agentmemory.providers.domain.capability_probe import ProviderProbeSuite
 from agentmemory.providers.domain.errors import (
     ProviderAdapterError,
     ProviderErrorCode,
@@ -69,6 +75,7 @@ if TYPE_CHECKING:
 PROFILE_ID = "018f0000-0000-7000-8000-000000000711"
 MODEL_ID = "test-model-v1"
 FINGERPRINT = digest("pro001-conformance-revision").value
+ENDPOINT_FINGERPRINT = digest("pro001-conformance-endpoint").value
 PURPOSE = (CanonicalPurpose.RETRIEVAL_QUERY,)
 
 
@@ -182,6 +189,7 @@ def _valid_response(request: ProviderGatewayRequest, call: int) -> ProviderGatew
         body=_valid_body(request),
         model_revision="revision-2026-07",
         revision_fingerprint=FINGERPRINT,
+        endpoint_fingerprint=ENDPOINT_FINGERPRINT,
         cancellation_verified=True,
     )
 
@@ -372,6 +380,7 @@ async def test_upstream_errors_use_safe_canonical_codes_without_body_or_secret(
             body=marker.encode(),
             model_revision="revision-1",
             revision_fingerprint=FINGERPRINT,
+            endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
         )
 
@@ -429,6 +438,7 @@ async def test_openai_compatible_deviations_fail_closed(body: bytes) -> None:
             body=body,
             model_revision="revision-1",
             revision_fingerprint=FINGERPRINT,
+            endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
         )
 
@@ -452,6 +462,7 @@ async def test_revision_cancellation_and_dimension_must_be_stable_across_purpose
             body=_valid_body(request),
             model_revision=f"revision-{call}",
             revision_fingerprint=digest(f"revision-{call}").value,
+            endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
         )
 
@@ -463,6 +474,19 @@ async def test_revision_cancellation_and_dimension_must_be_stable_across_purpose
     )
     with pytest.raises(ProviderAdapterError) as captured:
         await adapter.probe(drift_profile)
+    assert captured.value.code is ProviderErrorCode.MODEL_DRIFT
+
+    def endpoint_drift(
+        request: ProviderGatewayRequest,
+        call: int,
+    ) -> ProviderGatewayResponse:
+        return replace(
+            _valid_response(request, call),
+            endpoint_fingerprint=digest(f"endpoint-{call}").value,
+        )
+
+    with pytest.raises(ProviderAdapterError) as captured:
+        await OpenAIProviderAdapter(_Gateway(endpoint_drift)).probe(drift_profile)
     assert captured.value.code is ProviderErrorCode.MODEL_DRIFT
 
     def cancelled(request: ProviderGatewayRequest, call: int) -> ProviderGatewayResponse:
@@ -488,6 +512,7 @@ async def test_revision_cancellation_and_dimension_must_be_stable_across_purpose
             body=body,
             model_revision="revision-1",
             revision_fingerprint=FINGERPRINT,
+            endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
         )
 
@@ -511,6 +536,29 @@ class _Sidecar:
 
     async def probe(self) -> ProviderAttestation:
         return self.attestation
+
+    async def embed_probe(
+        self,
+        purpose: str,
+        items: tuple[tuple[str, str], ...],
+    ) -> tuple[EmbeddingVector, ...]:
+        del purpose
+        values = (1.0,) + (0.0,) * 1023
+        return tuple(
+            EmbeddingVector(content_id, values, MODEL_ID, "qwen-revision-1")
+            for content_id, _ in items
+        )
+
+    async def rerank(
+        self,
+        query: str,
+        documents: tuple[tuple[str, str], ...],
+    ) -> tuple[RerankItem, ...]:
+        del query
+        return tuple(
+            RerankItem(content_id, Decimal(len(documents) - index))
+            for index, (content_id, _) in enumerate(documents)
+        )
 
 
 @pytest.mark.parametrize(
@@ -573,11 +621,13 @@ async def test_qwen_local_rejects_sidecar_model_or_capability_mismatch() -> None
         limits=ProviderLimits(2, 4096, 128, 256, 1000),
         execution_class=ProviderExecutionClass.LOCAL,
     )
+    suite = ProviderProbeSuite()
     invalid_result = ProviderProbeResult(
         adapter_id="different-local",
         model_id=MODEL_ID,
         model_revision="revision-1",
         revision_fingerprint=FINGERPRINT,
+        endpoint_fingerprint=ENDPOINT_FINGERPRINT,
         operation=ProviderOperation.EMBEDDING,
         purposes=PURPOSE,
         dimension=2,
@@ -586,6 +636,10 @@ async def test_qwen_local_rejects_sidecar_model_or_capability_mismatch() -> None
         similarity=SimilarityMetric.COSINE,
         max_items=32,
         cancellation_verified=True,
+        suite_digest=suite.suite_digest,
+        canary_digest=suite.canary_digest,
+        validation_digest=digest("invalid-local-validation").value,
+        validated_batches=len(PURPOSE),
     )
 
     @dataclass(frozen=True, slots=True)
@@ -753,6 +807,7 @@ async def test_remote_probe_rejects_oversized_provider_body_before_parsing() -> 
             body=b"x" * (8 * 1024 * 1024 + 1),
             model_revision="revision-1",
             revision_fingerprint=FINGERPRINT,
+            endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
         )
 

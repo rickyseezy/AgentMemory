@@ -113,7 +113,7 @@ async def test_rebuild_rejects_forged_expired_or_non_privileged_approval(tmp_pat
 def _manifest() -> RebuildManifest:
     return RebuildManifest(
         application_build="agentmemory@0.1.0",
-        relational_schema="0025_gra006_graph_integrity",
+        relational_schema="0036_pro003_capability_attestations",
         graph_schema="0004_gra003_materialized_edge_indexes",
         parser_version="not-applicable:graph-v1",
         extractor_version="agentmemory.local-extractor@1.0.0",

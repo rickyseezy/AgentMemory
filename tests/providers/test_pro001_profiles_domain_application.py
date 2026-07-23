@@ -25,6 +25,7 @@ from agentmemory.providers.application.profiles import (
     ProbeProviderCommand,
     ProbeProviderHandler,
 )
+from agentmemory.providers.domain.capability_probe import ProviderProbeSuite
 from agentmemory.providers.domain.errors import (
     ProviderModelDriftError,
     ProviderProfileAuthorizationError,
@@ -39,6 +40,7 @@ from agentmemory.providers.domain.profiles import (
     ProviderLimits,
     ProviderManifest,
     ProviderOperation,
+    ProviderProbeBinding,
     ProviderProbeEvidence,
     ProviderProbeResult,
     ProviderProfile,
@@ -143,11 +145,13 @@ def probe_result(
     fingerprint: str = REVISION_FINGERPRINT,
 ) -> ProviderProbeResult:
     """Build complete content-free live probe evidence."""
+    suite = ProviderProbeSuite()
     return ProviderProbeResult(
         adapter_id=adapter_id,
         model_id=model_id,
         model_revision="text-embedding-3-large-2026-01-15",
         revision_fingerprint=fingerprint,
+        endpoint_fingerprint=digest("pro001-endpoint").value,
         operation=ProviderOperation.EMBEDDING,
         purposes=PURPOSES,
         dimension=3072,
@@ -156,6 +160,10 @@ def probe_result(
         similarity=SimilarityMetric.COSINE,
         max_items=32,
         cancellation_verified=True,
+        suite_digest=suite.suite_digest,
+        canary_digest=suite.canary_digest,
+        validation_digest=digest("pro001-validation").value,
+        validated_batches=len(PURPOSES),
     )
 
 
@@ -174,6 +182,28 @@ def profile(
         version=1,
         created_at=NOW,
         updated_at=NOW,
+    )
+
+
+def probe_evidence(
+    *,
+    result: ProviderProbeResult | None = None,
+    at: datetime = NOW,
+    configuration: ProviderProfileConfiguration | None = None,
+    provider_manifest: ProviderManifest | None = None,
+) -> ProviderProbeEvidence:
+    """Build one PRO-003-bound capability attestation for profile tests."""
+    resolved_configuration = configuration or remote_configuration()
+    resolved_manifest = provider_manifest or manifest()
+    return ProviderProbeEvidence.create(
+        ProviderProbeBinding(
+            profile_id=PROFILE_ID,
+            manifest_digest=resolved_manifest.digest,
+            adapter_digest=resolved_manifest.implementation_digest,
+            configuration_digest=resolved_configuration.digest,
+        ),
+        result or probe_result(),
+        at,
     )
 
 
@@ -337,7 +367,7 @@ def test_vector_finiteness_predicate_rejects_empty_and_non_finite(
 
 def test_probe_evidence_is_content_addressed_and_tamper_evident() -> None:
     """Live capability facts are immutable and self-authenticating."""
-    evidence = ProviderProbeEvidence.create(PROFILE_ID, manifest().digest, probe_result(), NOW)
+    evidence = probe_evidence()
     assert evidence.evidence_id == evidence.expected_id
     with pytest.raises(ProviderProfileValidationError):
         replace(evidence, evidence_id="0" * 64)
@@ -356,26 +386,19 @@ def test_profile_snapshot_rejects_invalid_identity_and_status_evidence_shape() -
 def test_activation_pins_revision_and_rejects_alias_drift_or_time_regression() -> None:
     """An active model alias cannot silently move to another model generation."""
     draft = profile()
-    first = ProviderProbeEvidence.create(PROFILE_ID, manifest().digest, probe_result(), NOW)
+    first = probe_evidence()
     active = draft.activate(first)
     assert active.status is ProviderProfileStatus.ACTIVE
     assert active.version == 2
 
-    drifted = ProviderProbeEvidence.create(
-        PROFILE_ID,
-        manifest().digest,
-        probe_result(fingerprint=digest("different-revision").value),
-        NOW + timedelta(seconds=1),
+    drifted = probe_evidence(
+        result=probe_result(fingerprint=digest("different-revision").value),
+        at=NOW + timedelta(seconds=1),
     )
     with pytest.raises(ProviderModelDriftError, match="revision drifted"):
         active.activate(drifted)
 
-    older = ProviderProbeEvidence.create(
-        PROFILE_ID,
-        manifest().digest,
-        probe_result(),
-        NOW - timedelta(microseconds=1),
-    )
+    older = probe_evidence(at=NOW - timedelta(microseconds=1))
     with pytest.raises(ProviderProfileValidationError):
         active.activate(older)
 
@@ -586,6 +609,10 @@ async def test_create_probe_query_lifecycle_is_manifest_bound_and_idempotent() -
     active = await probe_handler.execute(probe_command)
     assert active.status is ProviderProfileStatus.ACTIVE
     assert active.active_probe is not None
+    assert active.active_probe.adapter_digest == adapter.manifest.implementation_digest
+    assert active.active_probe.configuration_digest == draft.configuration.digest
+    assert active.active_probe.endpoint_fingerprint == adapter.result.endpoint_fingerprint
+    assert active.active_probe.suite_digest == adapter.result.suite_digest
     assert adapter.calls == 1
     assert await probe_handler.execute(probe_command) == active
     assert adapter.calls == 1
@@ -594,6 +621,31 @@ async def test_create_probe_query_lifecycle_is_manifest_bound_and_idempotent() -
         GetProviderProfileQuery(scope("provider.profile.read"), PROFILE_ID, NOW)
     )
     assert result == active
+
+
+@pytest.mark.asyncio
+async def test_probe_handler_rejects_adapter_claiming_unknown_suite_before_activation() -> None:
+    repository = _Repository(profile())
+    adapter = _Adapter(
+        manifest(),
+        replace(
+            probe_result(),
+            suite_digest=digest("unknown-suite").value,
+        ),
+    )
+    command = ProbeProviderCommand(
+        "probe-unknown-suite",
+        scope("provider.profile.probe"),
+        PROFILE_ID,
+        1,
+        repository.current.snapshot_digest if repository.current is not None else "",
+        NOW + timedelta(seconds=1),
+    )
+    with pytest.raises(ProviderProfileValidationError):
+        await ProbeProviderHandler(repository, _Registry(adapter)).execute(command)
+    assert repository.current is not None
+    assert repository.current.status is ProviderProfileStatus.DRAFT
+    assert repository.current.version == 1
 
 
 @pytest.mark.asyncio

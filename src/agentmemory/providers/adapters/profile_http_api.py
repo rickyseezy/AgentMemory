@@ -160,6 +160,13 @@ class ProviderProbeResponseModel(_StrictModel):
     evidence_id: str
     model_revision: str
     revision_fingerprint: str
+    adapter_digest: str
+    endpoint_fingerprint: str
+    configuration_digest: str
+    suite_digest: str
+    canary_digest: str
+    validation_digest: str
+    validated_batches: int
     dimension: int | None
     dtype: str | None
     cancellation_verified: bool
@@ -442,6 +449,13 @@ def _response(profile: ProviderProfile) -> ProviderProfileResponseModel:
                 evidence_id=probe.evidence_id,
                 model_revision=probe.result.model_revision,
                 revision_fingerprint=probe.result.revision_fingerprint,
+                adapter_digest=probe.adapter_digest,
+                endpoint_fingerprint=probe.endpoint_fingerprint,
+                configuration_digest=probe.configuration_digest,
+                suite_digest=probe.suite_digest,
+                canary_digest=probe.result.canary_digest,
+                validation_digest=probe.result.validation_digest,
+                validated_batches=probe.result.validated_batches,
                 dimension=probe.result.dimension,
                 dtype=None if probe.result.dtype is None else probe.result.dtype.value,
                 cancellation_verified=probe.result.cancellation_verified,

@@ -8,12 +8,13 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from agentmemory.identity.domain.retrieval_scope import RetrievalRole
+from agentmemory.providers.domain.capability_probe import ProviderProbeSuite
 from agentmemory.providers.domain.errors import (
     ProviderProfileAuthorizationError,
     ProviderProfileConflictError,
     ProviderProfileValidationError,
 )
-from agentmemory.providers.domain.profiles import ProviderProbeEvidence
+from agentmemory.providers.domain.profiles import ProviderProbeBinding, ProviderProbeEvidence
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -158,9 +159,16 @@ class ProbeProviderHandler:
             raise ProviderProfileConflictError(_ERR_MANIFEST)
         manifest.validate_configuration(profile.configuration)
         result = await adapter.probe(profile)
+        suite = ProviderProbeSuite()
+        if result.suite_digest != suite.suite_digest or result.canary_digest != suite.canary_digest:
+            raise ProviderProfileValidationError(_ERR_PRECONDITION)
         evidence = ProviderProbeEvidence.create(
-            profile.profile_id,
-            profile.manifest_digest,
+            ProviderProbeBinding(
+                profile_id=profile.profile_id,
+                manifest_digest=profile.manifest_digest,
+                adapter_digest=manifest.implementation_digest,
+                configuration_digest=profile.configuration.digest,
+            ),
             result,
             command.probed_at,
         )

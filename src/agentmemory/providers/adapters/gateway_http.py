@@ -111,6 +111,7 @@ class ProviderGatewayHttpTransport:
             status = _integer(document.get("status_code"))
             revision = _string(document.get("model_revision"))
             fingerprint = _string(document.get("revision_fingerprint"))
+            endpoint_fingerprint = _string(document.get("endpoint_fingerprint"))
             cancellation = _boolean(document.get("cancellation_verified"))
         except (TypeError, ValueError, binascii.Error) as error:
             raise ProviderProfileDependencyError(_ERR_RESPONSE) from error
@@ -119,9 +120,17 @@ class ProviderGatewayHttpTransport:
             or not _MIN_HTTP_STATUS <= status <= _MAX_HTTP_STATUS
             or _REVISION.fullmatch(revision) is None
             or _DIGEST.fullmatch(fingerprint) is None
+            or _DIGEST.fullmatch(endpoint_fingerprint) is None
         ):
             raise ProviderProfileDependencyError(_ERR_RESPONSE)
-        return ProviderGatewayResponse(status, body, revision, fingerprint, cancellation)
+        return ProviderGatewayResponse(
+            status,
+            body,
+            revision,
+            fingerprint,
+            endpoint_fingerprint,
+            cancellation,
+        )
 
 
 def _validate_request(request: ProviderGatewayRequest) -> None:

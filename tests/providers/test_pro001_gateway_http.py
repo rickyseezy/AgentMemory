@@ -22,6 +22,7 @@ from tests.core.support import digest, write_secret
 
 CAPABILITY = b"c" * 32
 FINGERPRINT = digest("pro001-gateway-revision").value
+ENDPOINT_FINGERPRINT = digest("pro001-gateway-endpoint").value
 REFERENCE_URI = "secret://providers/openai-production"
 
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ def _envelope(**changes: object) -> bytes:
         "status_code": 200,
         "model_revision": "revision-2026-07",
         "revision_fingerprint": FINGERPRINT,
+        "endpoint_fingerprint": ENDPOINT_FINGERPRINT,
         "cancellation_verified": True,
     }
     value.update(changes)
@@ -97,6 +99,7 @@ async def test_gateway_request_uses_protected_capability_and_reference_only_enve
     assert response.status_code == 200
     assert response.body == b'{"ok":true}'
     assert response.revision_fingerprint == FINGERPRINT
+    assert response.endpoint_fingerprint == ENDPOINT_FINGERPRINT
     assert len(observations) == 1
     observation = observations[0]
     assert str(observation.url) == ("http://provider-gateway:8080/v1/provider-operations/probe")
@@ -160,6 +163,7 @@ async def test_invalid_gateway_request_is_rejected_before_socket_acquisition(
         _envelope(status_code=99),
         _envelope(model_revision="bad revision"),
         _envelope(revision_fingerprint="bad"),
+        _envelope(endpoint_fingerprint="bad"),
         _envelope(cancellation_verified=1),
     ],
 )

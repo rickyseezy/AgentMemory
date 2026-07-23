@@ -56,7 +56,7 @@ class QwenLocalProviderAdapter:
             result.adapter_id != self.manifest.adapter_id
             or result.model_id != configuration.model_id
             or result.operation is not configuration.operation
-            or not set(configuration.purposes).issubset(result.purposes)
+            or result.purposes != configuration.purposes
             or result.max_items < configuration.limits.max_items
             or not result.cancellation_verified
         ):

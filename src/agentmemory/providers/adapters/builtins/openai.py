@@ -8,12 +8,14 @@ from agentmemory.providers.adapters.builtins.base import (
     CertifiedRemoteAdapter,
     ParsedProbe,
     certified_manifest,
+    probe_content_ids,
     probe_inputs,
     require_list,
     require_model,
     require_object,
     require_vector,
 )
+from agentmemory.providers.domain.capability_probe import EmbeddingProbeBatch
 from agentmemory.providers.domain.errors import ProviderAdapterError, ProviderErrorCode
 from agentmemory.providers.domain.profiles import (
     CanonicalPurpose,
@@ -69,10 +71,14 @@ class OpenAIProtocol:
         require_model(root.get("model"), model_id)
         rows = require_list(root.get("data"), len(probe_inputs()))
         vectors: list[tuple[float, ...]] = []
+        content_ids: list[str] = []
+        expected_ids = probe_content_ids()
         for expected_index, raw in enumerate(rows):
             row = require_object(raw)
-            if row.get("index") != expected_index:
+            index = row.get("index")
+            if not isinstance(index, int) or isinstance(index, bool) or index != expected_index:
                 raise ValueError
+            content_ids.append(expected_ids[expected_index])
             vectors.append(require_vector(row.get("embedding")))
         if len({len(vector) for vector in vectors}) != 1:
             raise ValueError
@@ -81,6 +87,12 @@ class OpenAIProtocol:
             VectorDtype.FLOAT32,
             VectorNormalization.PROVIDER_DEFINED,
             SimilarityMetric.COSINE,
+            EmbeddingProbeBatch(
+                tuple(content_ids),
+                tuple(vectors),
+                VectorDtype.FLOAT32,
+                VectorNormalization.PROVIDER_DEFINED,
+            ),
         )
 
 

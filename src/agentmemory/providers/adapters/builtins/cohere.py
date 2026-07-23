@@ -8,6 +8,7 @@ from agentmemory.providers.adapters.builtins.base import (
     CertifiedRemoteAdapter,
     ParsedProbe,
     certified_manifest,
+    probe_content_ids,
     probe_inputs,
     probe_query,
     require_float,
@@ -15,6 +16,7 @@ from agentmemory.providers.adapters.builtins.base import (
     require_object,
     require_vector,
 )
+from agentmemory.providers.domain.capability_probe import EmbeddingProbeBatch, RerankingProbeBatch
 from agentmemory.providers.domain.profiles import (
     CanonicalPurpose,
     ProviderLimits,
@@ -90,19 +92,37 @@ class CohereProtocol:
                 VectorDtype.FLOAT32,
                 VectorNormalization.PROVIDER_DEFINED,
                 SimilarityMetric.COSINE,
+                EmbeddingProbeBatch(
+                    probe_content_ids(),
+                    tuple(vectors),
+                    VectorDtype.FLOAT32,
+                    VectorNormalization.PROVIDER_DEFINED,
+                ),
             )
         rows = require_list(root.get("results"), len(probe_inputs()))
-        indexes: set[int] = set()
+        content_ids: list[str] = []
+        scores: list[float] = []
+        expected_ids = probe_content_ids()
         for raw in rows:
             row = require_object(raw)
             index = row.get("index")
-            if not isinstance(index, int) or isinstance(index, bool):
+            if (
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or not 0 <= index < len(expected_ids)
+            ):
                 raise TypeError
-            indexes.add(index)
-            require_float(row.get("relevance_score"))
-        if indexes != set(range(len(probe_inputs()))):
+            content_ids.append(expected_ids[index])
+            scores.append(require_float(row.get("relevance_score")))
+        if len(set(content_ids)) != len(expected_ids):
             raise ValueError
-        return ParsedProbe(None, None, None, None)
+        return ParsedProbe(
+            None,
+            None,
+            None,
+            None,
+            RerankingProbeBatch(tuple(content_ids), tuple(scores)),
+        )
 
 
 class CohereProviderAdapter(CertifiedRemoteAdapter):

@@ -29,6 +29,7 @@ from agentmemory.providers.domain.profiles import (
     ProviderExecutionClass,
     ProviderLimits,
     ProviderOperation,
+    ProviderProbeBinding,
     ProviderProbeEvidence,
     ProviderProbeResult,
     ProviderProfile,
@@ -368,13 +369,21 @@ async def _replay(  # noqa: PLR0913 -- Exact replay checks every immutable coord
 
 async def _decode_row(connection: AsyncConnection, row: RowMapping) -> ProviderProfile:
     profile = await _decode_document(connection, _blob(row["document_json"]))
+    stored_status = str(row["status"])
+    reprobe_overlay = (
+        profile.status is ProviderProfileStatus.REPROBE_REQUIRED
+        and stored_status == ProviderProfileStatus.ACTIVE.value
+    )
+    stored_probe_id = None if row["active_probe_id"] is None else str(row["active_probe_id"])
+    document = require_object(loads(_blob(row["document_json"])))
     if (
         profile.profile_id != str(row["id"])
         or profile.configuration.brain_id != str(row["brain_id"])
         or profile.configuration.digest != str(row["configuration_digest"])
         or profile.manifest_digest != str(row["manifest_digest"])
-        or profile.status.value != str(row["status"])
+        or (profile.status.value != stored_status and not reprobe_overlay)
         or profile.version != int(row["version"])
+        or _optional_string(document.get("active_probe_id")) != stored_probe_id
     ):
         raise ProviderProfileConflictError(_ERR_INTEGRITY)
     return profile
@@ -387,11 +396,14 @@ async def _decode_document(connection: AsyncConnection, raw: bytes) -> ProviderP
         None if active_probe_id is None else await _load_evidence(connection, active_probe_id)
     )
     configuration = _decode_configuration(require_object(document["configuration"]))
+    status = ProviderProfileStatus(_string(document["status"]))
+    if status is ProviderProfileStatus.ACTIVE and active_probe_id is not None and evidence is None:
+        status = ProviderProfileStatus.REPROBE_REQUIRED
     return ProviderProfile(
         profile_id=_string(document["profile_id"]),
         configuration=configuration,
         manifest_digest=_string(document["manifest_digest"]),
-        status=ProviderProfileStatus(_string(document["status"])),
+        status=status,
         version=_integer(document["version"]),
         created_at=_instant(document["created_at"]),
         updated_at=_instant(document["updated_at"]),
@@ -402,12 +414,20 @@ async def _decode_document(connection: AsyncConnection, raw: bytes) -> ProviderP
 async def _load_evidence(
     connection: AsyncConnection,
     evidence_id: str,
-) -> ProviderProbeEvidence:
+) -> ProviderProbeEvidence | None:
     row = (
         (
             await connection.execute(
                 text(
-                    "SELECT evidence_json FROM provider_probe_evidence WHERE evidence_id=:evidence"
+                    "SELECT evidence.evidence_json,attestation.adapter_digest,"
+                    "attestation.endpoint_fingerprint,attestation.configuration_digest,"
+                    "attestation.suite_digest,attestation.canary_digest,"
+                    "attestation.validation_digest,attestation.validated_batches,"
+                    "evidence.schema_version AS evidence_schema_version "
+                    "FROM provider_probe_evidence AS evidence "
+                    "LEFT JOIN provider_capability_attestations AS attestation "
+                    "ON attestation.attestation_id=evidence.evidence_id "
+                    "WHERE evidence.evidence_id=:evidence"
                 ),
                 {"evidence": evidence_id},
             )
@@ -417,12 +437,17 @@ async def _load_evidence(
     )
     if row is None:
         raise ProviderProfileConflictError(_ERR_INTEGRITY)
+    if row["adapter_digest"] is None:
+        if int(row["evidence_schema_version"]) == 1:
+            return None
+        raise ProviderProfileConflictError(_ERR_INTEGRITY)
     document = require_object(loads(_blob(row["evidence_json"])))
     result = ProviderProbeResult(
         adapter_id=_string(document["adapter_id"]),
         model_id=_string(document["model_id"]),
         model_revision=_string(document["model_revision"]),
         revision_fingerprint=_string(document["revision_fingerprint"]),
+        endpoint_fingerprint=_string(document["endpoint_fingerprint"]),
         operation=ProviderOperation(_string(document["operation"])),
         purposes=_purposes(document["purposes"]),
         dimension=_optional_integer(document.get("dimension")),
@@ -439,14 +464,32 @@ async def _load_evidence(
         ),
         max_items=_integer(document["max_items"]),
         cancellation_verified=_boolean(document["cancellation_verified"]),
+        suite_digest=_string(document["suite_digest"]),
+        canary_digest=_string(document["canary_digest"]),
+        validation_digest=_string(document["validation_digest"]),
+        validated_batches=_integer(document["validated_batches"]),
     )
     evidence = ProviderProbeEvidence.create(
-        _string(document["profile_id"]),
-        _string(document["manifest_digest"]),
+        ProviderProbeBinding(
+            profile_id=_string(document["profile_id"]),
+            manifest_digest=_string(document["manifest_digest"]),
+            adapter_digest=_string(document["adapter_digest"]),
+            configuration_digest=_string(document["configuration_digest"]),
+        ),
         result,
         _instant(document["probed_at"]),
     )
     if evidence.evidence_id != evidence_id:
+        raise ProviderProfileConflictError(_ERR_INTEGRITY)
+    if (
+        evidence.adapter_digest != str(row["adapter_digest"])
+        or evidence.endpoint_fingerprint != str(row["endpoint_fingerprint"])
+        or evidence.configuration_digest != str(row["configuration_digest"])
+        or evidence.suite_digest != str(row["suite_digest"])
+        or evidence.result.canary_digest != str(row["canary_digest"])
+        or evidence.result.validation_digest != str(row["validation_digest"])
+        or evidence.result.validated_batches != int(row["validated_batches"])
+    ):
         raise ProviderProfileConflictError(_ERR_INTEGRITY)
     return evidence
 
@@ -571,7 +614,7 @@ async def _insert_probe(
             "(evidence_id,profile_id,profile_version,manifest_digest,adapter_id,operation,model_id,"
             "model_revision,revision_fingerprint,dimension,dtype,purposes_json,evidence_json,"
             "probed_at,schema_version) VALUES (:evidence,:profile,:version,:manifest,:adapter,"
-            ":operation,:model,:revision,:fingerprint,:dimension,:dtype,:purposes,:document,:at,1)"
+            ":operation,:model,:revision,:fingerprint,:dimension,:dtype,:purposes,:document,:at,2)"
         ),
         {
             "adapter": result.adapter_id,
@@ -588,6 +631,28 @@ async def _insert_probe(
             "purposes": canonical_bytes([item.value for item in result.purposes]),
             "revision": result.model_revision,
             "version": profile.version,
+        },
+    )
+    await connection.execute(
+        text(
+            "INSERT INTO provider_capability_attestations "
+            "(attestation_id,profile_id,adapter_digest,endpoint_fingerprint,"
+            "configuration_digest,suite_digest,canary_digest,validation_digest,"
+            "validated_batches,recorded_at,schema_version) VALUES "
+            "(:attestation,:profile,:adapter,:endpoint,:configuration,:suite,:canary,"
+            ":validation,:batches,:at,1)"
+        ),
+        {
+            "adapter": evidence.adapter_digest,
+            "at": _micros(evidence.probed_at),
+            "attestation": evidence.evidence_id,
+            "batches": result.validated_batches,
+            "canary": result.canary_digest,
+            "configuration": evidence.configuration_digest,
+            "endpoint": evidence.endpoint_fingerprint,
+            "profile": evidence.profile_id,
+            "suite": evidence.suite_digest,
+            "validation": result.validation_digest,
         },
     )
 

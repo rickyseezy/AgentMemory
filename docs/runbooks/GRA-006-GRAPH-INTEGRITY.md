@@ -2,7 +2,7 @@
 
 ## Healthy state
 
-- Core reports Ready at relational head `0038_pro005_provider_routing` or a later certified head.
+- Core reports Ready at relational head `0039_pro006_provider_scheduling` or a later certified head.
 - A completed migration has cursor equal to source watermark and state `completed`.
 - The migration ID is `gra006-integrity-v1`; its checksum must equal the running release's registered
   checksum. Never copy a checksum from another binary or edit persisted migration rows.

@@ -467,12 +467,22 @@ from agentmemory.providers.adapters.routing_http_api import (
 from agentmemory.providers.adapters.routing_identity import (
     SystemProviderRoutingIdentityGenerator,
 )
+from agentmemory.providers.adapters.scheduling_http_api import (
+    create_contract_provider_scheduling_router,
+    create_provider_scheduling_router,
+)
+from agentmemory.providers.adapters.scheduling_identity import (
+    SystemProviderSchedulingIdentityGenerator,
+)
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
 from agentmemory.providers.adapters.sqlite_routing import (
     SqliteProviderRoutingRepository,
+)
+from agentmemory.providers.adapters.sqlite_scheduling import (
+    SqliteProviderSchedulingRepository,
 )
 from agentmemory.providers.application.embedding_spaces import EnsureIndexGenerationHandler
 from agentmemory.providers.application.profiles import (
@@ -484,6 +494,11 @@ from agentmemory.providers.application.routing import (
     CreateProviderRouteHandler,
     ResolveProviderRouteHandler,
     RestrictProviderRoutingHandler,
+)
+from agentmemory.providers.application.scheduling import (
+    CancelProviderWorkHandler,
+    EnqueueProviderWorkHandler,
+    GetProviderWorkHandler,
 )
 from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
@@ -1081,6 +1096,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_provider_profile_router(),
             create_contract_embedding_space_router(),
             create_contract_provider_routing_router(),
+            create_contract_provider_scheduling_router(),
         )
     )
 
@@ -1198,6 +1214,20 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
                 provider_routing,
                 BoundedProviderRouteCache(),
             ),
+            clock,
+        )
+    )
+    provider_scheduling = SqliteProviderSchedulingRepository(store)
+    application.include_router(
+        create_provider_scheduling_router(
+            authenticator,
+            retrieval_scope,
+            EnqueueProviderWorkHandler(
+                provider_scheduling,
+                SystemProviderSchedulingIdentityGenerator(),
+            ),
+            GetProviderWorkHandler(provider_scheduling),
+            CancelProviderWorkHandler(provider_scheduling),
             clock,
         )
     )

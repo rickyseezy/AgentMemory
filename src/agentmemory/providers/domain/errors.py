@@ -103,3 +103,23 @@ class ProviderRoutingDeniedError(PermissionError):
 
 class ProviderRoutingCapabilityError(RuntimeError):
     """Fail closed when the selected profile cannot serve the requested operation."""
+
+
+class ProviderSchedulingValidationError(ValueError):
+    """Reject malformed, mixed, oversized, or inconsistent provider work."""
+
+
+class ProviderSchedulingAuthorizationError(PermissionError):
+    """Reject scheduling or final dispatch without current exact authority."""
+
+
+class ProviderSchedulingConflictError(RuntimeError):
+    """Reject idempotency, cancellation, lease, or immutable-result conflicts."""
+
+
+class ProviderSchedulingDependencyError(RuntimeError):
+    """Expose a content-free scheduler, payload, or provider dependency failure."""
+
+
+class ProviderSchedulingCapacityError(RuntimeError):
+    """Report a bounded rate, concurrency, quota, or cost-budget denial."""

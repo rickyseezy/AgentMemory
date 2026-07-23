@@ -74,7 +74,7 @@ def attested_descriptor(**changes: object) -> EmbeddingSpaceDescriptor:
     return descriptor(**values)
 
 
-async def _seed_active_provider(store: SqliteCoreStore) -> str:
+async def seed_active_provider(store: SqliteCoreStore) -> str:
     await BootstrapLocalBrainHandler(SqliteUnitOfWorkFactory(store, FixedClock())).execute(
         bootstrap_request()
     )
@@ -142,7 +142,7 @@ async def test_sqlite_reservation_is_attested_replayable_and_completes_once(
     store = migrated_store(tmp_path)
     repository = SqliteEmbeddingSpaceRepository(store)
     try:
-        attestation_id = await _seed_active_provider(store)
+        attestation_id = await seed_active_provider(store)
         embedding_space, index_generation = candidates(attestation_id)
         request_digest = digest("pro004-request").value
         reservation = await repository.reserve(
@@ -261,7 +261,7 @@ async def test_same_space_concurrent_creation_converges_on_one_generation(
     store = migrated_store(tmp_path)
     repository = SqliteEmbeddingSpaceRepository(store)
     try:
-        attestation_id = await _seed_active_provider(store)
+        attestation_id = await seed_active_provider(store)
         first = candidates(attestation_id)
         second = candidates(
             attestation_id,
@@ -307,7 +307,7 @@ async def test_attestation_mismatch_rejects_without_partial_space_or_generation(
     store = migrated_store(tmp_path)
     repository = SqliteEmbeddingSpaceRepository(store)
     try:
-        attestation_id = await _seed_active_provider(store)
+        attestation_id = await seed_active_provider(store)
         wrong = candidates(
             attestation_id,
             space_descriptor=attested_descriptor(dimension=1536),
@@ -335,7 +335,7 @@ async def test_sqlite_triggers_reject_semantic_and_physical_contract_tampering(
     store = migrated_store(tmp_path)
     repository = SqliteEmbeddingSpaceRepository(store)
     try:
-        attestation_id = await _seed_active_provider(store)
+        attestation_id = await seed_active_provider(store)
         await repository.reserve(
             scope("provider.embedding_space.ensure"),
             "pro004-tamper",

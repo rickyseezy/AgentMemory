@@ -7,7 +7,7 @@ already active provider profile; it does not create, probe, schedule, retry, or 
 
 ## Preconditions
 
-- Core is Ready at relational head `0038_pro005_provider_routing` or a later certified head.
+- Core is Ready at relational head `0039_pro006_provider_scheduling` or a later certified head.
 - Every referenced profile is active and has current live capability evidence.
 - The caller has a current Brain-wide owner/admin grant for publication, or an authorized
   owner/admin/editor/adapter/worker grant for resolution.

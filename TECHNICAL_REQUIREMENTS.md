@@ -2792,6 +2792,10 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-006 — Batch and schedule provider work safely
 
+**Implementation record:** [`docs/implementation/PRO-006.md`](docs/implementation/PRO-006.md)
+
+**Operations runbook:** [`docs/runbooks/PRO-006-PROVIDER-SCHEDULING.md`](docs/runbooks/PRO-006-PROVIDER-SCHEDULING.md)
+
 **User story:** As an operator, provider work respects latency, quota, cost, fairness, and priority.
 
 **Acceptance criteria**

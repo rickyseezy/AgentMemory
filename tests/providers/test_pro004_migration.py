@@ -28,7 +28,7 @@ def test_pro004_schema_installs_closed_constraints_triggers_and_empty_downgrade(
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0038_pro005_provider_routing",
+            "0039_pro006_provider_scheduling",
         )
         tables = {
             str(row[0])

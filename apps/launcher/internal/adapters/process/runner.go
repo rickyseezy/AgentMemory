@@ -406,13 +406,15 @@ func readBoundedProtocolLine(reader *bufio.Reader, limit int) ([]byte, error) {
 
 var _ argvprocess.ConversationRunner = (*Runner)(nil)
 
-func closeConversationInput(command *exec.Cmd) {
+func closeConversationInput(command *exec.Cmd) bool {
 	if command == nil {
-		return
+		return false
 	}
 	if input, ok := command.Stdin.(*conversationPipeReader); ok && input != nil && input.PipeReader != nil {
 		_ = input.Close()
+		return true
 	}
+	return false
 }
 
 func invocationOrContextError(ctx context.Context) error {

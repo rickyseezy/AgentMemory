@@ -5,6 +5,7 @@ package process
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"syscall"
 	"time"
@@ -34,8 +35,16 @@ func superviseUnixProcessGroup(
 				_ = command.Wait()
 				return err
 			}
-			closeConversationInput(command)
-			return command.Wait()
+			conversationInputClosed := closeConversationInput(command)
+			waitError := command.Wait()
+			// Closing the internal reader is how the supervisor unblocks exec's
+			// stdin copier after leader exit. If the child itself succeeded, the
+			// resulting ErrClosedPipe describes that teardown, not child failure.
+			if conversationInputClosed && errors.Is(waitError, io.ErrClosedPipe) &&
+				command.ProcessState != nil && command.ProcessState.Success() {
+				return nil
+			}
+			return waitError
 		}
 		if ctx.Err() != nil && !terminationStarted {
 			terminationStarted = true

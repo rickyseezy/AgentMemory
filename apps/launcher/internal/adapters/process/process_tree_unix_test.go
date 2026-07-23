@@ -5,6 +5,7 @@ package process
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,6 +63,26 @@ func TestPF001UnixProcessSupervisorKillsGroupOnObservationFailure(t *testing.T) 
 	})
 	if !errors.Is(err, want) {
 		t.Fatalf("supervisor error = %v", err)
+	}
+}
+
+func TestPF001UnixProcessTreeTreatsIntentionalConversationPipeClosureAsCleanExit(
+	t *testing.T,
+) {
+	executable := testCurrentExecutable(t)
+	command := exec.CommandContext(
+		context.Background(),
+		executable,
+		"-test.run=^TestPF001ArgvRunnerHelper$",
+		"--",
+		"emit",
+	) // #nosec G204 -- current test executable and fixed argv.
+	reader, writer := io.Pipe()
+	defer func() { _ = writer.Close() }()
+	command.Stdin = &conversationPipeReader{PipeReader: reader}
+
+	if err := runCommandInProcessTree(context.Background(), command); err != nil {
+		t.Fatalf("successful conversation process returned pipe teardown error: %v", err)
 	}
 }
 

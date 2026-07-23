@@ -2,7 +2,7 @@
 
 ## Healthy state
 
-- Core reports Ready at relational head `0037_pro004_embedding_spaces`.
+- Core reports Ready at relational head `0038_pro005_provider_routing` or a later certified head.
 - Detection operations are append-only and exact retries return the same conflict IDs.
 - Every conflict links two current canonical assertion IDs and all supporting evidence IDs.
 - Unresolved conflicts cause retrieval to qualify or abstain; rank never hides them.

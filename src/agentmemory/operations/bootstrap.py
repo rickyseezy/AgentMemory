@@ -459,15 +459,31 @@ from agentmemory.providers.adapters.profile_http_api import (
 from agentmemory.providers.adapters.profile_identity import (
     SystemProviderProfileIdentityGenerator,
 )
+from agentmemory.providers.adapters.routing_cache import BoundedProviderRouteCache
+from agentmemory.providers.adapters.routing_http_api import (
+    create_contract_provider_routing_router,
+    create_provider_routing_router,
+)
+from agentmemory.providers.adapters.routing_identity import (
+    SystemProviderRoutingIdentityGenerator,
+)
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
+from agentmemory.providers.adapters.sqlite_routing import (
+    SqliteProviderRoutingRepository,
+)
 from agentmemory.providers.application.embedding_spaces import EnsureIndexGenerationHandler
 from agentmemory.providers.application.profiles import (
     CreateProviderProfileHandler,
     GetProviderProfileHandler,
     ProbeProviderHandler,
+)
+from agentmemory.providers.application.routing import (
+    CreateProviderRouteHandler,
+    ResolveProviderRouteHandler,
+    RestrictProviderRoutingHandler,
 )
 from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
@@ -1064,6 +1080,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_backpressure_router(),
             create_contract_provider_profile_router(),
             create_contract_embedding_space_router(),
+            create_contract_provider_routing_router(),
         )
     )
 
@@ -1137,6 +1154,8 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
         )
     )
     provider_profiles = SqliteProviderProfileRepository(store)
+    provider_routing = SqliteProviderRoutingRepository(store)
+    provider_routing_identities = SystemProviderRoutingIdentityGenerator()
     application.include_router(
         create_provider_profile_router(
             authenticator,
@@ -1159,6 +1178,25 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
                 SqliteEmbeddingSpaceRepository(store),
                 Neo4jIndexGenerationProvisioner(neo4j_driver, neo4j_database),
                 SystemEmbeddingSpaceIdentityGenerator(),
+            ),
+            clock,
+        )
+    )
+    application.include_router(
+        create_provider_routing_router(
+            authenticator,
+            retrieval_scope,
+            CreateProviderRouteHandler(
+                provider_routing,
+                provider_routing_identities,
+            ),
+            RestrictProviderRoutingHandler(
+                provider_routing,
+                provider_routing_identities,
+            ),
+            ResolveProviderRouteHandler(
+                provider_routing,
+                BoundedProviderRouteCache(),
             ),
             clock,
         )

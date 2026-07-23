@@ -79,3 +79,27 @@ class EmbeddingSpaceConflictError(RuntimeError):
 
 class EmbeddingSpaceDependencyError(RuntimeError):
     """Expose a content-free canonical or graph storage dependency failure."""
+
+
+class ProviderRoutingValidationError(ValueError):
+    """Reject malformed, ambiguous, or policy-broadening routing input."""
+
+
+class ProviderRoutingAuthorizationError(PermissionError):
+    """Reject routing publication or resolution without current Brain authority."""
+
+
+class ProviderRoutingConflictError(RuntimeError):
+    """Reject stale versions, idempotency conflicts, or corrupt routing history."""
+
+
+class ProviderRoutingDependencyError(RuntimeError):
+    """Expose a content-free routing storage dependency failure."""
+
+
+class ProviderRoutingDeniedError(PermissionError):
+    """Fail closed when the selected route violates privacy or residency policy."""
+
+
+class ProviderRoutingCapabilityError(RuntimeError):
+    """Fail closed when the selected profile cannot serve the requested operation."""

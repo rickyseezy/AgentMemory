@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agentmemory.operations.domain.readiness import ReadinessBinding
     from agentmemory.shared.clock import Clock
 
-EXPECTED_MIGRATION_HEAD = "0037_pro004_embedding_spaces"
+EXPECTED_MIGRATION_HEAD = "0038_pro005_provider_routing"
 
 
 class SqliteActiveBrainResolver:

@@ -2769,6 +2769,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-005 — Route providers by workload and policy
 
+**Implementation record:** [`docs/implementation/PRO-005.md`](docs/implementation/PRO-005.md) and
+[`docs/runbooks/PRO-005-PROVIDER-ROUTING.md`](docs/runbooks/PRO-005-PROVIDER-ROUTING.md).
+
 **User story:** As an administrator, I can route code, memory, document, query, rerank, language, privacy, and workload purposes independently.
 
 **Acceptance criteria**

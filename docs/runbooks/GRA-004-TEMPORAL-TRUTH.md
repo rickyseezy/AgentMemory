@@ -8,7 +8,7 @@ anchor, impact, assertion lifecycle, domain-event, or audit rows.
 
 ## Preconditions
 
-- Core is Ready at relational head `0037_pro004_embedding_spaces`.
+- Core is Ready at relational head `0038_pro005_provider_routing` or a later certified head.
 - The caller has a current grant for the selected Brain, Project, and Repository.
 - Commit SHAs are lowercase full 40- or 64-character object IDs. Abbreviations are rejected.
 - Nodes, refs, parents, and impacts are sorted canonically before submission.

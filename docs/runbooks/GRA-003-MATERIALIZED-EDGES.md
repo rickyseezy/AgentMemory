@@ -9,7 +9,7 @@ unquarantine a relationship manually.
 
 ## Healthy state
 
-- Core is Ready at relational head `0037_pro004_embedding_spaces` and graph head
+- Core is Ready at relational head `0038_pro005_provider_routing` and graph head
   `0005_pro004_embedding_space_constraints` or a later release-certified pair.
 - Every committed assertion lifecycle event has one `assertion_edge_projection_jobs` row.
 - Each completed job has one immutable receipt with the active graph generation and exact projection

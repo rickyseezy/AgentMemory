@@ -65,7 +65,10 @@ jobs:
   core:
     name: Local Core
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The complete critical-domain mutation campaign currently needs about
+    # 52 minutes on a two-core hosted runner. Keep a bounded margin for
+    # runner variance without weakening or splitting the mandatory gate.
+    timeout-minutes: 75
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

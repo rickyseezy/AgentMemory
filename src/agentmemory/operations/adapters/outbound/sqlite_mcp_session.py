@@ -60,27 +60,7 @@ class SqliteMcpSessionRepository:
                 registration,
                 registration.issued_at,
             )
-            existing_id = (
-                await connection.execute(
-                    text(
-                        "SELECT session_id FROM mcp_session_credentials "
-                        "WHERE session_id=:session OR credential_digest=:credential"
-                    ),
-                    {
-                        "session": registration.session_id.value,
-                        "credential": bytes.fromhex(registration.credential_digest.value),
-                    },
-                )
-            ).scalar_one_or_none()
-            if existing_id is not None:
-                existing = await self._load(connection, Uuid7Id(_require_str(existing_id)))
-                if existing.registration != registration:
-                    raise OperationError(
-                        ErrorCode.CONFLICT,
-                        "MCP session registration conflicted",
-                    )
-                return existing, False
-            await connection.execute(
+            inserted = await connection.execute(
                 text(
                     "INSERT INTO mcp_session_credentials "
                     "(session_id,installation_id,brain_id,actor_id,grant_id,agent_id,"
@@ -90,7 +70,7 @@ class SqliteMcpSessionRepository:
                     "VALUES (:session,:installation,:brain,"
                     ":actor,:grant,:agent,:workspace,:device,:repository,:worktree,:coverage,"
                     ":project,:canonical_repository,:checkout,:epoch,:credential,:issued,"
-                    ":expires,:registration,1)"
+                    ":expires,:registration,1) ON CONFLICT DO NOTHING"
                 ),
                 {
                     "session": registration.session_id.value,
@@ -114,6 +94,33 @@ class SqliteMcpSessionRepository:
                     "registration": registration_digest,
                 },
             )
+            if inserted.rowcount == 0:
+                existing_id = (
+                    await connection.execute(
+                        text(
+                            "SELECT session_id FROM mcp_session_credentials "
+                            "WHERE session_id=:session OR credential_digest=:credential "
+                            "OR registration_digest=:registration"
+                        ),
+                        {
+                            "session": registration.session_id.value,
+                            "credential": bytes.fromhex(registration.credential_digest.value),
+                            "registration": registration_digest,
+                        },
+                    )
+                ).scalar_one_or_none()
+                if existing_id is None:
+                    raise OperationError(
+                        ErrorCode.CONFLICT,
+                        "MCP session registration conflicted",
+                    )
+                existing = await self._load(connection, Uuid7Id(_require_str(existing_id)))
+                if existing.registration != registration:
+                    raise OperationError(
+                        ErrorCode.CONFLICT,
+                        "MCP session registration conflicted",
+                    )
+                return existing, False
             await self._insert_snapshot(
                 connection,
                 _Snapshot(

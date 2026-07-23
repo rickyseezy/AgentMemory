@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 from hypothesis import given
@@ -15,10 +16,12 @@ from agentmemory.providers.domain.routing import ProviderWorkload
 from agentmemory.providers.domain.scheduling import (
     BatchPlanner,
     ProviderBatchKey,
+    ProviderBatchLease,
     ProviderBatchOutcome,
     ProviderDeadlineClass,
     ProviderItemResult,
     ProviderItemResultStatus,
+    ProviderRateDecision,
     ProviderRatePolicy,
     ProviderRateState,
     ProviderSchedulingLimits,
@@ -94,6 +97,86 @@ def test_validation_sentinel_always_raises_the_content_free_error() -> None:
         match="provider scheduling input is invalid",
     ):
         _invalid()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"brain_id": "550e8400-e29b-41d4-a716-446655440000"},
+        {"profile_version": 0},
+        {"profile_version": 2**31},
+        {"space_fingerprint": "not-a-digest"},
+        {"retention_policy_digest": "not-a-digest"},
+        {"preprocessing_digest": "not-a-digest"},
+    ],
+)
+def test_batch_key_rejects_every_invalid_version_or_digest(
+    changed: dict[str, object],
+) -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        key(**changed)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"operation_id": ""},
+        {"ordinal": -1},
+        {"payload_ref": "inline-secret"},
+        {"content_digest": "not-a-digest"},
+        {"token_count": 0},
+        {"byte_count": 0},
+        {"estimated_cost_micros": -1},
+        {"enqueued_at_microseconds": -1},
+        {"deadline_at_microseconds": 1_000},
+        {"attempts": -1},
+    ],
+)
+def test_work_item_rejects_each_invalid_persisted_coordinate(
+    changed: dict[str, object],
+) -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        item(0, **changed)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"max_items": 0},
+        {"max_item_tokens": 0},
+        {"max_request_tokens": 9},
+        {"max_input_bytes": 0},
+        {"max_batch_cost_micros": -1},
+    ],
+)
+def test_scheduling_limits_reject_every_invalid_ceiling(changed: dict[str, int]) -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        limits(**changed)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"operation_id": ""},
+        {"items": ()},
+        {"items": (item(0), item(1, batch_key=key(profile_version=3)))},
+        {"items": (item(0), item(0))},
+        {"token_count": 99},
+        {"byte_count": 99},
+        {"estimated_cost_micros": 99},
+    ],
+)
+def test_hand_built_batch_rejects_every_inconsistent_shape(
+    changed: dict[str, object],
+) -> None:
+    valid = BatchPlanner.plan((item(0), item(1)), limits())[0]
+    with pytest.raises(ProviderSchedulingValidationError, match="homogeneous"):
+        replace(valid, **cast("Any", changed))
+
+
+def test_batch_planner_rejects_an_empty_request() -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        BatchPlanner.plan((), limits())
 
 
 @given(
@@ -253,6 +336,50 @@ def test_weighted_fair_scheduler_skips_empty_queues_without_losing_cursor_progre
     assert scheduler.select(frozenset(), cursor)[0] is None
 
 
+@pytest.mark.parametrize(
+    "cycle",
+    [
+        (),
+        (ProviderWorkload.INTERACTIVE,),
+    ],
+)
+def test_weighted_fair_scheduler_requires_a_complete_nonempty_cycle(
+    cycle: tuple[ProviderWorkload, ...],
+) -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        WeightedFairProviderScheduler(cycle)
+
+
+def test_weighted_fair_scheduler_rejects_a_negative_cursor() -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        WeightedFairProviderScheduler().select(frozenset(ProviderWorkload), -1)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"request_capacity": 0},
+        {"requests_per_minute": 0},
+        {"token_capacity": 0},
+        {"tokens_per_minute": 0},
+        {"max_concurrency": 0},
+        {"monthly_cost_budget_micros": -1},
+    ],
+)
+def test_rate_policy_rejects_every_invalid_ceiling(changed: dict[str, int]) -> None:
+    values = {
+        "request_capacity": 2,
+        "requests_per_minute": 2,
+        "token_capacity": 10,
+        "tokens_per_minute": 10,
+        "max_concurrency": 1,
+        "monthly_cost_budget_micros": 20,
+    }
+    values.update(changed)
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        ProviderRatePolicy(**values)
+
+
 def test_dual_token_bucket_honors_rate_hint_concurrency_and_monthly_budget() -> None:
     policy = ProviderRatePolicy(
         request_capacity=2,
@@ -312,6 +439,143 @@ def test_dual_token_bucket_honors_rate_hint_concurrency_and_monthly_budget() -> 
     assert not hinted.allowed
     assert hinted.reason == "provider_rate_hint"
     assert hinted.retry_at_microseconds == 90_000_000
+
+
+def test_rate_admission_covers_request_bucket_and_rejects_invalid_transitions() -> None:
+    policy = ProviderRatePolicy(2, 2, 10, 10, 1, 20)
+    state = ProviderRateState.full(policy, period_start_microseconds=0)
+    request_limited = replace(state, request_balance_micros=0).admit(
+        policy,
+        now_microseconds=0,
+        token_count=1,
+        estimated_cost_micros=1,
+    )
+    assert not request_limited.allowed
+    assert request_limited.reason == "request_rate"
+    assert request_limited.retry_at_microseconds == 30_000_000
+
+    for invalid_call in (
+        lambda: state.admit(
+            policy,
+            now_microseconds=-1,
+            token_count=1,
+            estimated_cost_micros=1,
+        ),
+        lambda: state.admit(
+            policy,
+            now_microseconds=0,
+            token_count=0,
+            estimated_cost_micros=1,
+        ),
+        state.release,
+    ):
+        with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+            invalid_call()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"request_balance_micros": -1},
+        {"blocked_until_microseconds": -1},
+    ],
+)
+def test_rate_state_rejects_negative_persisted_values(changed: dict[str, int]) -> None:
+    policy = ProviderRatePolicy(2, 2, 10, 10, 1, 20)
+    state = ProviderRateState.full(policy, period_start_microseconds=0)
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        replace(state, **cast("Any", changed))
+
+
+@pytest.mark.parametrize(
+    ("allowed_flag", "reason", "retry_at"),
+    [
+        (1, "unexpected", None),
+        (0, None, None),
+        (0, "unsafe reason", None),
+        (1, None, 1),
+    ],
+)
+def test_rate_decision_rejects_ambiguous_shapes(
+    allowed_flag: int,
+    reason: str | None,
+    retry_at: int | None,
+) -> None:
+    policy = ProviderRatePolicy(2, 2, 10, 10, 1, 20)
+    with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+        ProviderRateDecision(
+            bool(allowed_flag),
+            ProviderRateState.full(policy, period_start_microseconds=0),
+            reason,
+            retry_at,
+        )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"result_digest": None},
+        {"result_digest": "not-a-digest"},
+        {"result_ref": "cas://sha256/wrong"},
+        {"error_code": "unexpected"},
+        {"retry_at_microseconds": 1},
+    ],
+)
+def test_success_result_rejects_every_ambiguous_shape(
+    changed: dict[str, object],
+) -> None:
+    valid = ProviderItemResult.succeeded(ITEM_ID, digest("result").value)
+    with pytest.raises(ProviderSchedulingValidationError, match="result"):
+        replace(valid, **cast("Any", changed))
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"result_digest": digest("unexpected").value},
+        {"result_ref": f"cas://sha256/{digest('unexpected').value}"},
+        {"error_code": None},
+        {"error_code": "unsafe error"},
+        {"retry_at_microseconds": -1},
+        {"status": ProviderItemResultStatus.PERMANENT_FAILURE, "retry_at_microseconds": 1},
+    ],
+)
+def test_failure_result_rejects_every_ambiguous_shape(
+    changed: dict[str, object],
+) -> None:
+    valid = ProviderItemResult.failed(
+        ITEM_ID,
+        ProviderItemResultStatus.RETRYABLE_FAILURE,
+        "rate_limit",
+        retry_at_microseconds=1,
+    )
+    with pytest.raises(ProviderSchedulingValidationError, match="result"):
+        replace(valid, **cast("Any", changed))
+
+
+def test_result_batch_and_lease_factories_reject_invalid_coordinates() -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="result"):
+        ProviderItemResult.failed(
+            ITEM_ID,
+            ProviderItemResultStatus.SUCCEEDED,
+            "impossible",
+        )
+    with pytest.raises(ProviderSchedulingValidationError, match="result"):
+        ProviderBatchOutcome("", ())
+
+    batch = BatchPlanner.plan((item(0),), limits())[0]
+    for changed in (
+        {"owner": ""},
+        {"lease_until_microseconds": 0},
+        {"attempt": 0},
+    ):
+        with pytest.raises(ProviderSchedulingValidationError, match="input is invalid"):
+            ProviderBatchLease(
+                batch=batch,
+                owner=cast("str", changed.get("owner", "provider-worker")),
+                lease_until_microseconds=cast("int", changed.get("lease_until_microseconds", 1)),
+                attempt=cast("int", changed.get("attempt", 1)),
+            )
 
 
 def test_partial_response_retries_only_retryable_children_in_original_order() -> None:

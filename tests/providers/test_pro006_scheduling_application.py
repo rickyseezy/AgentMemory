@@ -22,6 +22,7 @@ from agentmemory.providers.application.scheduling import (
 from agentmemory.providers.domain.errors import (
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingDependencyError,
+    ProviderSchedulingValidationError,
 )
 from agentmemory.providers.domain.scheduling import (
     BatchPlanner,
@@ -54,6 +55,8 @@ class _Identities:
 class _Repository:
     value: ProviderWorkItem | None = None
     lease: ProviderBatchLease | None = None
+    stop_on_claim: asyncio.Event | None = None
+    fail_claim_once: bool = False
     enqueued: list[tuple[AuthorizedScope, str, str, ProviderWorkItem]] = field(
         default_factory=list[tuple[AuthorizedScope, str, str, ProviderWorkItem]]
     )
@@ -66,6 +69,7 @@ class _Repository:
     cancellations: list[tuple[AuthorizedScope, str, str, int]] = field(
         default_factory=list[tuple[AuthorizedScope, str, str, int]]
     )
+    recoveries: list[int] = field(default_factory=list[int])
 
     async def enqueue(
         self,
@@ -105,6 +109,12 @@ class _Repository:
         lease_until_microseconds: int,
     ) -> ProviderBatchLease | None:
         del owner, now_microseconds, lease_until_microseconds
+        if self.stop_on_claim is not None:
+            self.stop_on_claim.set()
+        if self.fail_claim_once:
+            self.fail_claim_once = False
+            message = "one isolated claim failure"
+            raise RuntimeError(message)
         lease, self.lease = self.lease, None
         return lease
 
@@ -126,7 +136,7 @@ class _Repository:
         self.released.append((lease, reason, retry_at_microseconds, released_at_microseconds))
 
     async def recover_expired(self, now_microseconds: int) -> int:
-        del now_microseconds
+        self.recoveries.append(now_microseconds)
         return 0
 
 
@@ -218,6 +228,114 @@ async def test_worker_wait_observes_zero_delay_stop_and_timeout_paths() -> None:
     stop.clear()
     await _wait_or_stop(stop, 0.001)
     assert not stop.is_set()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"operation_id": ""},
+        {
+            "batch_key": replace(
+                item(0).batch_key,
+                brain_id="018f0000-0000-7000-8000-000000000998",
+            )
+        },
+        {"enqueued_at": NOW.replace(tzinfo=None)},
+        {"deadline_at_microseconds": round(NOW.timestamp() * 1_000_000)},
+    ],
+)
+def test_enqueue_command_rejects_each_invalid_boundary(
+    changed: dict[str, object],
+) -> None:
+    with pytest.raises(ProviderSchedulingValidationError, match="request is invalid"):
+        replace(_command(), **cast("Any", changed))
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"operation_id": ""},
+        {"cancelled_at": NOW.replace(tzinfo=None)},
+    ],
+)
+def test_cancel_command_rejects_each_invalid_boundary(
+    changed: dict[str, object],
+) -> None:
+    command = CancelProviderWorkCommand(
+        operation_id="cancel-provider-work-1",
+        scope=scope("provider.schedule.cancel"),
+        item_id=item(0).item_id,
+        cancelled_at=NOW,
+    )
+    with pytest.raises(ProviderSchedulingValidationError, match="request is invalid"):
+        replace(command, **cast("Any", changed))
+
+
+@pytest.mark.parametrize(
+    ("owner", "poll_seconds"),
+    [
+        ("", 0.05),
+        ("provider-scheduler", -0.01),
+        ("provider-scheduler", 1.01),
+    ],
+)
+def test_worker_rejects_invalid_owner_or_poll_interval(
+    owner: str,
+    poll_seconds: float,
+) -> None:
+    authorizer = _Authorizer()
+    with pytest.raises(ProviderSchedulingValidationError, match="request is invalid"):
+        ProviderSchedulerWorker(
+            _Repository(),
+            authorizer,
+            _Materializer(authorizer),
+            _Gateway(ProviderBatchOutcome("valid-operation", ())),
+            FixedClock(),
+            owner,
+            poll_seconds=poll_seconds,
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_run_once_reports_an_idle_queue() -> None:
+    authorizer = _Authorizer()
+    worker = ProviderSchedulerWorker(
+        _Repository(),
+        authorizer,
+        _Materializer(authorizer),
+        _Gateway(ProviderBatchOutcome("valid-operation", ())),
+        FixedClock(),
+        "provider-scheduler-v1",
+        poll_seconds=0,
+    )
+    assert not await worker.run_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claim_mode", ["idle", "error"])
+async def test_worker_run_recovers_leases_and_isolates_one_claim_failure(
+    claim_mode: str,
+) -> None:
+    stop = asyncio.Event()
+    repository = _Repository(
+        stop_on_claim=stop,
+        fail_claim_once=claim_mode == "error",
+    )
+    authorizer = _Authorizer()
+    worker = ProviderSchedulerWorker(
+        repository,
+        authorizer,
+        _Materializer(authorizer),
+        _Gateway(ProviderBatchOutcome("valid-operation", ())),
+        FixedClock(),
+        "provider-scheduler-v1",
+        poll_seconds=0,
+    )
+
+    await worker.run(stop)
+
+    assert repository.recoveries == [round(NOW.timestamp() * 1_000_000)]
+    assert not repository.fail_claim_once
 
 
 @pytest.mark.asyncio

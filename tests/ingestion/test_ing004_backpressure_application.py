@@ -35,7 +35,7 @@ from agentmemory.ingestion.domain.errors import (
     IngestionValidationError,
     ScheduledJobExecutionError,
 )
-from tests.core.support import BRAIN_ID, GRANT_ID, FixedClock, digest
+from tests.core.support import BRAIN_ID, GRANT_ID, NOW, FixedClock, digest
 from tests.ingestion.adp002_support import PRINCIPAL_ID
 
 JOB_ID = "018f0000-0000-7000-8000-000000000301"
@@ -266,9 +266,10 @@ async def test_submit_and_list_reauthorize_current_exact_brain_grant() -> None:
     )
     assert submitted.request.job_id == JOB_ID
     assert listed == (dead_letter(),)
-    assert [value[:3] for value in calls] == [
-        (PRINCIPAL_ID, GRANT_ID, BRAIN_ID),
-        (PRINCIPAL_ID, GRANT_ID, BRAIN_ID),
+    expected_now = round(NOW.timestamp() * 1_000_000)
+    assert calls == [
+        (PRINCIPAL_ID, GRANT_ID, BRAIN_ID, expected_now),
+        (PRINCIPAL_ID, GRANT_ID, BRAIN_ID, expected_now),
     ]
 
 

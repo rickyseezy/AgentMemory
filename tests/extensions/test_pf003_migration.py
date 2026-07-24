@@ -22,7 +22,7 @@ def test_pf003_migration_is_strict_immutable_and_downgrade_safe(tmp_path: Path) 
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0040_pro007_provider_resilience",
+            "0041_pro008_embedding_migrations",
         )
         _seed_authority(connection)
         connection.execute(

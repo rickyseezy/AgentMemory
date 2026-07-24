@@ -45,6 +45,22 @@ class EmbeddingGenerationReservation:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingGenerationBinding:
+    """Canonical immutable space and physical-generation binding."""
+
+    space: EmbeddingSpace
+    generation: IndexGeneration
+
+    def __post_init__(self) -> None:
+        """Reject a generation resolved under a different semantic space."""
+        if (
+            self.generation.space_id != self.space.space_id
+            or self.generation.space_fingerprint != self.space.immutable_fingerprint
+        ):
+            raise EmbeddingSpaceValidationError(_ERR_INPUT)
+
+
+@dataclass(frozen=True, slots=True)
 class VectorWriteReceipt:
     """Content-free proof that one complete vector batch committed."""
 
@@ -90,6 +106,19 @@ class EmbeddingSpaceRepository(Protocol):
         completed_at: datetime,
     ) -> IndexGeneration:
         """Mark a physically verified generation ready for population."""
+        ...
+
+
+class EmbeddingGenerationBindingRepository(Protocol):
+    """Authorized lookup of one exact space/generation pair."""
+
+    async def get_binding(
+        self,
+        scope: AuthorizedScope,
+        generation_id: str,
+        at: datetime,
+    ) -> EmbeddingGenerationBinding | None:
+        """Return the Brain-scoped binding or hide its existence."""
         ...
 
 

@@ -2840,6 +2840,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-008 — Migrate embedding generations under live ingestion
 
+**Implementation record:** [`docs/implementation/PRO-008.md`](docs/implementation/PRO-008.md) and
+[`docs/runbooks/PRO-008-EMBEDDING-MIGRATIONS.md`](docs/runbooks/PRO-008-EMBEDDING-MIGRATIONS.md).
+
 **User story:** As an administrator, I can change embedding provider/model without downtime or index contamination.
 
 **Acceptance criteria**

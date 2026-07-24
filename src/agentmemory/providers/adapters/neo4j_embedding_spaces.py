@@ -10,7 +10,10 @@ from neo4j import Query
 from neo4j.exceptions import DriverError, Neo4jError
 
 from agentmemory.providers.domain.embedding_space_ports import VectorWriteReceipt
-from agentmemory.providers.domain.embedding_spaces import VectorWriteBatch
+from agentmemory.providers.domain.embedding_spaces import (
+    VectorWriteBatch,
+    generation_names,
+)
 from agentmemory.providers.domain.errors import (
     EmbeddingSpaceConflictError,
     EmbeddingSpaceDependencyError,
@@ -236,6 +239,45 @@ class Neo4jVectorWriteRepository:
             batch_digest=validated.batch_digest,
             committed_at=self._clock.now(),
         )
+
+
+class Neo4jEmbeddingGenerationCleaner:
+    """Idempotently remove one canonically retired physical vector generation."""
+
+    def __init__(self, driver: AsyncDriver, database: str) -> None:
+        """Bind the official driver to one closed local database."""
+        _validate_database(database)
+        self._driver = driver
+        self._database = database
+
+    async def delete(self, generation_id: str) -> None:
+        """Drop only UUID-derived index/data/metadata and tolerate exact replay."""
+        names = generation_names(generation_id)
+        try:
+            await self._driver.execute_query(
+                # Identifier is derived solely from validated UUID bytes.
+                Query(f"DROP INDEX {names.vector_index} IF EXISTS"),  # pyright: ignore[reportArgumentType]
+                database_=self._database,
+            )
+            await self._driver.execute_query(
+                # Label is derived solely from validated UUID bytes.
+                Query(_delete_generation_query(names.label)),  # pyright: ignore[reportArgumentType]
+                generation_id=generation_id,
+                database_=self._database,
+            )
+        except (DriverError, Neo4jError) as error:
+            raise EmbeddingSpaceDependencyError(_ERR_GRAPH) from error
+
+
+def _delete_generation_query(label: str) -> str:
+    return f"""CYPHER 25
+MATCH (vector:VectorRecord:{label} {{generation_id: $generation_id}})
+DETACH DELETE vector
+WITH count(*) AS deleted
+OPTIONAL MATCH (generation:IndexGeneration {{id: $generation_id}})
+DETACH DELETE generation
+RETURN deleted
+"""
 
 
 async def _write_transaction(

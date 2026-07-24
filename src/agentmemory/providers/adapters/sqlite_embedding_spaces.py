@@ -18,6 +18,7 @@ from agentmemory.providers.adapters.strict_json import (
     require_object,
 )
 from agentmemory.providers.domain.embedding_space_ports import (
+    EmbeddingGenerationBinding,
     EmbeddingGenerationReservation,
 )
 from agentmemory.providers.domain.embedding_spaces import (
@@ -49,6 +50,18 @@ _ERR_CONFLICT = "embedding space conflicts with immutable history"
 _ERR_INTEGRITY = "embedding space storage failed integrity verification"
 _ERR_STORAGE = "embedding space storage is unavailable"
 _ACTION = "provider.embedding_space.ensure"
+_BINDING_ACTIONS = frozenset(
+    {
+        "provider.embedding_migration.activate",
+        "provider.embedding_migration.delete",
+        "provider.embedding_migration.pause",
+        "provider.embedding_migration.plan",
+        "provider.embedding_migration.read",
+        "provider.embedding_migration.resume",
+        "provider.embedding_migration.rollback",
+        "provider.embedding_migration.run",
+    }
+)
 _ROLES = frozenset({"owner", "admin"})
 
 
@@ -58,6 +71,48 @@ class SqliteEmbeddingSpaceRepository:
     def __init__(self, store: SqliteCoreStore) -> None:
         """Bind the sole canonical SQLite writer."""
         self._store = store
+
+    async def get_binding(
+        self,
+        scope: AuthorizedScope,
+        generation_id: str,
+        at: datetime,
+    ) -> EmbeddingGenerationBinding | None:
+        """Resolve one exact Brain-scoped generation under current administrator authority."""
+        try:
+            async with self._store.engine.connect() as connection:
+                await _authorize(
+                    connection,
+                    scope,
+                    at,
+                    allowed_actions=_BINDING_ACTIONS,
+                )
+                generation_row = await _generation_by_id(
+                    connection,
+                    scope.brain_id.value,
+                    generation_id,
+                )
+                if generation_row is None:
+                    return None
+                generation = _decode_generation(generation_row)
+                space_row = await _space_by_id(
+                    connection,
+                    scope.brain_id.value,
+                    generation.space_id,
+                )
+                if space_row is None:
+                    _integrity()
+                return EmbeddingGenerationBinding(_decode_space(space_row), generation)
+        except (
+            EmbeddingSpaceAuthorizationError,
+            EmbeddingSpaceConflictError,
+            EmbeddingSpaceValidationError,
+        ):
+            raise
+        except SQLAlchemyError as error:
+            raise EmbeddingSpaceDependencyError(_ERR_STORAGE) from error
+        except (StrictJsonError, KeyError, TypeError, ValueError) as error:
+            raise EmbeddingSpaceConflictError(_ERR_INTEGRITY) from error
 
     async def reserve(
         self,
@@ -418,8 +473,10 @@ async def _authorize(
     connection: AsyncConnection,
     scope: AuthorizedScope,
     at: datetime,
+    *,
+    allowed_actions: frozenset[str] = frozenset({_ACTION}),
 ) -> None:
-    if scope.action != _ACTION or scope.role.value not in _ROLES:
+    if scope.action not in allowed_actions or scope.role.value not in _ROLES:
         raise EmbeddingSpaceAuthorizationError(_ERR_AUTHORIZATION)
     authorized = (
         await connection.execute(
@@ -790,6 +847,10 @@ def _micros(value: datetime) -> int:
 
 def _conflict() -> Never:
     raise EmbeddingSpaceConflictError(_ERR_CONFLICT)
+
+
+def _integrity() -> Never:
+    raise EmbeddingSpaceConflictError(_ERR_INTEGRITY)
 
 
 @asynccontextmanager

@@ -28,7 +28,7 @@ def test_pro006_schema_installs_queue_rate_batch_result_and_operation_authority(
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0040_pro007_provider_resilience",
+            "0041_pro008_embedding_migrations",
         )
         tables = {
             str(row[0])

@@ -432,6 +432,9 @@ from agentmemory.operations.domain.projection_rebuild import RebuildManifest
 from agentmemory.operations.domain.readiness import ReadinessProbe
 from agentmemory.operations.domain.value_objects import Sha256Digest
 from agentmemory.operations.infrastructure.configuration import CoreSettings
+from agentmemory.providers.adapters.backup_bound_migration_retention import (
+    BackupBoundEmbeddingGenerationRetentionGuard,
+)
 from agentmemory.providers.adapters.builtins.cohere import CohereProviderAdapter
 from agentmemory.providers.adapters.builtins.google import GoogleProviderAdapter
 from agentmemory.providers.adapters.builtins.openai import OpenAIProviderAdapter
@@ -441,6 +444,9 @@ from agentmemory.providers.adapters.builtins.openai_compatible import (
 from agentmemory.providers.adapters.builtins.qwen_local import QwenLocalProviderAdapter
 from agentmemory.providers.adapters.builtins.registry import CertifiedProviderAdapterRegistry
 from agentmemory.providers.adapters.builtins.voyage import VoyageProviderAdapter
+from agentmemory.providers.adapters.contained_migration_execution import (
+    ContainedEmbeddingMigrationRunner,
+)
 from agentmemory.providers.adapters.embedding_space_http_api import (
     create_contract_embedding_space_router,
     create_embedding_space_router,
@@ -449,7 +455,15 @@ from agentmemory.providers.adapters.embedding_space_identity import (
     SystemEmbeddingSpaceIdentityGenerator,
 )
 from agentmemory.providers.adapters.gateway_http import ProviderGatewayHttpTransport
+from agentmemory.providers.adapters.migration_http_api import (
+    create_contract_embedding_migration_router,
+    create_embedding_migration_router,
+)
+from agentmemory.providers.adapters.migration_identity import (
+    SystemEmbeddingMigrationIdentityGenerator,
+)
 from agentmemory.providers.adapters.neo4j_embedding_spaces import (
+    Neo4jEmbeddingGenerationCleaner,
     Neo4jIndexGenerationProvisioner,
 )
 from agentmemory.providers.adapters.profile_http_api import (
@@ -481,6 +495,12 @@ from agentmemory.providers.adapters.scheduling_identity import (
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
+from agentmemory.providers.adapters.sqlite_migration import (
+    SqliteEmbeddingMigrationRepository,
+)
+from agentmemory.providers.adapters.sqlite_migration_content import (
+    SqliteCanonicalEmbeddingContentSource,
+)
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
 from agentmemory.providers.adapters.sqlite_resilience import (
     SqliteProviderResilienceRepository,
@@ -492,6 +512,16 @@ from agentmemory.providers.adapters.sqlite_scheduling import (
     SqliteProviderSchedulingRepository,
 )
 from agentmemory.providers.application.embedding_spaces import EnsureIndexGenerationHandler
+from agentmemory.providers.application.migration import (
+    ActivateEmbeddingMigrationHandler,
+    DeleteExpiredEmbeddingGenerationHandler,
+    GetEmbeddingMigrationHandler,
+    PauseEmbeddingMigrationHandler,
+    PlanEmbeddingMigrationByIdHandler,
+    PlanEmbeddingMigrationHandler,
+    ResumeEmbeddingMigrationHandler,
+    RollbackEmbeddingMigrationHandler,
+)
 from agentmemory.providers.application.profiles import (
     CreateProviderProfileHandler,
     GetProviderProfileHandler,
@@ -511,6 +541,7 @@ from agentmemory.providers.application.scheduling import (
     EnqueueProviderWorkHandler,
     GetProviderWorkHandler,
 )
+from agentmemory.providers.domain.migration import EmbeddingMigrationPolicy
 from agentmemory.retrieval.adapters.inbound.host_delivery import (
     CertifiedDeliveryAdapterRegistry,
 )
@@ -1109,6 +1140,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_provider_routing_router(),
             create_contract_provider_scheduling_router(),
             create_contract_provider_resilience_router(),
+            create_contract_embedding_migration_router(),
         )
     )
 
@@ -1250,6 +1282,40 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             retrieval_scope,
             PublishEquivalentEndpointSetHandler(provider_resilience),
             GetEquivalentEndpointSetHandler(provider_resilience),
+            clock,
+        )
+    )
+    embedding_spaces = SqliteEmbeddingSpaceRepository(store)
+    embedding_migrations = SqliteEmbeddingMigrationRepository(store)
+    migration_source = SqliteCanonicalEmbeddingContentSource(store)
+    application.include_router(
+        create_embedding_migration_router(
+            authenticator,
+            retrieval_scope,
+            PlanEmbeddingMigrationByIdHandler(
+                embedding_spaces,
+                PlanEmbeddingMigrationHandler(
+                    migration_source,
+                    embedding_migrations,
+                    SystemEmbeddingMigrationIdentityGenerator(),
+                ),
+            ),
+            GetEmbeddingMigrationHandler(embedding_migrations),
+            ContainedEmbeddingMigrationRunner(),
+            PauseEmbeddingMigrationHandler(embedding_migrations, clock),
+            ResumeEmbeddingMigrationHandler(embedding_migrations, clock),
+            ActivateEmbeddingMigrationHandler(
+                embedding_migrations,
+                clock,
+                EmbeddingMigrationPolicy.production(),
+            ),
+            RollbackEmbeddingMigrationHandler(embedding_migrations, clock),
+            DeleteExpiredEmbeddingGenerationHandler(
+                embedding_migrations,
+                BackupBoundEmbeddingGenerationRetentionGuard(),
+                Neo4jEmbeddingGenerationCleaner(neo4j_driver, neo4j_database),
+                clock,
+            ),
             clock,
         )
     )

@@ -90,6 +90,22 @@ class EmbeddingSpaceDependencyError(RuntimeError):
     """Expose a content-free canonical or graph storage dependency failure."""
 
 
+class EmbeddingMigrationValidationError(ValueError):
+    """Reject malformed generation migration state, progress, or evidence."""
+
+
+class EmbeddingMigrationAuthorizationError(PermissionError):
+    """Reject generation migration without current Brain-wide authority."""
+
+
+class EmbeddingMigrationConflictError(RuntimeError):
+    """Reject stale, divergent, or unsafe generation migration state."""
+
+
+class EmbeddingMigrationDependencyError(RuntimeError):
+    """Expose content-free migration source, target, or storage failure."""
+
+
 class ProviderRoutingValidationError(ValueError):
     """Reject malformed, ambiguous, or policy-broadening routing input."""
 

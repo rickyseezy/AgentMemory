@@ -15,6 +15,7 @@ from agentmemory.identity.domain.retrieval_scope import (
     ScopeExplanation,
 )
 from agentmemory.operations.bootstrap import export_core_openapi_schema
+from agentmemory.providers.adapters import migration_http_api
 from agentmemory.providers.adapters.migration_http_api import (
     create_contract_embedding_migration_router,
     create_embedding_migration_router,
@@ -192,6 +193,18 @@ def _app(  # noqa: PLR0913 -- Test composition mirrors the explicit router bound
     return application
 
 
+def test_not_found_problem_contract_is_stable() -> None:
+    response = migration_http_api._not_found()  # pyright: ignore[reportPrivateUsage]
+
+    assert response.status_code == 404
+    assert json.loads(bytes(response.body)) == {
+        "type": "urn:agentmemory:provider-embedding-migration:not_found",
+        "title": "not found",
+        "status": 404,
+        "detail": "embedding migration was not found",
+    }
+
+
 @pytest.mark.asyncio
 async def test_start_authenticates_resolves_bindings_and_returns_safe_state() -> None:
     authenticator = _Authenticator()
@@ -244,6 +257,11 @@ async def test_status_and_every_lifecycle_route_bind_the_reviewed_action() -> No
             f"/v1/providers/embedding-migrations/{MIGRATION_ID}?{query}",
             headers={"Authorization": "Bearer valid"},
         )
+        getter.result = None
+        missing = await client.get(
+            f"/v1/providers/embedding-migrations/{MIGRATION_ID}?{query}",
+            headers={"Authorization": "Bearer valid"},
+        )
         run = await client.post(
             f"/v1/providers/embedding-migrations/{MIGRATION_ID}:run",
             headers={"Authorization": "Bearer valid"},
@@ -286,6 +304,13 @@ async def test_status_and_every_lifecycle_route_bind_the_reviewed_action() -> No
         response.status_code == 200
         for response in (found, run, pause, resume, cutover, rollback, deletion)
     )
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "type": "urn:agentmemory:provider-embedding-migration:not_found",
+        "title": "not found",
+        "status": 404,
+        "detail": "embedding migration was not found",
+    }
     assert getter.queries[0].scope.action == "provider.embedding_migration.read"
     assert runner.calls[0][0].action == "provider.embedding_migration.run"
     actions = [cast("_ScopedCommand", command).scope.action for command in commands.commands]

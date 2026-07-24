@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import text
 
+from agentmemory.providers.adapters import sqlite_embedding_spaces
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
@@ -22,6 +23,7 @@ from agentmemory.providers.domain.embedding_spaces import IndexGenerationState
 from agentmemory.providers.domain.errors import (
     EmbeddingMigrationConflictError,
     EmbeddingSpaceAuthorizationError,
+    EmbeddingSpaceConflictError,
     EmbeddingSpaceValidationError,
 )
 from agentmemory.providers.domain.migration import (
@@ -111,6 +113,34 @@ async def _seed_generations(
         target_space,
         replace(target_generation, state=IndexGenerationState.POPULATING),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_generation_binding_fails_closed_when_space_authority_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = migrated_store(tmp_path)
+    try:
+        await _seed_generations(store)
+
+        async def missing_space(*args: object) -> None:
+            del args
+
+        monkeypatch.setattr(
+            sqlite_embedding_spaces,
+            "_space_by_id",
+            missing_space,
+        )
+        with pytest.raises(EmbeddingSpaceConflictError, match="integrity"):
+            await SqliteEmbeddingSpaceRepository(store).get_binding(
+                scope("provider.embedding_migration.plan"),
+                SOURCE_GENERATION_ID,
+                NOW + timedelta(seconds=10),
+            )
+    finally:
+        await store.close()
 
 
 def _candidate(

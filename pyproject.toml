@@ -405,4 +405,4 @@ pytest_add_cli_args_test_selection = [
 ]
 mutate_only_covered_lines = false
 use_setproctitle = false
-also_copy = ["conformance"]
+also_copy = ["conformance", "migrations"]

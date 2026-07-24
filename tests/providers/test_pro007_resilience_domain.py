@@ -281,6 +281,48 @@ def test_retry_after_is_a_minimum_and_attempt_or_deadline_exhaustion_never_loops
 
 
 @pytest.mark.parametrize(
+    ("action", "retry_at_microseconds"),
+    [
+        (ProviderRetryAction.RETRY, None),
+        (ProviderRetryAction.FAIL, 1),
+        (ProviderRetryAction.EXHAUSTED, 1),
+        (ProviderRetryAction.RETRY, -1),
+    ],
+)
+def test_retry_decision_rejects_incoherent_or_negative_retry_times(
+    action: ProviderRetryAction,
+    retry_at_microseconds: int | None,
+) -> None:
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        ProviderRetryDecision(action, retry_at_microseconds)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"attempt": 0},
+        {"attempt": 101},
+        {"now_microseconds": -1},
+        {"deadline_at_microseconds": 1_000},
+        {"jitter_seed": "not-a-digest"},
+        {"retry_after_microseconds": 999},
+    ],
+)
+def test_retry_context_rejects_each_invalid_timing_coordinate(
+    changed: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "attempt": 1,
+        "now_microseconds": 1_000,
+        "deadline_at_microseconds": 2_000,
+        "jitter_seed": "0" * 64,
+    }
+    values.update(changed)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        ProviderRetryContext(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
     "changed",
     [
         {"max_attempts": 0},
@@ -496,6 +538,88 @@ def test_failure_window_resets_and_jitter_seed_binds_all_coordinates() -> None:
     assert one != retry_jitter_seed("operation", PRIMARY_ENDPOINT, 2)
     assert one != retry_jitter_seed("other-operation", PRIMARY_ENDPOINT, 1)
     assert one != retry_jitter_seed("operation", FALLBACK_ENDPOINT, 1)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"endpoint_fingerprint": "not-a-digest"},
+        {"consecutive_failures": -1},
+        {"version": -1},
+        {"window_started_at_microseconds": -1},
+        {"open_until_microseconds": -1},
+        {"open_until_microseconds": 1},
+        {
+            "state": ProviderCircuitState.CLOSED,
+            "probe_in_flight": True,
+        },
+        {
+            "state": ProviderCircuitState.OPEN,
+            "open_until_microseconds": None,
+        },
+        {
+            "state": ProviderCircuitState.OPEN,
+            "open_until_microseconds": 1,
+            "probe_in_flight": True,
+        },
+        {
+            "state": ProviderCircuitState.HALF_OPEN,
+            "open_until_microseconds": None,
+            "probe_in_flight": True,
+        },
+        {
+            "state": ProviderCircuitState.HALF_OPEN,
+            "open_until_microseconds": 1,
+            "probe_in_flight": False,
+        },
+    ],
+)
+def test_circuit_snapshot_rejects_each_incoherent_persisted_shape(
+    changed: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "endpoint_fingerprint": PRIMARY_ENDPOINT,
+        "state": ProviderCircuitState.CLOSED,
+        "consecutive_failures": 0,
+        "window_started_at_microseconds": None,
+        "open_until_microseconds": None,
+        "probe_in_flight": False,
+        "version": 0,
+    }
+    values.update(changed)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        ProviderCircuitSnapshot(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"failure_threshold": 0},
+        {"failure_threshold": 101},
+        {"failure_window_microseconds": 0},
+        {"failure_window_microseconds": 3_600_000_001},
+        {"open_microseconds": 0},
+        {"open_microseconds": 3_600_000_001},
+    ],
+)
+def test_circuit_policy_rejects_unbounded_or_zero_thresholds(
+    changed: dict[str, int],
+) -> None:
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        replace(ProviderCircuitPolicy.production(), **changes_as_any(changed))
+
+
+def test_circuit_transitions_reject_negative_time() -> None:
+    policy = ProviderCircuitPolicy.production()
+    snapshot = ProviderCircuitSnapshot.initial(PRIMARY_ENDPOINT)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        policy.acquire(snapshot, -1)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        policy.after_failure(snapshot, ProviderErrorCode.TIMEOUT, -1)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        policy.after_success(snapshot, -1)
+    with pytest.raises(ProviderResilienceValidationError, match="input is invalid"):
+        policy.after_abandon(snapshot, -1)
 
 
 def changes_as_any(values: dict[str, int]) -> Any:

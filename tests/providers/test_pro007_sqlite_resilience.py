@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import text
@@ -24,13 +24,23 @@ from agentmemory.providers.adapters.sqlite_operation_cache import (
 )
 from agentmemory.providers.adapters.sqlite_resilience import (
     SqliteProviderResilienceRepository,
+    _array,  # pyright: ignore[reportPrivateUsage]
+    _bytes,  # pyright: ignore[reportPrivateUsage]
+    _circuit,  # pyright: ignore[reportPrivateUsage]
+    _digest_bytes,  # pyright: ignore[reportPrivateUsage]
+    _document,  # pyright: ignore[reportPrivateUsage]
+    _optional_enum,  # pyright: ignore[reportPrivateUsage]
+    _optional_integer,  # pyright: ignore[reportPrivateUsage]
+    _string,  # pyright: ignore[reportPrivateUsage]
 )
 from agentmemory.providers.domain.errors import (
     ProviderErrorCode,
     ProviderOperationConflictError,
     ProviderResilienceConflictError,
+    ProviderResilienceValidationError,
 )
 from agentmemory.providers.domain.idempotency import ProviderClaimDisposition
+from agentmemory.providers.domain.profiles import VectorDtype
 from agentmemory.providers.domain.resilience import (
     EquivalentEndpointSet,
     ProviderCircuitPolicy,
@@ -149,6 +159,16 @@ async def test_equivalence_set_round_trips_exactly_and_is_immutable(
         assert (
             await repository.put(
                 authorized,
+                "pro007-equivalence-publish-alias",
+                request_digest,
+                endpoints,
+                created_at + 1,
+            )
+            == endpoints
+        )
+        assert (
+            await repository.put(
+                authorized,
                 "pro007-equivalence-publish",
                 request_digest,
                 endpoints,
@@ -251,6 +271,65 @@ async def test_equivalence_set_round_trips_exactly_and_is_immutable(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_equivalence_repository_rejects_each_invalid_request_coordinate(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    repository = SqliteProviderResilienceRepository(store)
+    try:
+        _, endpoints = await _seed_endpoint(store)
+        authorized = scope("provider.resilience.publish")
+        created_at = round((NOW + timedelta(seconds=4)).timestamp() * 1_000_000)
+        invalid_requests = (
+            ("invalid operation id!", digest("request").value, created_at),
+            ("valid-operation", "not-a-digest", created_at),
+            ("valid-operation", digest("request").value, -1),
+        )
+        for operation_id, request_digest, occurred_at in invalid_requests:
+            with pytest.raises(ProviderResilienceValidationError, match="request is invalid"):
+                await repository.put(
+                    authorized,
+                    operation_id,
+                    request_digest,
+                    endpoints,
+                    occurred_at,
+                )
+        with pytest.raises(ProviderResilienceValidationError, match="request is invalid"):
+            await repository.resolve(
+                authorized.brain_id.value,
+                endpoints.primary.profile_id,
+                0,
+                endpoints.primary.output_contract.space_id,
+            )
+
+        other_brain_scope = AuthorizedScope.create(
+            brain_id=StableId("018f0000-0000-7000-8000-000000000999"),
+            principal_id=authorized.principal_id,
+            role=authorized.role,
+            mode=authorized.mode,
+            members=authorized.members,
+            classification_ceiling=authorized.classification_ceiling,
+            temporal_scope=authorized.temporal_scope,
+            grant_version=authorized.grant_version,
+            policy_version=authorized.policy_version,
+            security_epoch=authorized.security_epoch,
+            action=authorized.action,
+            purpose=authorized.purpose,
+        )
+        with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+            await repository.put(
+                other_brain_scope,
+                "wrong-brain",
+                digest("wrong-brain").value,
+                endpoints,
+                created_at,
+            )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_circuit_state_is_durable_half_open_single_probe_and_recoverable(
     tmp_path: Path,
 ) -> None:
@@ -295,6 +374,74 @@ async def test_circuit_state_is_durable_half_open_single_probe_and_recoverable(
         assert int(row[4]) >= 4
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_circuit_rejects_denied_and_stale_permits_and_abandon_reopens_probe(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    repository = SqliteProviderResilienceRepository(store)
+    policy = ProviderCircuitPolicy(
+        failure_threshold=1,
+        failure_window_microseconds=1_000,
+        open_microseconds=100,
+    )
+    try:
+        endpoint, _ = await _seed_endpoint(store)
+        first = await repository.acquire(endpoint, policy, 10)
+        await repository.failure(first, ProviderErrorCode.TIMEOUT, policy, 11)
+        denied = await repository.acquire(endpoint, policy, 12)
+        assert not denied.allowed
+        with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+            await repository.abandon(denied, policy, 13)
+        with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+            await repository.success(denied, policy, 13)
+
+        probe = await repository.acquire(endpoint, policy, 111)
+        await repository.abandon(probe, policy, 112)
+        reopened = await repository.acquire(endpoint, policy, 112)
+        assert not reopened.allowed
+
+        next_probe = await repository.acquire(endpoint, policy, 212)
+        await repository.success(next_probe, policy, 213)
+        with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+            await repository.failure(
+                next_probe,
+                ProviderErrorCode.TIMEOUT,
+                policy,
+                214,
+            )
+    finally:
+        await store.close()
+
+
+def test_sqlite_resilience_deserializers_fail_closed_on_invalid_storage_values() -> None:
+    conflict_values = (
+        (_document, "not-bytes"),
+        (_document, b"[]"),
+        (_array, "not-bytes"),
+        (_array, b"{}"),
+        (_string, b"not-a-string"),
+        (_bytes, "not-bytes"),
+        (_optional_integer, "not-an-integer"),
+    )
+    for decoder, value in conflict_values:
+        with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+            decoder(value)
+
+    with pytest.raises(ProviderResilienceValidationError, match="request is invalid"):
+        _digest_bytes("not-a-digest")
+    assert _document(b'{"valid":true}') == {"valid": True}
+    assert _array(b'["valid"]') == ("valid",)
+    assert _optional_integer(None) is None
+    assert _optional_enum(VectorDtype, None) is None
+    assert _optional_enum(VectorDtype, "float32") is VectorDtype.FLOAT32
+    with pytest.raises(ValueError, match="invalid-dtype"):
+        _optional_enum(VectorDtype, "invalid-dtype")
+    with pytest.raises(ProviderResilienceConflictError, match="diverged"):
+        _circuit(cast("Any", {"state": "not-a-state"}))
 
 
 @pytest.mark.asyncio

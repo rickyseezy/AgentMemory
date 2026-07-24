@@ -65,10 +65,10 @@ jobs:
   core:
     name: Local Core
     runs-on: ubuntu-latest
-    # The complete 15,437-mutant critical-domain campaign has exceeded
-    # 67 minutes on a slower two-core hosted runner. Keep a finite margin
+    # The complete 17,695-mutant critical-domain campaign exceeded the former
+    # 120-minute job ceiling on a two-core hosted runner. Keep a finite margin
     # for runner variance without weakening or splitting the mandatory gate.
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

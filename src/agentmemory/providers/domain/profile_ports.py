@@ -42,6 +42,7 @@ class ProviderGatewayResponse:
     revision_fingerprint: str
     endpoint_fingerprint: str
     cancellation_verified: bool
+    retry_after_microseconds: int | None = None
 
 
 class ProviderProfileRepository(Protocol):

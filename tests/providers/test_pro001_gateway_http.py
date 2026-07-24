@@ -100,6 +100,7 @@ async def test_gateway_request_uses_protected_capability_and_reference_only_enve
     assert response.body == b'{"ok":true}'
     assert response.revision_fingerprint == FINGERPRINT
     assert response.endpoint_fingerprint == ENDPOINT_FINGERPRINT
+    assert response.retry_after_microseconds is None
     assert len(observations) == 1
     observation = observations[0]
     assert str(observation.url) == ("http://provider-gateway:8080/v1/provider-operations/probe")
@@ -165,6 +166,8 @@ async def test_invalid_gateway_request_is_rejected_before_socket_acquisition(
         _envelope(revision_fingerprint="bad"),
         _envelope(endpoint_fingerprint="bad"),
         _envelope(cancellation_verified=1),
+        _envelope(retry_after_microseconds=-1),
+        _envelope(retry_after_microseconds="tomorrow"),
     ],
 )
 @pytest.mark.asyncio
@@ -189,6 +192,34 @@ async def test_gateway_response_envelope_is_strict_bounded_and_content_free_on_e
             await transport.execute(_request())
     assert "secret://" not in str(captured.value)
     assert body.decode(errors="ignore") not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_gateway_returns_only_normalized_absolute_retry_after_evidence(
+    tmp_path: Path,
+) -> None:
+    capability = tmp_path / "gateway.capability"
+    write_secret(capability, CAPABILITY)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            content=_envelope(
+                status_code=429,
+                retry_after_microseconds=1_784_000_000_000_000,
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        response = await ProviderGatewayHttpTransport(
+            client,
+            "http://provider-gateway:8080",
+            capability,
+        ).execute(_request())
+
+    assert response.status_code == 429
+    assert response.retry_after_microseconds == 1_784_000_000_000_000
 
 
 @pytest.mark.asyncio

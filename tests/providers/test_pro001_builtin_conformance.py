@@ -382,6 +382,7 @@ async def test_upstream_errors_use_safe_canonical_codes_without_body_or_secret(
             revision_fingerprint=FINGERPRINT,
             endpoint_fingerprint=ENDPOINT_FINGERPRINT,
             cancellation_verified=True,
+            retry_after_microseconds=123_456 if status == 429 else None,
         )
 
     gateway = _Gateway(rejected)
@@ -389,6 +390,7 @@ async def test_upstream_errors_use_safe_canonical_codes_without_body_or_secret(
     with pytest.raises(ProviderAdapterError) as captured:
         await adapter.probe(_profile(adapter, ProviderOperation.EMBEDDING))
     assert captured.value.code is code
+    assert captured.value.retry_after_microseconds == (123_456 if status == 429 else None)
     assert marker not in str(captured.value)
     assert "secret://" not in str(captured.value)
 

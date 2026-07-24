@@ -2816,6 +2816,10 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-007 — Retry, use equivalent fallback, and degrade correctly
 
+**Implementation record:** [`docs/implementation/PRO-007.md`](docs/implementation/PRO-007.md)
+
+**Operations runbook:** [`docs/runbooks/PRO-007-PROVIDER-RESILIENCE.md`](docs/runbooks/PRO-007-PROVIDER-RESILIENCE.md)
+
 **User story:** As a developer, transient provider failure does not corrupt indexes or stop all recall.
 
 **Acceptance criteria**

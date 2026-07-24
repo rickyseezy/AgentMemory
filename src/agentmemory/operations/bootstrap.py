@@ -459,6 +459,10 @@ from agentmemory.providers.adapters.profile_http_api import (
 from agentmemory.providers.adapters.profile_identity import (
     SystemProviderProfileIdentityGenerator,
 )
+from agentmemory.providers.adapters.resilience_http_api import (
+    create_contract_provider_resilience_router,
+    create_provider_resilience_router,
+)
 from agentmemory.providers.adapters.routing_cache import BoundedProviderRouteCache
 from agentmemory.providers.adapters.routing_http_api import (
     create_contract_provider_routing_router,
@@ -478,6 +482,9 @@ from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
+from agentmemory.providers.adapters.sqlite_resilience import (
+    SqliteProviderResilienceRepository,
+)
 from agentmemory.providers.adapters.sqlite_routing import (
     SqliteProviderRoutingRepository,
 )
@@ -489,6 +496,10 @@ from agentmemory.providers.application.profiles import (
     CreateProviderProfileHandler,
     GetProviderProfileHandler,
     ProbeProviderHandler,
+)
+from agentmemory.providers.application.resilience import (
+    GetEquivalentEndpointSetHandler,
+    PublishEquivalentEndpointSetHandler,
 )
 from agentmemory.providers.application.routing import (
     CreateProviderRouteHandler,
@@ -1097,6 +1108,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_embedding_space_router(),
             create_contract_provider_routing_router(),
             create_contract_provider_scheduling_router(),
+            create_contract_provider_resilience_router(),
         )
     )
 
@@ -1228,6 +1240,16 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             ),
             GetProviderWorkHandler(provider_scheduling),
             CancelProviderWorkHandler(provider_scheduling),
+            clock,
+        )
+    )
+    provider_resilience = SqliteProviderResilienceRepository(store)
+    application.include_router(
+        create_provider_resilience_router(
+            authenticator,
+            retrieval_scope,
+            PublishEquivalentEndpointSetHandler(provider_resilience),
+            GetEquivalentEndpointSetHandler(provider_resilience),
             clock,
         )
     )

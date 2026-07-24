@@ -113,6 +113,7 @@ class ProviderGatewayHttpTransport:
             fingerprint = _string(document.get("revision_fingerprint"))
             endpoint_fingerprint = _string(document.get("endpoint_fingerprint"))
             cancellation = _boolean(document.get("cancellation_verified"))
+            retry_after = _optional_integer(document.get("retry_after_microseconds"))
         except (TypeError, ValueError, binascii.Error) as error:
             raise ProviderProfileDependencyError(_ERR_RESPONSE) from error
         if (
@@ -121,6 +122,7 @@ class ProviderGatewayHttpTransport:
             or _REVISION.fullmatch(revision) is None
             or _DIGEST.fullmatch(fingerprint) is None
             or _DIGEST.fullmatch(endpoint_fingerprint) is None
+            or (retry_after is not None and retry_after < 0)
         ):
             raise ProviderProfileDependencyError(_ERR_RESPONSE)
         return ProviderGatewayResponse(
@@ -130,6 +132,7 @@ class ProviderGatewayHttpTransport:
             fingerprint,
             endpoint_fingerprint,
             cancellation,
+            retry_after,
         )
 
 
@@ -167,3 +170,9 @@ def _boolean(value: object) -> bool:
     if not isinstance(value, bool):
         raise TypeError
     return value
+
+
+def _optional_integer(value: object) -> int | None:
+    if value is None:
+        return None
+    return _integer(value)

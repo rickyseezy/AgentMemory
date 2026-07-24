@@ -8,7 +8,7 @@ or make non-equivalent providers interchangeable.
 
 ## Preconditions
 
-- Core is Ready at relational head `0039_pro006_provider_scheduling` or a later certified head.
+- Core is Ready at relational head `0040_pro007_provider_resilience` or a later certified head.
 - The exact provider profile revision is active and its capability evidence is current.
 - The exact embedding space and fingerprint are active for vector-producing work.
 - Routing has already produced the approved profile, purpose, classification, and workload.

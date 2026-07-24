@@ -238,6 +238,14 @@ class _FailFirstCompletion:
     ) -> None:
         await self.delegate.release_retry(claim, reason_code, retry_at_microseconds)
 
+    async def fail(
+        self,
+        claim: ProviderOperationClaim,
+        reason_code: str,
+        failed_at_microseconds: int,
+    ) -> None:
+        await self.delegate.fail(claim, reason_code, failed_at_microseconds)
+
 
 @pytest.mark.asyncio
 @pytest.mark.integration

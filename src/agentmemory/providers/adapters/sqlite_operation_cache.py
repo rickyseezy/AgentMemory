@@ -52,13 +52,16 @@ class SqliteProviderOperationCache:
         """Claim, wait for, replay, or conflict one persistent operation identity."""
         conflict = False
         async with _WriteTransaction(self._store) as transaction:
-            exact = await _exact_row(transaction.connection, operation)
+            failed_exact = await _exact_failure_row(transaction.connection, operation)
+            exact = failed_exact or await _exact_row(transaction.connection, operation)
             if exact is not None and _bytes(exact["request_sha256"]).hex() != (
                 operation.request_sha256
             ):
                 await _append_conflict(transaction.connection, operation, exact, now_microseconds)
                 conflict = True
                 claim = _wait_claim(operation, int(str(exact["attempts"])))
+            elif failed_exact is not None:
+                claim = _failed_claim(operation, failed_exact)
             elif exact is not None:
                 claim = await _claim_existing(
                     transaction.connection,
@@ -67,8 +70,17 @@ class SqliteProviderOperationCache:
                     (owner, now_microseconds, lease_until_microseconds),
                 )
             else:
-                semantic = await _semantic_row(transaction.connection, operation)
-                if semantic is not None:
+                failed_semantic = await _semantic_failure_row(
+                    transaction.connection,
+                    operation,
+                )
+                semantic = failed_semantic or await _semantic_row(
+                    transaction.connection,
+                    operation,
+                )
+                if failed_semantic is not None:
+                    claim = _failed_claim(operation, failed_semantic)
+                elif semantic is not None:
                     claim = await _claim_existing(
                         transaction.connection,
                         operation,
@@ -168,6 +180,50 @@ class SqliteProviderOperationCache:
                 raise ProviderOperationIntegrityError(_ERR_INTEGRITY)
             await transaction.commit()
 
+    async def fail(
+        self,
+        claim: ProviderOperationClaim,
+        reason_code: str,
+        failed_at_microseconds: int,
+    ) -> None:
+        """Atomically replace one live reservation with immutable failure evidence."""
+        if claim.disposition is not ProviderClaimDisposition.CLAIMED or claim.owner is None:
+            raise ProviderOperationIntegrityError(_ERR_INTEGRITY)
+        async with _WriteTransaction(self._store) as transaction:
+            inserted = await transaction.connection.execute(
+                text(
+                    "INSERT INTO provider_operation_failures "
+                    "(profile_id,idempotency_key,operation_id,brain_id,cache_key_sha256,"
+                    "request_sha256,error_code,attempts,failed_at,schema_version) "
+                    "SELECT profile_id,idempotency_key,operation_id,brain_id,cache_key_sha256,"
+                    "request_sha256,:reason,attempts,:failed_at,1 "
+                    "FROM provider_operation_results WHERE cache_key_sha256=:cache "
+                    "AND state='processing' AND lease_owner=:owner"
+                ),
+                {
+                    "cache": bytes.fromhex(claim.operation.cache_key_sha256),
+                    "failed_at": failed_at_microseconds,
+                    "owner": claim.owner,
+                    "reason": reason_code,
+                },
+            )
+            if inserted.rowcount != 1:
+                raise ProviderOperationIntegrityError(_ERR_INTEGRITY)
+            deleted = await transaction.connection.execute(
+                text(
+                    "DELETE FROM provider_operation_results "
+                    "WHERE cache_key_sha256=:cache AND state='processing' "
+                    "AND lease_owner=:owner"
+                ),
+                {
+                    "cache": bytes.fromhex(claim.operation.cache_key_sha256),
+                    "owner": claim.owner,
+                },
+            )
+            if deleted.rowcount != 1:
+                raise ProviderOperationIntegrityError(_ERR_INTEGRITY)
+            await transaction.commit()
+
 
 async def _exact_row(
     connection: AsyncConnection,
@@ -188,6 +244,25 @@ async def _exact_row(
     )
 
 
+async def _exact_failure_row(
+    connection: AsyncConnection,
+    operation: ProviderOperationRequest,
+) -> RowMapping | None:
+    return (
+        (
+            await connection.execute(
+                text(
+                    "SELECT * FROM provider_operation_failures "
+                    "WHERE profile_id=:profile AND idempotency_key=:key"
+                ),
+                {"key": operation.idempotency_key, "profile": operation.profile_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+
+
 async def _semantic_row(
     connection: AsyncConnection,
     operation: ProviderOperationRequest,
@@ -196,6 +271,22 @@ async def _semantic_row(
         (
             await connection.execute(
                 text("SELECT * FROM provider_operation_results WHERE cache_key_sha256=:cache"),
+                {"cache": bytes.fromhex(operation.cache_key_sha256)},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+
+
+async def _semantic_failure_row(
+    connection: AsyncConnection,
+    operation: ProviderOperationRequest,
+) -> RowMapping | None:
+    return (
+        (
+            await connection.execute(
+                text("SELECT * FROM provider_operation_failures WHERE cache_key_sha256=:cache"),
                 {"cache": bytes.fromhex(operation.cache_key_sha256)},
             )
         )
@@ -260,6 +351,27 @@ def _wait_claim(operation: ProviderOperationRequest, attempt: int) -> ProviderOp
         attempt,
         None,
     )
+
+
+def _failed_claim(
+    operation: ProviderOperationRequest,
+    row: RowMapping,
+) -> ProviderOperationClaim:
+    code = row["error_code"]
+    if not isinstance(code, str):
+        raise ProviderOperationIntegrityError(_ERR_INTEGRITY)
+    try:
+        return ProviderOperationClaim(
+            operation,
+            ProviderClaimDisposition.FAILED,
+            None,
+            None,
+            int(str(row["attempts"])),
+            None,
+            code,
+        )
+    except ValueError as error:
+        raise ProviderOperationIntegrityError(_ERR_INTEGRITY) from error
 
 
 def _outcome(row: RowMapping) -> ProviderOperationOutcome:

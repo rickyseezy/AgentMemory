@@ -82,3 +82,12 @@ class ProviderOperationCache(Protocol):
     ) -> None:
         """Release the exact active claim without fabricating a cached result."""
         ...
+
+    async def fail(
+        self,
+        claim: ProviderOperationClaim,
+        reason_code: str,
+        failed_at_microseconds: int,
+    ) -> None:
+        """Persist and replay one canonical permanent provider failure."""
+        ...

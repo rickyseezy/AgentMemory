@@ -6,7 +6,11 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from agentmemory.providers.domain.errors import ProviderOperationDependencyError
+from agentmemory.providers.domain.errors import (
+    ProviderErrorCode,
+    ProviderOperationDependencyError,
+    ProviderPermanentFailureError,
+)
 from agentmemory.providers.domain.idempotency import (
     ProviderClaimDisposition,
     ProviderExecutionResult,
@@ -60,6 +64,11 @@ class ExecuteProviderOperationHandler:
                     msg = "provider cache returned incomplete replay evidence"
                     raise ProviderOperationDependencyError(msg)
                 return ProviderExecutionResult(claim.cached_outcome, cached=True)
+            if claim.disposition is ProviderClaimDisposition.FAILED:
+                if claim.failure_code is None:
+                    msg = "provider cache returned incomplete failure evidence"
+                    raise ProviderOperationDependencyError(msg)
+                raise ProviderPermanentFailureError(ProviderErrorCode(claim.failure_code))
             if claim.disposition is ProviderClaimDisposition.WAIT:
                 await asyncio.sleep(self.poll_seconds)
                 continue

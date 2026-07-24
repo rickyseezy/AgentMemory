@@ -374,7 +374,10 @@ def _require_success(response: ProviderGatewayResponse) -> None:
         raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE)
     code = _status_code(response.status_code)
     if code is not None:
-        raise ProviderAdapterError(code)
+        raise ProviderAdapterError(
+            code,
+            retry_after_microseconds=response.retry_after_microseconds,
+        )
 
 
 def _status_code(status: int) -> ProviderErrorCode | None:

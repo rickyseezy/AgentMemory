@@ -11,7 +11,11 @@ import pytest
 from agentmemory.providers.application.idempotent_execution import (
     ExecuteProviderOperationHandler,
 )
-from agentmemory.providers.domain.errors import ProviderOperationDependencyError
+from agentmemory.providers.domain.errors import (
+    ProviderErrorCode,
+    ProviderOperationDependencyError,
+    ProviderPermanentFailureError,
+)
 from agentmemory.providers.domain.idempotency import (
     ProviderClaimDisposition,
     ProviderOperationClaim,
@@ -59,7 +63,7 @@ def outcome() -> ProviderOperationOutcome:
         ("idempotency_key", "bad key"),
         ("brain_id", "bad"),
         ("profile_id", "bad"),
-        ("model_revision", "bad"),
+        ("model_revision", "bad revision"),
         ("content_sha256", ("bad",)),
         ("content_sha256", ()),
         ("preprocessing_revision", "bad revision"),
@@ -87,6 +91,12 @@ def test_cache_key_binds_every_required_semantic_dimension() -> None:
     assert len({baseline.cache_key_sha256, *(item.cache_key_sha256 for item in variants)}) == 8
     assert baseline.request_sha256 == replace(baseline, operation_id=OPERATION_ID).request_sha256
     assert baseline.request_sha256 != replace(baseline, operation_id=PROFILE_ID).request_sha256
+
+
+def test_provider_operation_accepts_named_model_revision_and_hashes_preprocessing() -> None:
+    operation = request(model_revision="text-embedding-3-large@2026-07-01")
+    assert operation.model_revision == "text-embedding-3-large@2026-07-01"
+    assert operation.preprocessing_digest == digest("source-text-v1").value
 
 
 @pytest.mark.parametrize(
@@ -153,6 +163,9 @@ class _Cache:
     released: list[tuple[ProviderOperationClaim, str, int]] = field(
         default_factory=list[tuple[ProviderOperationClaim, str, int]]
     )
+    failed: list[tuple[ProviderOperationClaim, str, int]] = field(
+        default_factory=list[tuple[ProviderOperationClaim, str, int]]
+    )
 
     async def claim(
         self,
@@ -180,6 +193,14 @@ class _Cache:
     ) -> None:
         self.released.append((claim, reason_code, retry_at_microseconds))
 
+    async def fail(
+        self,
+        claim: ProviderOperationClaim,
+        reason_code: str,
+        failed_at_microseconds: int,
+    ) -> None:
+        self.failed.append((claim, reason_code, failed_at_microseconds))
+
 
 @dataclass
 class _BillingBackend:
@@ -202,6 +223,11 @@ class _BillingBackend:
 
 def claimed(disposition: ProviderClaimDisposition) -> ProviderOperationClaim:
     cached = outcome() if disposition is ProviderClaimDisposition.CACHED else None
+    failure_code = (
+        ProviderErrorCode.AUTHENTICATION.value
+        if disposition is ProviderClaimDisposition.FAILED
+        else None
+    )
     return ProviderOperationClaim(
         operation=request(),
         disposition=disposition,
@@ -209,6 +235,7 @@ def claimed(disposition: ProviderClaimDisposition) -> ProviderOperationClaim:
         lease_until_microseconds=(42 if disposition is ProviderClaimDisposition.CLAIMED else None),
         attempt=1,
         cached_outcome=cached,
+        failure_code=failure_code,
     )
 
 
@@ -244,6 +271,22 @@ async def test_completed_provider_operation_replays_without_billing() -> None:
     assert result.cached is True
     assert backend.invocations == []
     assert cache.completed == []
+
+
+@pytest.mark.asyncio
+async def test_failed_provider_operation_replays_without_billing() -> None:
+    cache = _Cache([claimed(ProviderClaimDisposition.FAILED)])
+    backend = _BillingBackend()
+    with pytest.raises(ProviderPermanentFailureError) as captured:
+        await ExecuteProviderOperationHandler(
+            cache,
+            backend,
+            FixedClock(NOW),
+            "provider-worker-1",
+            poll_seconds=0,
+        ).execute(request())
+    assert captured.value.code is ProviderErrorCode.AUTHENTICATION
+    assert backend.invocations == []
 
 
 @pytest.mark.asyncio

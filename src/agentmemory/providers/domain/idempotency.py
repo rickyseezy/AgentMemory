@@ -8,8 +8,10 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from agentmemory.providers.domain.errors import ProviderErrorCode
+
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_MODEL_REVISION = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_MODEL_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}$")
 _SAFE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _SAFE_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _UUID7 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -40,6 +42,7 @@ class ProviderClaimDisposition(StrEnum):
 
     CLAIMED = "claimed"
     CACHED = "cached"
+    FAILED = "failed"
     WAIT = "wait"
 
 
@@ -109,6 +112,11 @@ class ProviderOperationRequest:
         )
 
     @property
+    def preprocessing_digest(self) -> str:
+        """Bind the named preprocessing contract to one canonical digest."""
+        return hashlib.sha256(self.preprocessing_revision.encode()).hexdigest()
+
+    @property
     def downstream_idempotency_key(self) -> str:
         """Return the stable key that every billable adapter must forward unchanged."""
         return f"am-provider-v1:{self.cache_key_sha256}"
@@ -143,11 +151,13 @@ class ProviderOperationClaim:
     lease_until_microseconds: int | None
     attempt: int
     cached_outcome: ProviderOperationOutcome | None
+    failure_code: str | None = None
 
     def __post_init__(self) -> None:
         """Enforce the exact evidence shape for each claim disposition."""
         claimed = self.disposition is ProviderClaimDisposition.CLAIMED
         cached = self.disposition is ProviderClaimDisposition.CACHED
+        failed = self.disposition is ProviderClaimDisposition.FAILED
         if self.attempt < 1:
             msg = "provider operation claim attempt is invalid"
             raise ValueError(msg)
@@ -156,6 +166,12 @@ class ProviderOperationClaim:
             raise ValueError(msg)
         if cached != (self.cached_outcome is not None):
             msg = "provider operation cache evidence is invalid"
+            raise ValueError(msg)
+        if failed != (self.failure_code is not None) or (
+            self.failure_code is not None
+            and self.failure_code not in {item.value for item in ProviderErrorCode}
+        ):
+            msg = "provider operation failure evidence is invalid"
             raise ValueError(msg)
 
 

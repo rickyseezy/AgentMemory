@@ -27,9 +27,18 @@ class ProviderErrorCode(StrEnum):
 class ProviderAdapterError(RuntimeError):
     """Safe adapter exception carrying no upstream body, credential, or URL."""
 
-    def __init__(self, code: ProviderErrorCode) -> None:
-        """Store only the canonical code and one generated content-free message."""
+    def __init__(
+        self,
+        code: ProviderErrorCode,
+        *,
+        retry_after_microseconds: int | None = None,
+    ) -> None:
+        """Store only canonical retry evidence and one generated content-free message."""
+        if retry_after_microseconds is not None and retry_after_microseconds < 0:
+            msg = "provider retry hint is invalid"
+            raise ValueError(msg)
         self.code = code
+        self.retry_after_microseconds = retry_after_microseconds
         super().__init__(f"provider adapter failed: {code.value}")
 
 
@@ -123,3 +132,41 @@ class ProviderSchedulingDependencyError(RuntimeError):
 
 class ProviderSchedulingCapacityError(RuntimeError):
     """Report a bounded rate, concurrency, quota, or cost-budget denial."""
+
+
+class ProviderResilienceValidationError(ValueError):
+    """Reject malformed retry, circuit, endpoint, or output-contract evidence."""
+
+
+class ProviderResilienceAuthorizationError(PermissionError):
+    """Reject resilience publication or lookup without current Brain authority."""
+
+
+class ProviderResilienceConflictError(RuntimeError):
+    """Reject divergent equivalence, circuit, or operation evidence."""
+
+
+class ProviderResilienceDependencyError(RuntimeError):
+    """Expose one content-free circuit or operation-store dependency failure."""
+
+
+class ProviderRetryScheduledError(RuntimeError):
+    """Return one durable retry time without exposing an upstream response."""
+
+    def __init__(self, code: ProviderErrorCode, retry_at_microseconds: int) -> None:
+        """Bind a canonical retryable code to its absolute due time."""
+        if retry_at_microseconds < 0:
+            msg = "provider retry schedule is invalid"
+            raise ValueError(msg)
+        self.code = code
+        self.retry_at_microseconds = retry_at_microseconds
+        super().__init__(f"provider retry scheduled: {code.value}")
+
+
+class ProviderPermanentFailureError(RuntimeError):
+    """Fail immediately for a canonical nonretryable provider error."""
+
+    def __init__(self, code: ProviderErrorCode) -> None:
+        """Store only the safe closed error code."""
+        self.code = code
+        super().__init__(f"provider operation failed permanently: {code.value}")

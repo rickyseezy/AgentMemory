@@ -7,6 +7,7 @@ from itertools import pairwise
 
 import pytest
 
+from agentmemory.providers.domain import migration as migration_domain
 from agentmemory.providers.domain.errors import EmbeddingMigrationValidationError
 from agentmemory.providers.domain.migration import (
     EmbeddingGenerationMigration,
@@ -256,6 +257,10 @@ def test_validation_independently_blocks_each_cutover_regression(
 
 
 def test_validation_and_policy_reject_invalid_metrics_or_unbounded_thresholds() -> None:
+    assert (
+        passing_validation().digest
+        == "080494b7266b2b7e0a87fd33e7934fc61dfe773b174286996c19620d40056d73"
+    )
     with pytest.raises(EmbeddingMigrationValidationError, match="input is invalid"):
         passing_validation(canonical_count=-1)
     with pytest.raises(EmbeddingMigrationValidationError, match="input is invalid"):
@@ -273,6 +278,7 @@ def test_request_digest_binds_every_migration_identity_coordinate() -> None:
         target_generation_id=TARGET_GENERATION_ID,
         source_watermark=100,
     )
+    assert baseline == "69001db15497039cfa14d7407495bf5f4536636ed3b078f06456274414ff6765"
     assert baseline == migration_request_digest(
         brain_id=BRAIN_ID,
         source_space_id=SOURCE_SPACE_ID,
@@ -289,6 +295,69 @@ def test_request_digest_binds_every_migration_identity_coordinate() -> None:
         target_generation_id=TARGET_GENERATION_ID,
         source_watermark=101,
     )
+
+
+def test_canonical_digest_rejects_nan_and_normalizes_key_order_and_unicode() -> None:
+    expected = "216011ca5855bdb868f7a60d3651f216b1f0e7d6231224c0b24121efce2235b5"
+    assert (
+        migration_domain._digest(  # pyright: ignore[reportPrivateUsage]
+            {"z": "mémoire", "a": 1}
+        )
+        == expected
+    )
+    assert (
+        migration_domain._digest(  # pyright: ignore[reportPrivateUsage]
+            {"a": 1, "z": "mémoire"}
+        )
+        == expected
+    )
+    with pytest.raises(ValueError, match="Out of range float values"):
+        migration_domain._digest(  # pyright: ignore[reportPrivateUsage]
+            {"value": float("nan")}
+        )
+
+
+def test_request_digest_accepts_zero_watermark_and_rejects_ambiguous_coordinates() -> None:
+    assert (
+        migration_request_digest(
+            brain_id=BRAIN_ID,
+            source_space_id=SOURCE_SPACE_ID,
+            source_generation_id=SOURCE_GENERATION_ID,
+            target_space_id=TARGET_SPACE_ID,
+            target_generation_id=TARGET_GENERATION_ID,
+            source_watermark=0,
+        )
+        == "e4caf1e0f1c1ceb845674344a5ff7072657df813a509ee955d45f7fab1cc8e5c"
+    )
+    assert (
+        migration_request_digest(
+            brain_id=BRAIN_ID,
+            source_space_id=SOURCE_SPACE_ID,
+            source_generation_id=SOURCE_GENERATION_ID,
+            target_space_id=TARGET_SPACE_ID,
+            target_generation_id=TARGET_GENERATION_ID,
+            source_watermark=2**63 - 1,
+        )
+        == "af56bb52b069707ef4018abd4b17915d30a05844c1dfaaa8a1e6951acc1e6fd4"
+    )
+    invalid_changes = (
+        {"target_space_id": SOURCE_SPACE_ID},
+        {"target_generation_id": SOURCE_GENERATION_ID},
+        {"source_watermark": -1},
+        {"source_watermark": 2**63},
+    )
+    for changes in invalid_changes:
+        values: dict[str, object] = {
+            "brain_id": BRAIN_ID,
+            "source_space_id": SOURCE_SPACE_ID,
+            "source_generation_id": SOURCE_GENERATION_ID,
+            "target_space_id": TARGET_SPACE_ID,
+            "target_generation_id": TARGET_GENERATION_ID,
+            "source_watermark": 100,
+        }
+        values.update(changes)
+        with pytest.raises(EmbeddingMigrationValidationError, match="input is invalid"):
+            migration_request_digest(**values)  # type: ignore[arg-type]
 
 
 def test_content_pages_transitions_and_request_digest_reject_invalid_boundaries() -> None:

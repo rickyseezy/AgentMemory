@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import text
 
 from agentmemory.providers.adapters import sqlite_embedding_spaces
+from agentmemory.providers.adapters import sqlite_migration as sqlite_migration_adapter
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
@@ -43,6 +44,7 @@ from tests.providers.test_pro004_sqlite_embedding_spaces import (
     candidates,
     seed_active_provider,
 )
+from tests.providers.test_pro008_migration_domain import migration
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -141,6 +143,15 @@ async def test_generation_binding_fails_closed_when_space_authority_is_missing(
             )
     finally:
         await store.close()
+
+
+def test_migration_snapshot_digest_is_canonical_and_stable() -> None:
+    assert (
+        sqlite_migration_adapter._snapshot_digest(  # pyright: ignore[reportPrivateUsage]
+            migration()
+        ).hex()
+        == "9f741ecf2a3ae2aeed947adf094ac63a4874b0c24b8afd1c9d54bd42c64e37ec"
+    )
 
 
 def _candidate(

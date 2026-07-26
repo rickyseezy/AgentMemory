@@ -4,6 +4,7 @@ package composeplan
 import (
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -453,7 +454,7 @@ func requiredRemoteSecret(name string) bool {
 
 func validSecretFile(value string) bool {
 	return value != "" && len(value) <= 4096 && value == strings.TrimSpace(value) &&
-		!strings.ContainsAny(value, "\x00\r\n")
+		!strings.ContainsAny(value, "\x00\r\n") && path.IsAbs(value) && path.Clean(value) == value
 }
 
 func requiredService(name ServiceName) bool {
@@ -898,7 +899,7 @@ func requiredSecretMounts(service ServiceName) map[string]string {
 			SecretEgressAttestation:    secretTarget(SecretEgressAttestation),
 		}
 	case ServiceCore, ServiceNeo4j, ServiceLocalEmbedding, ServiceLocalReranker,
-		ServiceLocalExtractor, ServiceMigrate:
+		ServiceLocalExtractor, ServiceMigrate, ServiceProviderGateway:
 		return map[string]string{}
 	default:
 		return map[string]string{}

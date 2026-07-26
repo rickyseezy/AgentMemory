@@ -32,9 +32,15 @@ func run(
 		return 1
 	}
 	project := projectDefault
-	if len(args) == 2 && args[1] == "remote" {
+	switch len(args) {
+	case 1:
+	case 2:
+		if args[1] != "remote" {
+			_, _ = fmt.Fprintln(stderr, "protected projection failed: argument-contract")
+			return 1
+		}
 		project = projectRemote
-	} else if len(args) != 1 {
+	default:
 		_, _ = fmt.Fprintln(stderr, "protected projection failed: argument-contract")
 		return 1
 	}

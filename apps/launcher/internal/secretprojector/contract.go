@@ -38,9 +38,10 @@ type volumeContract struct {
 
 func protected(name string, uid uint32, gid uint32) fileContract {
 	maximum := exactCryptographicSecretBytes
-	if name == composeplan.SecretEgressAttestation {
+	switch name {
+	case composeplan.SecretEgressAttestation:
 		maximum = maximumAttestationBytes
-	} else if name == composeplan.SecretProviderGatewayCredentialVault {
+	case composeplan.SecretProviderGatewayCredentialVault:
 		maximum = maximumCredentialVaultBytes
 	}
 	return fileContract{name: name, userID: uid, groupID: gid, maxBytes: maximum}

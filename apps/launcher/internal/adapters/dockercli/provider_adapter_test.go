@@ -144,7 +144,7 @@ func TestPRO002RuntimeContainsCrashHangOOMAndPIDExhaustion(t *testing.T) {
 func TestPRO009OperationSupervisorRunsOneClosedContainerAndAlwaysCleansIt(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)
 	}
 	request, response := providerOperationFrames(t, "operation-pro009")
@@ -185,7 +185,7 @@ func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing
 	t.Parallel()
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o755); err != nil {
+	if err := os.Chmod(directory, 0o755); err != nil { //nolint:gosec // Adversarial test deliberately creates an unsafe directory.
 		t.Fatal(err)
 	}
 	if supervisor, err := NewProviderAdapterOperationSupervisor(
@@ -193,7 +193,7 @@ func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing
 	); err == nil || supervisor != nil {
 		t.Fatalf("unsafe directory accepted: %#v/%v", supervisor, err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)
 	}
 	request, _ := providerOperationFrames(t, "operation-pro009")
@@ -217,7 +217,7 @@ func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing
 func TestPRO009OperationSupervisorRejectsUnboundOrMalformedFramesBeforeEscape(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)
 	}
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
@@ -261,7 +261,7 @@ func TestPRO009OperationSupervisorRejectsUnboundOrMalformedFramesBeforeEscape(t 
 func TestPRO009OperationSupervisorReconcilesOnlyExactAuthorizedPlanOrphans(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)
 	}
 	plan := providerAdapterPlanFor(t, true)
@@ -306,7 +306,7 @@ func TestPRO009OperationSupervisorReconcilesOnlyExactAuthorizedPlanOrphans(t *te
 func TestPRO009OperationSupervisorRejectsOrphanOwnershipDriftBeforeRemoval(t *testing.T) {
 	t.Parallel()
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)
 	}
 	plan := providerAdapterPlanFor(t, true)

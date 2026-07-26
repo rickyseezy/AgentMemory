@@ -19,7 +19,7 @@ func TestPRO002ManifestProducesClosedLeastPrivilegeDeploymentPlan(t *testing.T) 
 		plan.User() != "65532:65532" || !plan.ReadOnlyRootFS() || !plan.NoNewPrivileges() ||
 		plan.Privileged() || plan.HostNetwork() || plan.PublishPort() ||
 		plan.Network() != "am_internal" || plan.ScratchTarget() != "/tmp" ||
-		plan.CapabilitySecret() != "agentmemory_018f0000000070008000000000000711_provider_gateway_capability" {
+		plan.CapabilitySecret() != "agentmemory_018f0000000070008000000000000711_provider-adapter-egress" {
 		t.Fatalf("unsafe or incomplete closed plan: %#v", plan)
 	}
 	if plan.CPUsMilli() != 500 || plan.MemoryBytes() != 536870912 || plan.PIDs() != 64 ||

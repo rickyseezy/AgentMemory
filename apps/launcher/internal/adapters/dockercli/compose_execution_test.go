@@ -256,13 +256,14 @@ func TestPF001BoundExecutionRejectsEverySecretSubstitutionAndInvalidAuthoritySha
 		{"credential vault oversized", make([]byte, maximumExecutionSecretBytes+1), false},
 	} {
 		name := executionSecretName
-		if test.name == "unknown" {
+		switch {
+		case test.name == "unknown":
 			name = "unknown"
-		} else if strings.HasPrefix(test.name, "egress") {
+		case strings.HasPrefix(test.name, "egress"):
 			name = composeplan.SecretEgressAttestation
-		} else if strings.HasPrefix(test.name, "gateway") {
+		case strings.HasPrefix(test.name, "gateway"):
 			name = composeplan.SecretProviderGatewayClientCapability
-		} else if strings.HasPrefix(test.name, "credential vault") {
+		case strings.HasPrefix(test.name, "credential vault"):
 			name = composeplan.SecretProviderGatewayCredentialVault
 		}
 		if got := validExecutionSecret(name, test.value); got != test.valid {

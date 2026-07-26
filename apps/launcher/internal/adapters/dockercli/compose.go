@@ -172,14 +172,15 @@ func (c *Compose) StartAndWait(ctx context.Context, project containerengine.Comp
 		execution.authority.close()
 		return containerengine.ErrInvalidComposeProject
 	}
-	operation := []string{
+	operation := make([]string, 0, 8+len(services))
+	operation = append(operation,
 		"up",
 		"--detach",
 		"--wait",
 		"--wait-timeout", strconv.FormatUint(uint64(project.WaitTimeSeconds()), 10),
 		"--pull", "never",
 		"--no-build",
-	}
+	)
 	operation = append(operation, services...)
 	err = c.runProjectedBound(ctx, project, execution, operation)
 	return err

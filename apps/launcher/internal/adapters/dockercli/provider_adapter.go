@@ -324,7 +324,9 @@ func (s *ProviderAdapterOperationSupervisor) Execute(
 	if err != nil {
 		return nil, provideradapterapp.ErrRuntime
 	}
-	defer directory.Close()
+	defer func() {
+		_ = directory.Close()
+	}()
 	name := projectName + ".json"
 	path := filepath.Join(s.runtimeDirectory, name)
 	configurationFile, err := ensureExecutionFile(

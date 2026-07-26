@@ -181,9 +181,10 @@ func (p PolicyPlan) SecretProjectionVolumes() ([]SecretProjectionVolume, bool) {
 	}
 	secret := func(name string, uid uint32, gid uint32) ProjectedSecret {
 		maximum := uint64(32)
-		if name == SecretEgressAttestation {
+		switch name {
+		case SecretEgressAttestation:
 			maximum = maximumProjectedAttestationBytes
-		} else if name == SecretProviderGatewayCredentialVault {
+		case SecretProviderGatewayCredentialVault:
 			maximum = maximumProviderCredentialVaultBytes
 		}
 		return ProjectedSecret{

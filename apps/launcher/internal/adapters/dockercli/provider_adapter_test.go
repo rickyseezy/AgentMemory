@@ -144,10 +144,7 @@ func TestPRO002RuntimeContainsCrashHangOOMAndPIDExhaustion(t *testing.T) {
 
 func TestPRO009OperationSupervisorRunsOneClosedContainerAndAlwaysCleansIt(t *testing.T) {
 	t.Parallel()
-	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
-		t.Fatal(err)
-	}
+	directory := secureComposeTestRoot(t)
 	request, response := providerOperationFrames(t, "operation-pro009")
 	runner := &providerOperationRunner{response: response}
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
@@ -185,7 +182,7 @@ func TestPRO009OperationSupervisorRunsOneClosedContainerAndAlwaysCleansIt(t *tes
 func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing.T) {
 	t.Parallel()
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
-	directory := t.TempDir()
+	directory := secureComposeTestRoot(t)
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(directory, 0o755); err != nil { //nolint:gosec // Adversarial test deliberately creates an unsafe directory.
 			t.Fatal(err)
@@ -219,10 +216,7 @@ func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing
 
 func TestPRO009OperationSupervisorRejectsUnboundOrMalformedFramesBeforeEscape(t *testing.T) {
 	t.Parallel()
-	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
-		t.Fatal(err)
-	}
+	directory := secureComposeTestRoot(t)
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
 	request, response := providerOperationFrames(t, "operation-pro009")
 	cases := []struct {
@@ -263,10 +257,7 @@ func TestPRO009OperationSupervisorRejectsUnboundOrMalformedFramesBeforeEscape(t 
 
 func TestPRO009OperationSupervisorReconcilesOnlyExactAuthorizedPlanOrphans(t *testing.T) {
 	t.Parallel()
-	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
-		t.Fatal(err)
-	}
+	directory := secureComposeTestRoot(t)
 	plan := providerAdapterPlanFor(t, true)
 	containerID := bytes.Repeat([]byte("a"), 64)
 	docker := &providerOrphanRunner{
@@ -308,10 +299,7 @@ func TestPRO009OperationSupervisorReconcilesOnlyExactAuthorizedPlanOrphans(t *te
 
 func TestPRO009OperationSupervisorRejectsOrphanOwnershipDriftBeforeRemoval(t *testing.T) {
 	t.Parallel()
-	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
-		t.Fatal(err)
-	}
+	directory := secureComposeTestRoot(t)
 	plan := providerAdapterPlanFor(t, true)
 	docker := &providerOrphanRunner{
 		containerID: string(bytes.Repeat([]byte("a"), 64)),

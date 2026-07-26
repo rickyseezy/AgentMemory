@@ -453,13 +453,31 @@ func requiredRemoteSecret(name string) bool {
 
 func validSecretFile(value string) bool {
 	if value == "" || len(value) > 4096 || value != strings.TrimSpace(value) ||
-		strings.ContainsAny(value, "\x00\r\n") || !strings.HasPrefix(value, "/") {
+		strings.ContainsAny(value, "\x00\r\n") {
 		return false
 	}
-	for index, segment := range strings.Split(value, "/") {
-		if index == 0 {
-			continue
+	var remainder string
+	if strings.HasPrefix(value, "/") {
+		remainder = strings.TrimPrefix(value, "/")
+	} else {
+		drive, rest, present := strings.Cut(value, ":")
+		if !present || len(drive) != 1 {
+			return false
 		}
+		letter := drive[0]
+		if (letter < 'a' || letter > 'z') && (letter < 'A' || letter > 'Z') {
+			return false
+		}
+		switch {
+		case strings.HasPrefix(rest, `\`):
+			remainder = strings.TrimPrefix(rest, `\`)
+		case strings.HasPrefix(rest, "/"):
+			remainder = strings.TrimPrefix(rest, "/")
+		default:
+			return false
+		}
+	}
+	for _, segment := range strings.Split(strings.ReplaceAll(remainder, `\`, "/"), "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return false
 		}

@@ -126,6 +126,31 @@ func TestPRO009RemoteReleaseRejectsMutableOrMissingGatewayAuthority(t *testing.T
 	}
 }
 
+func TestPRO009SecretSourcesRequireCanonicalPlatformAbsolutePaths(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		"/managed/provider-key",
+		`C:\managed\provider-key`,
+		"D:/managed/provider-key",
+	} {
+		if !validSecretFile(value) {
+			t.Fatalf("canonical absolute secret path rejected: %q", value)
+		}
+	}
+	for _, value := range []string{
+		"relative",
+		`C:relative`,
+		`C:\managed\..\provider-key`,
+		"/managed/./provider-key",
+		"/managed//provider-key",
+		"/",
+	} {
+		if validSecretFile(value) {
+			t.Fatalf("unsafe secret path accepted: %q", value)
+		}
+	}
+}
+
 func validRemoteReleaseInput() RemoteReleaseInput {
 	return RemoteReleaseInput{
 		Default: validDefaultReleaseInput(),

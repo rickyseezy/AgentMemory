@@ -26,7 +26,7 @@ def test_pro007_schema_installs_all_durable_resilience_authority(tmp_path: Path)
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0041_pro008_embedding_migrations",
+            "0042_pro009_provider_containment",
         )
         tables = {
             str(row[0])

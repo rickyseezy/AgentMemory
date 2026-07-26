@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from agentmemory.identity.domain.retrieval_scope import AuthorizedScope
+    from agentmemory.providers.domain.containment import ProviderEgressPermit
     from agentmemory.providers.domain.profiles import (
         ProviderManifest,
         ProviderProbeEvidence,
@@ -20,9 +21,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ProviderGatewayRequest:
-    """Credential-reference-only request authorized by the local provider gateway."""
+    """Exact draft-profile probe request awaiting final egress authorization."""
 
+    operation_id: str
+    brain_id: str
+    profile_id: str
+    profile_version: int
+    configuration_digest: str
     adapter_id: str
+    model_id: str
+    operation_type: str
+    purpose: str
     endpoint_policy_ref: str
     secret_ref: str
     method: str
@@ -125,6 +134,18 @@ class ProviderGatewayTransport(Protocol):
 
     async def execute(self, request: ProviderGatewayRequest) -> ProviderGatewayResponse:
         """Return a bounded response without exposing credential values."""
+        ...
+
+
+class ProviderProfileProbeEgressAuthority(Protocol):
+    """Authorize one exact public-canary probe against a draft profile."""
+
+    async def authorize_probe(
+        self,
+        request: ProviderGatewayRequest,
+        now_microseconds: int,
+    ) -> ProviderEgressPermit:
+        """Persist a short-lived provisional permit immediately before gateway invocation."""
         ...
 
 

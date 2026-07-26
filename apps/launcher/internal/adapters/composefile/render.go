@@ -115,7 +115,7 @@ type secretResource struct {
 // document. It contains protected-file references only and never secret bytes.
 func Render(plan composeplan.PolicyPlan) ([]byte, error) {
 	model, ok := plan.CanonicalModel()
-	if !ok || len(composeplan.NewPolicy().Validate(model)) != 0 {
+	if !ok || !plan.Valid() {
 		return nil, errInvalidComposeSource
 	}
 	logicalVolumes := make(map[string]string, len(model.Volumes))
@@ -143,15 +143,16 @@ func Render(plan composeplan.PolicyPlan) ([]byte, error) {
 	for name, expected := range model.Secrets {
 		secrets[name] = secretResource{Name: expected.Name, File: expected.File}
 	}
-	internal := model.Networks[composeplan.NetworkInternal]
+	networks := make(map[string]network, len(model.Networks))
+	for name, expected := range model.Networks {
+		networks[string(name)] = network{
+			Name: expected.Name, Internal: expected.Internal, Labels: clone(expected.Labels),
+		}
+	}
 	source := document{
 		Name: model.Identity.ProjectName(), Services: services,
-		Networks: map[string]network{
-			string(composeplan.NetworkInternal): {
-				Name: internal.Name, Internal: true, Labels: clone(internal.Labels),
-			},
-		},
-		Volumes: volumes, Secrets: secrets,
+		Networks: networks,
+		Volumes:  volumes, Secrets: secrets,
 	}
 	encoded, err := json.Marshal(source)
 	if err != nil || len(encoded) == 0 || len(encoded)+1 > maximumComposeSourceBytes {
@@ -175,7 +176,10 @@ func renderService(expected composeplan.Service, logicalVolumes map[string]strin
 	if expected.NetworkDisabled {
 		rendered.NetworkMode = "none"
 	} else {
-		rendered.Networks = []string{string(composeplan.NetworkInternal)}
+		rendered.Networks = make([]string, 0, len(expected.Networks))
+		for _, name := range expected.Networks {
+			rendered.Networks = append(rendered.Networks, string(name))
+		}
 	}
 	if len(expected.Healthcheck) != 0 {
 		rendered.Healthcheck = &healthcheck{

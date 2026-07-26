@@ -13,7 +13,12 @@ from agentmemory.providers.adapters.model_artifact import (
     ModelArtifactBinding,
     verify_model_artifact,
 )
-from agentmemory.providers.adapters.protected_file import read_capability, zero
+from agentmemory.providers.adapters.protected_file import (
+    read_capability,
+    read_provider_credential,
+    read_provider_document,
+    zero,
+)
 from agentmemory.providers.adapters.strict_json import (
     StrictJsonError,
     canonical_bytes,
@@ -103,6 +108,28 @@ def test_capability_read_rejects_identity_change(
     monkeypatch.setattr(os, "fstat", changed_fstat)
     with pytest.raises(PermissionError, match="changed"):
         read_capability(path)
+
+
+@pytest.mark.parametrize("maximum_bytes", [0, 4097])
+def test_provider_credential_rejects_open_ended_length_policy(
+    tmp_path: Path,
+    maximum_bytes: int,
+) -> None:
+    path = _private_file(tmp_path / "credential", b"secret")
+
+    with pytest.raises(ValueError, match="length policy"):
+        read_provider_credential(path, maximum_bytes)
+
+
+@pytest.mark.parametrize("maximum_bytes", [0, 4 * 1024 * 1024 + 1])
+def test_provider_document_rejects_open_ended_length_policy(
+    tmp_path: Path,
+    maximum_bytes: int,
+) -> None:
+    path = _private_file(tmp_path / "document", b"{}")
+
+    with pytest.raises(ValueError, match="length policy"):
+        read_provider_document(path, maximum_bytes)
 
 
 def _bind_model(monkeypatch: pytest.MonkeyPatch, path: Path, role: ProviderRole) -> None:

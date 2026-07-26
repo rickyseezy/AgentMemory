@@ -21,7 +21,8 @@ const (
 	executionMaterializationRoot = ".agentmemory-execution"
 	executionEnvironmentName     = "empty.env"
 	executionSecretName          = composeplan.SecretInstallationRootKey
-	maximumExecutionSecretBytes  = 64 * 1024
+	maximumExecutionSecretBytes  = 4 * 1024 * 1024
+	maximumAttestationBytes      = 64 * 1024
 )
 
 // boundComposeExecution is the only authority accepted by a mutating Compose
@@ -61,8 +62,7 @@ func prepareBoundComposeExecution(
 		return boundComposeExecution{}, containerengine.ErrInvalidComposeProject
 	}
 	model, err := decodeRenderedPolicy(canonical, project.Name())
-	if err != nil || len(composeplan.NewPolicy().Validate(model)) != 0 ||
-		!project.ExpectedPolicyPlan().Matches(model) {
+	if err != nil || !project.ExpectedPolicyPlan().Matches(model) {
 		return boundComposeExecution{}, containerengine.ErrComposeConfigurationMismatch
 	}
 	var document renderedComposeDocument
@@ -120,8 +120,7 @@ func prepareBoundComposeExecution(
 	}
 	boundPlan, err := composeplan.NewPolicyPlan(expected)
 	boundModel, decodeError := decodeRenderedPolicy(unescaped, project.Name())
-	if err != nil || decodeError != nil || len(composeplan.NewPolicy().Validate(boundModel)) != 0 ||
-		!boundPlan.Matches(boundModel) {
+	if err != nil || decodeError != nil || !boundPlan.Matches(boundModel) {
 		return boundComposeExecution{}, containerengine.ErrComposeConfigurationMismatch
 	}
 
@@ -362,7 +361,10 @@ func validExecutionSecret(name string, value []byte) bool {
 		return false
 	}
 	if name == composeplan.SecretEgressAttestation {
-		return len(value) <= maximumExecutionSecretBytes
+		return len(value) <= maximumAttestationBytes
+	}
+	if name == composeplan.SecretProviderGatewayCredentialVault {
+		return len(value) >= 2
 	}
 	if len(value) != 32 || bytes.Equal(value, make([]byte, 32)) {
 		return false
@@ -371,7 +373,11 @@ func validExecutionSecret(name string, value []byte) bool {
 	case composeplan.SecretInstallationRootKey, composeplan.SecretAPICredential,
 		composeplan.SecretAttestationHMACKey, composeplan.SecretNeo4jPassword,
 		composeplan.SecretEmbeddingCapability, composeplan.SecretRerankingCapability,
-		composeplan.SecretExtractionCapability:
+		composeplan.SecretExtractionCapability,
+		composeplan.SecretProviderGatewayClientCapability,
+		composeplan.SecretProviderGatewayPermitHMACKey,
+		composeplan.SecretProviderGatewayCredentialVaultKey,
+		composeplan.SecretProviderGatewayCredentialVaultHMACKey:
 		return true
 	default:
 		return false

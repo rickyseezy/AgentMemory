@@ -9,7 +9,7 @@ or active pointers to force a repair.
 ## Preconditions
 
 - AgentMemory Core is Ready and its SQLite/Neo4j migration heads are the exact heads certified by the
-  active release (currently `0041_pro008_embedding_migrations` and
+  active release (currently `0042_pro009_provider_containment` and
   `0005_pro004_embedding_space_constraints`). PF-002 introduced the earlier `0002` schemas; do not downgrade
   an active installation to match an old example.
 - The operator has an active grant for the target Brain.
@@ -37,7 +37,7 @@ Content-Type: application/json
   "requested_watermark": null,
   "manifest": {
     "application_build": "<immutable-build>",
-    "relational_schema": "0041_pro008_embedding_migrations",
+    "relational_schema": "0042_pro009_provider_containment",
     "graph_schema": "0005_pro004_embedding_space_constraints",
     "parser_version": "<immutable-parser-revision>",
     "extractor_version": "<immutable-extractor-revision>",

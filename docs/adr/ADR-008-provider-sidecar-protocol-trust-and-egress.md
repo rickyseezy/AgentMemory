@@ -4,6 +4,7 @@
 - Decision owners: Provider Platform Owner and Security Owner
 - Consulted owners: Runtime/Installer, Governance, Retrieval, Release Engineering
 - Decision date: 2026-07-13
+- Last amended: 2026-07-26 (PRO-009 concrete permit, secret projection, and operation sandbox)
 - Review date: 2026-10-13 and before protocol-major, sandbox, trust-root, or egress changes
 - Supersedes: None
 - Related requirements: PRD Section 11; Technical Requirements Sections 2.2, 5.6, 6, 11.8, and 11.12 SEC-004/SEC-006
@@ -94,6 +95,27 @@ Egress authorization runs immediately before socket acquisition. `restricted`, `
 or secret-tainted data is unconditionally denied and its payload buffer destroyed. Batches are
 homogeneous by Brain, classification, profile, purpose, retention, and policy. Repository policy can
 only narrow.
+
+The concrete PRO-009 boundary uses a short-lived HMAC-authenticated permit. Core resolves current
+profile/policy authority and signs the complete content-free operation coordinates immediately before
+invoking the gateway. The gateway independently verifies the token, expiry, body digest, replay,
+rate/token/budget capacity, credential-to-profile-attestation binding, and destination before DNS.
+The gateway cannot query Core's database and Core cannot open an Internet socket, so neither process
+alone holds both current policy authority and external network authority.
+
+Remote secrets are projected by the fixed one-shot network-disabled root helper into three separate
+engine volumes. Core receives only the internal client capability and permit-signing key. The gateway
+receives those plus an HMAC-authenticated AES-256-GCM credential vault and its independent encryption
+and authentication keys. A custom adapter receives only the internal client capability and only
+during an operation whose approved manifest requested mediated gateway access. Persistent
+installation/conformance sidecars receive no gateway capability. Provider credential plaintext
+exists only in a mutable gateway-owned buffer at the socket boundary and is overwritten afterward.
+
+Custom adapter inference uses one operation-scoped Compose project and container over strict framed
+stdio. The launcher validates the request before container creation, imposes the closed sandbox,
+requires a response bound to the exact request/operation/content IDs, always performs bounded
+`down --remove-orphans`, and reconciles only full-ID containers whose complete managed/kind/plan/
+operation label set is reverified after restart.
 
 ### Failure behavior
 

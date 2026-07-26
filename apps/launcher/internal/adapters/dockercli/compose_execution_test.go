@@ -249,12 +249,21 @@ func TestPF001BoundExecutionRejectsEverySecretSubstitutionAndInvalidAuthoritySha
 		{"unknown", bytesOf(0x11, 32), false},
 		{"egress", []byte("attestation"), true},
 		{"egress empty", nil, false},
+		{"gateway capability", bytesOf(0x22, 32), true},
+		{"gateway capability zero", make([]byte, 32), false},
+		{"credential vault", []byte("{}"), true},
+		{"credential vault empty", nil, false},
+		{"credential vault oversized", make([]byte, maximumExecutionSecretBytes+1), false},
 	} {
 		name := executionSecretName
 		if test.name == "unknown" {
 			name = "unknown"
 		} else if strings.HasPrefix(test.name, "egress") {
 			name = composeplan.SecretEgressAttestation
+		} else if strings.HasPrefix(test.name, "gateway") {
+			name = composeplan.SecretProviderGatewayClientCapability
+		} else if strings.HasPrefix(test.name, "credential vault") {
+			name = composeplan.SecretProviderGatewayCredentialVault
 		}
 		if got := validExecutionSecret(name, test.value); got != test.valid {
 			t.Fatalf("validExecutionSecret(%s)=%v", test.name, got)

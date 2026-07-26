@@ -54,6 +54,51 @@ func TestPF001RenderRejectsAnythingExceptAValidatedProductionPlan(t *testing.T) 
 	}
 }
 
+func TestPRO009RenderPreservesTheSingleDualHomedGatewayAndOfflineServices(t *testing.T) {
+	t.Parallel()
+	base := releasePlanFixture(t)
+	model, ok := base.CanonicalModel()
+	if !ok {
+		t.Fatal("missing base model")
+	}
+	input := defaultReleaseInputFromModel(t, model)
+	plan, err := composeplan.NewRemoteReleasePlan(composeplan.RemoteReleaseInput{
+		Default: input,
+		GatewayImage: "ghcr.io/agentmemory/provider-gateway@sha256:" +
+			strings.Repeat("e", 64),
+		GatewayLimits: composeplan.Limits{
+			CPUsMilli: 500, MemoryBytes: 256 * 1024 * 1024, PIDs: 64,
+		},
+		EgressSecretFiles: map[string]string{
+			composeplan.SecretProviderGatewayClientCapability:       "/managed/provider-client-capability",
+			composeplan.SecretProviderGatewayPermitHMACKey:          "/managed/provider-permit-hmac-key",
+			composeplan.SecretProviderGatewayCredentialVault:        "/managed/provider-credential-vault",
+			composeplan.SecretProviderGatewayCredentialVaultKey:     "/managed/provider-credential-vault-key",
+			composeplan.SecretProviderGatewayCredentialVaultHMACKey: "/managed/provider-credential-vault-hmac-key",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := Render(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source document
+	if json.Unmarshal(raw, &source) != nil {
+		t.Fatal("invalid rendered remote topology")
+	}
+	gateway := source.Services[string(composeplan.ServiceProviderGateway)]
+	core := source.Services[string(composeplan.ServiceCore)]
+	if len(source.Networks) != 2 || source.Networks[string(composeplan.NetworkEgress)].Internal ||
+		len(gateway.Networks) != 2 || gateway.Networks[0] != string(composeplan.NetworkEgress) ||
+		gateway.Networks[1] != string(composeplan.NetworkInternal) ||
+		len(core.Networks) != 1 || core.Networks[0] != string(composeplan.NetworkInternal) ||
+		len(gateway.Ports) != 0 || len(gateway.Volumes) != 2 {
+		t.Fatalf("rendered remote containment = %#v", source)
+	}
+}
+
 func releasePlanFixture(t *testing.T) composeplan.PolicyPlan {
 	t.Helper()
 	identity, err := composeplan.NewIdentity(
@@ -91,4 +136,41 @@ func releasePlanFixture(t *testing.T) composeplan.PolicyPlan {
 		t.Fatal(err)
 	}
 	return plan
+}
+
+func defaultReleaseInputFromModel(
+	t *testing.T,
+	model composeplan.Model,
+) composeplan.DefaultReleaseInput {
+	t.Helper()
+	images := make(map[composeplan.ServiceName]string)
+	limits := make(map[composeplan.ServiceName]composeplan.Limits)
+	for _, name := range composeplan.RequiredDefaultServices() {
+		images[name] = model.Services[name].Image
+		limits[name] = model.Services[name].Limits
+	}
+	secretFiles := make(map[string]string, len(model.Secrets))
+	for name, secret := range model.Secrets {
+		secretFiles[name] = secret.File
+	}
+	core := model.Services[composeplan.ServiceCore]
+	return composeplan.DefaultReleaseInput{
+		Identity: model.Identity, Release: model.Release,
+		HostPort: core.Ports[0].HostPort, Images: images, Limits: limits,
+		Models: map[composeplan.ServiceName]composeplan.ModelArtifact{
+			composeplan.ServiceLocalEmbedding: {
+				Revision: core.Environment["AM_EMBEDDING_MODEL_REVISION"],
+				SHA256:   strings.Repeat("b", 64), Bytes: 1_000_000,
+			},
+			composeplan.ServiceLocalReranker: {
+				Revision: core.Environment["AM_RERANKING_MODEL_REVISION"],
+				SHA256:   strings.Repeat("c", 64), Bytes: 2_000_000,
+			},
+			composeplan.ServiceLocalExtractor: {
+				Revision: core.Environment["AM_EXTRACTION_MODEL_REVISION"],
+				SHA256:   strings.Repeat("d", 64), Bytes: 3_000_000,
+			},
+		},
+		SecretFiles: secretFiles,
+	}
 }

@@ -34,7 +34,10 @@ class CoreSettings(BaseSettings):
     reranking_capability_file: Path = Path("/run/secrets/agentmemory_reranking_capability")
     extraction_capability_file: Path = Path("/run/secrets/agentmemory_extraction_capability")
     provider_gateway_capability_file: Path = Path(
-        "/run/secrets/agentmemory_provider_gateway_capability"
+        "/run/provider-egress/agentmemory_provider_gateway_client_capability"
+    )
+    provider_gateway_permit_hmac_key_file: Path = Path(
+        "/run/provider-egress/agentmemory_provider_gateway_permit_hmac_key"
     )
     egress_attestation_file: Path = Path("/run/secrets/agentmemory_egress_attestation")
     relational_migrations_directory: Path = Path("/opt/agentmemory/migrations/relational")

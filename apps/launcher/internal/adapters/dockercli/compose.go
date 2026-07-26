@@ -93,8 +93,7 @@ func (c *Compose) verifyConfiguration(
 		return verifiedComposeConfiguration{}, containerengine.ErrComposeConfigurationMismatch
 	}
 	model, err := decodeRenderedPolicy(canonical, project.Name())
-	if err != nil || len(composeplan.NewPolicy().Validate(model)) != 0 ||
-		!project.ExpectedPolicyPlan().Matches(model) {
+	if err != nil || !project.ExpectedPolicyPlan().Matches(model) {
 		return verifiedComposeConfiguration{}, containerengine.ErrComposeConfigurationMismatch
 	}
 	if err := validateRenderedFiles(project, model); err != nil {
@@ -168,20 +167,40 @@ func (c *Compose) StartAndWait(ctx context.Context, project containerengine.Comp
 	if err != nil {
 		return err
 	}
-	err = c.runProjectedBound(ctx, project, execution, []string{
+	services, ok := persistentReleaseServices(project.ExpectedPolicyPlan())
+	if !ok {
+		execution.authority.close()
+		return containerengine.ErrInvalidComposeProject
+	}
+	operation := []string{
 		"up",
 		"--detach",
 		"--wait",
 		"--wait-timeout", strconv.FormatUint(uint64(project.WaitTimeSeconds()), 10),
 		"--pull", "never",
 		"--no-build",
-		"core",
-		"neo4j",
-		"local-embedding",
-		"local-reranker",
-		"local-extractor",
-	})
+	}
+	operation = append(operation, services...)
+	err = c.runProjectedBound(ctx, project, execution, operation)
 	return err
+}
+
+func persistentReleaseServices(plan composeplan.PolicyPlan) ([]string, bool) {
+	model, ok := plan.CanonicalModel()
+	if !ok {
+		return nil, false
+	}
+	services := []string{
+		string(composeplan.ServiceCore),
+		string(composeplan.ServiceNeo4j),
+		string(composeplan.ServiceLocalEmbedding),
+		string(composeplan.ServiceLocalReranker),
+		string(composeplan.ServiceLocalExtractor),
+	}
+	if _, remote := model.Services[composeplan.ServiceProviderGateway]; remote {
+		services = append(services, string(composeplan.ServiceProviderGateway))
+	}
+	return services, true
 }
 
 func (c *Compose) run(

@@ -8,15 +8,19 @@ const (
 	inputRoot  = "/run/inputs"
 	outputRoot = "/run/outputs"
 
-	purposeCore       = "protected-core"
-	purposeMigrate    = "protected-migrate"
-	purposeNeo4j      = "protected-neo4j"
-	purposeEmbedding  = "protected-embedding"
-	purposeReranking  = "protected-reranking"
-	purposeExtraction = "protected-extraction"
+	purposeCore                  = "protected-core"
+	purposeMigrate               = "protected-migrate"
+	purposeNeo4j                 = "protected-neo4j"
+	purposeEmbedding             = "protected-embedding"
+	purposeReranking             = "protected-reranking"
+	purposeExtraction            = "protected-extraction"
+	purposeProviderCoreEgress    = "provider-core-egress"
+	purposeProviderGateway       = "provider-gateway-secrets"
+	purposeProviderAdapterEgress = "provider-adapter-egress"
 
 	projectedMode                 = uint32(0o400)
 	maximumAttestationBytes       = uint64(64 * 1024)
+	maximumCredentialVaultBytes   = uint64(4 * 1024 * 1024)
 	exactCryptographicSecretBytes = uint64(32)
 )
 
@@ -36,8 +40,42 @@ func protected(name string, uid uint32, gid uint32) fileContract {
 	maximum := exactCryptographicSecretBytes
 	if name == composeplan.SecretEgressAttestation {
 		maximum = maximumAttestationBytes
+	} else if name == composeplan.SecretProviderGatewayCredentialVault {
+		maximum = maximumCredentialVaultBytes
 	}
 	return fileContract{name: name, userID: uid, groupID: gid, maxBytes: maximum}
+}
+
+func remoteContract() []volumeContract {
+	contract := append([]volumeContract(nil), defaultContract()...)
+	client := composeplan.SecretProviderGatewayClientCapability
+	permit := composeplan.SecretProviderGatewayPermitHMACKey
+	vault := composeplan.SecretProviderGatewayCredentialVault
+	vaultEncryptionKey := composeplan.SecretProviderGatewayCredentialVaultKey
+	vaultKey := composeplan.SecretProviderGatewayCredentialVaultHMACKey
+	return append(contract,
+		volumeContract{
+			purpose: purposeProviderCoreEgress,
+			files: []fileContract{
+				protected(client, 10_001, 10_001),
+				protected(permit, 10_001, 10_001),
+			},
+		},
+		volumeContract{
+			purpose: purposeProviderGateway,
+			files: []fileContract{
+				protected(client, 10_001, 10_001),
+				protected(permit, 10_001, 10_001),
+				protected(vault, 10_001, 10_001),
+				protected(vaultEncryptionKey, 10_001, 10_001),
+				protected(vaultKey, 10_001, 10_001),
+			},
+		},
+		volumeContract{
+			purpose: purposeProviderAdapterEgress,
+			files:   []fileContract{protected(client, 65_532, 65_532)},
+		},
+	)
 }
 
 func defaultContract() []volumeContract {

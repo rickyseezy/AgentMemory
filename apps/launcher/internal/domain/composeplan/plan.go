@@ -12,6 +12,7 @@ const (
 	// planning must never infer filesystem allocation from raw secret length.
 	SecretProjectionVolumeReservationBytes uint64 = 1024 * 1024
 	maximumProjectedAttestationBytes              = 64 * 1024
+	maximumProviderCredentialVaultBytes           = 4 * 1024 * 1024
 )
 
 // ProjectedSecret is one immutable protected-file copy contract. SourceFile
@@ -111,7 +112,7 @@ type PolicyPlan struct {
 // NewPolicyPlan validates and snapshots the authenticated topology projection.
 func NewPolicyPlan(model Model) (PolicyPlan, error) {
 	canonical := canonicalModel(model)
-	if len(NewPolicy().Validate(canonical)) != 0 {
+	if len(validateTopology(canonical)) != 0 {
 		return PolicyPlan{}, errInvalidPolicyPlan
 	}
 	return PolicyPlan{model: canonical}, nil
@@ -119,7 +120,7 @@ func NewPolicyPlan(model Model) (PolicyPlan, error) {
 
 // Valid reports whether the plan contains valid execution authority.
 func (p PolicyPlan) Valid() bool {
-	return len(p.model.Services) != 0 && len(NewPolicy().Validate(p.model)) == 0
+	return len(p.model.Services) != 0 && len(validateTopology(p.model)) == 0
 }
 
 // Matches compares a rendered policy model with the immutable release plan.
@@ -129,7 +130,7 @@ func (p PolicyPlan) Matches(model Model) bool {
 		return false
 	}
 	candidate := canonicalModel(model)
-	return len(NewPolicy().Validate(candidate)) == 0 && reflect.DeepEqual(p.model, candidate)
+	return len(validateTopology(candidate)) == 0 && reflect.DeepEqual(p.model, candidate)
 }
 
 // CanonicalModel returns a deep caller-owned snapshot for deterministic
@@ -154,7 +155,11 @@ func (p PolicyPlan) SecretFiles() (map[string]string, bool) {
 		}
 		files[name] = secret.File
 	}
-	return files, len(files) == len(requiredDefaultSecrets)
+	expected := len(requiredDefaultSecrets)
+	if remoteTopology(p.model) {
+		expected += len(requiredRemoteSecrets)
+	}
+	return files, len(files) == expected
 }
 
 // InstallationKeyFile returns the installation-root-key source for legacy
@@ -178,6 +183,8 @@ func (p PolicyPlan) SecretProjectionVolumes() ([]SecretProjectionVolume, bool) {
 		maximum := uint64(32)
 		if name == SecretEgressAttestation {
 			maximum = maximumProjectedAttestationBytes
+		} else if name == SecretProviderGatewayCredentialVault {
+			maximum = maximumProviderCredentialVaultBytes
 		}
 		return ProjectedSecret{
 			name: name, sourceFile: p.model.Secrets[name].File, uid: uid, gid: gid,
@@ -188,10 +195,12 @@ func (p PolicyPlan) SecretProjectionVolumes() ([]SecretProjectionVolume, bool) {
 	for _, name := range requiredDefaultSecrets {
 		allCore = append(allCore, secret(name, 10_001, 10_001))
 	}
-	definitions := []struct {
+	type projectionDefinition struct {
 		purpose string
+		stable  bool
 		files   []ProjectedSecret
-	}{
+	}
+	definitions := []projectionDefinition{
 		{purpose: projectionPurposeCore, files: allCore},
 		{purpose: projectionPurposeMigrate, files: []ProjectedSecret{secret(SecretNeo4jPassword, 10_001, 10_001)}},
 		{purpose: projectionPurposeNeo4j, files: []ProjectedSecret{secret(SecretNeo4jPassword, 7474, 7474)}},
@@ -199,15 +208,50 @@ func (p PolicyPlan) SecretProjectionVolumes() ([]SecretProjectionVolume, bool) {
 		{purpose: projectionPurposeReranking, files: []ProjectedSecret{secret(SecretRerankingCapability, 10_001, 10_001)}},
 		{purpose: projectionPurposeExtraction, files: []ProjectedSecret{secret(SecretExtractionCapability, 10_001, 10_001)}},
 	}
+	if remoteTopology(p.model) {
+		definitions = append(definitions,
+			projectionDefinition{
+				purpose: "provider-core-egress", stable: true,
+				files: []ProjectedSecret{
+					secret(SecretProviderGatewayClientCapability, 10_001, 10_001),
+					secret(SecretProviderGatewayPermitHMACKey, 10_001, 10_001),
+				},
+			},
+			projectionDefinition{
+				purpose: "provider-gateway-secrets", stable: true,
+				files: []ProjectedSecret{
+					secret(SecretProviderGatewayClientCapability, 10_001, 10_001),
+					secret(SecretProviderGatewayPermitHMACKey, 10_001, 10_001),
+					secret(SecretProviderGatewayCredentialVault, 10_001, 10_001),
+					secret(SecretProviderGatewayCredentialVaultKey, 10_001, 10_001),
+					secret(SecretProviderGatewayCredentialVaultHMACKey, 10_001, 10_001),
+				},
+			},
+			projectionDefinition{
+				purpose: "provider-adapter-egress", stable: true,
+				files: []ProjectedSecret{
+					secret(SecretProviderGatewayClientCapability, 65_532, 65_532),
+				},
+			},
+		)
+	}
 	volumes := make([]SecretProjectionVolume, 0, len(definitions))
 	for _, definition := range definitions {
+		name := p.model.Identity.VolumeName(definition.purpose)
+		if definition.stable {
+			name = p.model.Identity.StableVolumeName(definition.purpose)
+		}
 		volumes = append(volumes, SecretProjectionVolume{
-			name: p.model.Identity.VolumeName(definition.purpose), purpose: definition.purpose,
+			name: name, purpose: definition.purpose,
 			reservedBytes: SecretProjectionVolumeReservationBytes,
 			files:         append([]ProjectedSecret(nil), definition.files...),
 		})
 	}
-	return volumes, len(volumes) == 6
+	expected := 6
+	if remoteTopology(p.model) {
+		expected = 9
+	}
+	return volumes, len(volumes) == expected
 }
 
 func canonicalModel(model Model) Model {

@@ -16,8 +16,10 @@ func TestPF001SecretProjectorCommandContracts(t *testing.T) {
 		wantCode   int
 		wantOut    string
 		wantErr    string
+		wantRemote bool
 	}{
 		{name: "success", args: []string{"agentmemory-secret-projector"}, wantOut: "ok\n"},
+		{name: "remote success", args: []string{"agentmemory-secret-projector", "remote"}, wantOut: "ok\n", wantRemote: true},
 		{name: "argument rejection", args: []string{"agentmemory-secret-projector", "unexpected"}, wantCode: 1, wantErr: "argument-contract"},
 		{name: "projection failure", args: []string{"agentmemory-secret-projector"}, projectErr: errors.New("protected projection failed: unavailable"), wantCode: 1, wantErr: "unavailable"},
 	}
@@ -25,7 +27,14 @@ func TestPF001SecretProjectorCommandContracts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stdout, stdoutPath := temporaryFile(t)
 			stderr, stderrPath := temporaryFile(t)
-			code := run(test.args, stdout, stderr, func() error { return test.projectErr })
+			defaultCalled, remoteCalled := false, false
+			code := run(
+				test.args,
+				stdout,
+				stderr,
+				func() error { defaultCalled = true; return test.projectErr },
+				func() error { remoteCalled = true; return test.projectErr },
+			)
 			if code != test.wantCode {
 				t.Fatalf("run()=%d want %d", code, test.wantCode)
 			}
@@ -37,6 +46,13 @@ func TestPF001SecretProjectorCommandContracts(t *testing.T) {
 			}
 			assertFileContains(t, stdoutPath, test.wantOut)
 			assertFileContains(t, stderrPath, test.wantErr)
+			if test.wantErr == "argument-contract" {
+				if defaultCalled || remoteCalled {
+					t.Fatal("invalid arguments reached a projection")
+				}
+			} else if defaultCalled == test.wantRemote || remoteCalled != test.wantRemote {
+				t.Fatalf("projection selection default=%t remote=%t", defaultCalled, remoteCalled)
+			}
 		})
 	}
 }
@@ -46,7 +62,9 @@ func TestPF001SecretProjectorCommandRejectsNilCapabilities(t *testing.T) {
 	stdout, _ := temporaryFile(t)
 	stderr, stderrPath := temporaryFile(t)
 	defer func() { _ = stdout.Close() }()
-	if code := run([]string{"agentmemory-secret-projector"}, stdout, stderr, nil); code != 1 {
+	if code := run(
+		[]string{"agentmemory-secret-projector"}, stdout, stderr, nil, func() error { return nil },
+	); code != 1 {
 		t.Fatalf("run()=%d", code)
 	}
 	if err := stderr.Close(); err != nil {
@@ -77,10 +95,13 @@ func TestPF001SecretProjectorCommandRequiresBothOwnedStreams(t *testing.T) {
 				stderr = nil
 			}
 			called := false
-			if code := run([]string{"agentmemory-secret-projector"}, stdout, stderr, func() error {
-				called = true
-				return nil
-			}); code != 1 || called {
+			if code := run(
+				[]string{"agentmemory-secret-projector"},
+				stdout,
+				stderr,
+				func() error { called = true; return nil },
+				func() error { called = true; return nil },
+			); code != 1 || called {
 				t.Fatalf("run()=%d called=%t", code, called)
 			}
 		})

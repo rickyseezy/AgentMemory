@@ -45,7 +45,7 @@ func (c *Compose) DeriveReleaseProject(
 	model, err := decodeRenderedPolicy(canonical, source.Identity().ProjectName())
 	if err != nil || model.Identity.InstallationID() != source.Identity().InstallationID() ||
 		model.Identity.Generation() != source.Identity().Generation() || model.Release != source.Release() ||
-		len(composeplan.NewPolicy().Validate(model)) != 0 {
+		!validPolicyModel(model) {
 		return containerengine.ComposeProject{}, containerengine.RenderedConfiguration{},
 			containerengine.ErrComposeConfigurationMismatch
 	}
@@ -74,6 +74,11 @@ func (c *Compose) DeriveReleaseProject(
 			containerengine.ErrInvalidComposeProject
 	}
 	return project, rendered, nil
+}
+
+func validPolicyModel(model composeplan.Model) bool {
+	plan, err := composeplan.NewPolicyPlan(model)
+	return err == nil && plan.Valid()
 }
 
 // RunReleaseMigrations derives all execution authority from the signed source

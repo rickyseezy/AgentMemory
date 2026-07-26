@@ -166,6 +166,26 @@ class ProviderResilienceDependencyError(RuntimeError):
     """Expose one content-free circuit or operation-store dependency failure."""
 
 
+class ProviderContainmentValidationError(ValueError):
+    """Reject malformed provider-egress, permit, gateway, or sandbox input."""
+
+
+class ProviderContainmentAuthorizationError(PermissionError):
+    """Reject containment administration without current exact authority."""
+
+
+class ProviderContainmentDeniedError(PermissionError):
+    """Deny unsafe provider work before payload access or socket acquisition."""
+
+
+class ProviderContainmentConflictError(RuntimeError):
+    """Reject stale policy, replay, permit, or immutable evidence conflicts."""
+
+
+class ProviderContainmentDependencyError(RuntimeError):
+    """Expose a content-free policy, gateway, supervisor, or runtime failure."""
+
+
 class ProviderRetryScheduledError(RuntimeError):
     """Return one durable retry time without exposing an upstream response."""
 

@@ -56,6 +56,11 @@ def operation(**changes: object) -> ProviderOperationRequest:
         content_sha256=(digest("provider-content").value,),
         preprocessing_revision="source-text-v1",
         privacy_class=ProviderPrivacyClass.INTERNAL,
+        project_id=None,
+        private_block=False,
+        secret_bearing=False,
+        token_count=2,
+        estimated_cost_micros=0,
     )
     return replace(value, **cast("Any", changes))
 

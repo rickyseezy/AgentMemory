@@ -11,14 +11,31 @@ import (
 // main is an os.Exit boundary; run is tested directly for every exit contract.
 // mutator-disable-func
 func main() {
-	os.Exit(run(os.Args, os.Stdout, os.Stderr, secretprojector.RunDefault))
+	os.Exit(run(
+		os.Args,
+		os.Stdout,
+		os.Stderr,
+		secretprojector.RunDefault,
+		secretprojector.RunRemote,
+	))
 }
 
-func run(args []string, stdout, stderr *os.File, project func() error) int {
-	if len(args) != 1 || stdout == nil || stderr == nil || project == nil {
+func run(
+	args []string,
+	stdout, stderr *os.File,
+	projectDefault, projectRemote func() error,
+) int {
+	if stdout == nil || stderr == nil || projectDefault == nil || projectRemote == nil {
 		if stderr != nil {
 			_, _ = fmt.Fprintln(stderr, "protected projection failed: argument-contract")
 		}
+		return 1
+	}
+	project := projectDefault
+	if len(args) == 2 && args[1] == "remote" {
+		project = projectRemote
+	} else if len(args) != 1 {
+		_, _ = fmt.Fprintln(stderr, "protected projection failed: argument-contract")
 		return 1
 	}
 	if err := project(); err != nil {

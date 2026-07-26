@@ -39,7 +39,7 @@ if TYPE_CHECKING:
         ProviderGatewayResponse,
         ProviderGatewayTransport,
     )
-    from agentmemory.providers.domain.profiles import ProviderProfile, ProviderProfileConfiguration
+    from agentmemory.providers.domain.profiles import ProviderProfile
 
 _PROBE_QUERY = "AgentMemory provider probe"
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -135,7 +135,7 @@ class CertifiedRemoteAdapter:
         suite = ProviderProbeSuite()
         expected_dimension: int | None = None
         for purpose in configuration.purposes:
-            result = await self._probe_purpose(configuration, purpose, expected_dimension)
+            result = await self._probe_purpose(profile, purpose, expected_dimension)
             purpose_results.append(result)
             expected_dimension = result.validated.dimension
             revisions.add(result.revision)
@@ -186,10 +186,11 @@ class CertifiedRemoteAdapter:
 
     async def _probe_purpose(
         self,
-        configuration: ProviderProfileConfiguration,
+        profile: ProviderProfile,
         purpose: CanonicalPurpose,
         expected_dimension: int | None,
     ) -> _PurposeProbe:
+        configuration = profile.configuration
         path, body = self._protocol.request(
             configuration.operation,
             purpose,
@@ -197,7 +198,17 @@ class CertifiedRemoteAdapter:
         )
         response = await self._transport.execute(
             ProviderGatewayRequest(
+                operation_id=(
+                    f"profile-probe:{profile.profile_id}:{profile.version}:{purpose.value}"
+                ),
+                brain_id=configuration.brain_id,
+                profile_id=profile.profile_id,
+                profile_version=profile.version,
+                configuration_digest=configuration.digest,
                 adapter_id=self._manifest.adapter_id,
+                model_id=configuration.model_id,
+                operation_type=configuration.operation.value,
+                purpose=purpose.value,
                 endpoint_policy_ref=configuration.endpoint_policy_ref or "",
                 secret_ref=configuration.secret_ref or "",
                 method="POST",

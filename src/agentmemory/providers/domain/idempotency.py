@@ -16,6 +16,8 @@ _SAFE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _SAFE_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _UUID7 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _MAX_CONTENT_ITEMS = 1024
+_MAX_TOKEN_COUNT = 1_000_000
+_MAX_ESTIMATED_COST_MICROS = 10**15
 
 
 class ProviderPurpose(StrEnum):
@@ -59,6 +61,11 @@ class ProviderOperationRequest:
     content_sha256: tuple[str, ...]
     preprocessing_revision: str
     privacy_class: ProviderPrivacyClass
+    project_id: str | None
+    private_block: bool
+    secret_bearing: bool
+    token_count: int
+    estimated_cost_micros: int
 
     def __post_init__(self) -> None:
         """Reject missing cache dimensions and ambiguous mutable identifiers."""
@@ -70,6 +77,9 @@ class ProviderOperationRequest:
             if _UUID7.fullmatch(value) is None:
                 msg = f"provider {name} is invalid"
                 raise ValueError(msg)
+        if self.project_id is not None and _UUID7.fullmatch(self.project_id) is None:
+            msg = "provider project_id is invalid"
+            raise ValueError(msg)
         if _SAFE_KEY.fullmatch(self.idempotency_key) is None:
             msg = "provider idempotency key is invalid"
             raise ValueError(msg)
@@ -84,6 +94,12 @@ class ProviderOperationRequest:
         if _SAFE_REVISION.fullmatch(self.preprocessing_revision) is None:
             msg = "provider preprocessing revision is invalid"
             raise ValueError(msg)
+        if (
+            not 1 <= self.token_count <= _MAX_TOKEN_COUNT
+            or not 0 <= self.estimated_cost_micros <= _MAX_ESTIMATED_COST_MICROS
+        ):
+            msg = "provider operation accounting is invalid"
+            raise ValueError(msg)
 
     @property
     def cache_key_sha256(self) -> str:
@@ -94,9 +110,12 @@ class ProviderOperationRequest:
                 "content_sha256": list(self.content_sha256),
                 "model_revision": self.model_revision,
                 "preprocessing_revision": self.preprocessing_revision,
+                "private_block": self.private_block,
                 "privacy_class": self.privacy_class.value,
                 "profile_id": self.profile_id,
+                "project_id": self.project_id,
                 "purpose": self.purpose.value,
+                "secret_bearing": self.secret_bearing,
             }
         )
 
@@ -107,7 +126,9 @@ class ProviderOperationRequest:
             {
                 "brain_id": self.brain_id,
                 "cache_key_sha256": self.cache_key_sha256,
+                "estimated_cost_micros": self.estimated_cost_micros,
                 "operation_id": self.operation_id,
+                "token_count": self.token_count,
             }
         )
 

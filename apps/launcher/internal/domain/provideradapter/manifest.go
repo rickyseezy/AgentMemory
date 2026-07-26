@@ -269,7 +269,7 @@ func (m Manifest) DeploymentPlan(installationID string) (DeploymentPlan, error) 
 	nameDigest := DigestBytes([]byte(installationID + "\x00" + m.AdapterID() + "\x00" + m.digest.Hex()))
 	capability := ""
 	if m.GatewayAccess() {
-		capability = identity.StableVolumeName("provider_gateway_capability")
+		capability = identity.StableVolumeName("provider-adapter-egress")
 	}
 	input := deploymentPlanDocument{
 		Project: identity.ProjectName(), Service: "custom-provider-" + nameDigest.Hex()[:20],

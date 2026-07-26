@@ -2863,6 +2863,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-009 — Contain provider data and runtimes
 
+**Implementation record:** [`docs/implementation/PRO-009.md`](docs/implementation/PRO-009.md) and
+[`docs/runbooks/PRO-009-PROVIDER-CONTAINMENT.md`](docs/runbooks/PRO-009-PROVIDER-CONTAINMENT.md).
+
 **User story:** As a security administrator, sensitive content reaches only authorized providers and custom runtimes.
 
 **Acceptance criteria**

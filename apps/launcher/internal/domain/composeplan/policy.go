@@ -29,6 +29,8 @@ const (
 	// ServiceSecretProjector is the signed one-shot helper that copies protected
 	// host sources into per-consumer engine volumes before any product mutation.
 	ServiceSecretProjector ServiceName = "secret-projector"
+	// ServiceProviderGateway is the only service permitted an external route.
+	ServiceProviderGateway ServiceName = "provider-gateway"
 )
 
 // NetworkName is a signed logical network identity.
@@ -68,6 +70,19 @@ const (
 	SecretExtractionCapability = "agentmemory_extraction_capability" // #nosec G101 -- identifier, not secret material.
 	// SecretEgressAttestation is a bounded authenticated JSON control document.
 	SecretEgressAttestation = "agentmemory_egress_attestation" // #nosec G101 -- identifier, not secret material.
+	// SecretProviderGatewayClientCapability authenticates Core and contained
+	// custom adapters to the internal-only gateway API.
+	SecretProviderGatewayClientCapability = "agentmemory_provider_gateway_client_capability" // #nosec G101 -- identifier.
+	// SecretProviderGatewayPermitHMACKey signs exact one-operation egress permits.
+	SecretProviderGatewayPermitHMACKey = "agentmemory_provider_gateway_permit_hmac_key" // #nosec G101 -- identifier.
+	// SecretProviderGatewayCredentialVault is the bounded authenticated provider
+	// credential snapshot visible only inside the gateway.
+	SecretProviderGatewayCredentialVault = "agentmemory_provider_gateway_credential_vault" // #nosec G101 -- identifier.
+	// SecretProviderGatewayCredentialVaultKey decrypts provider credentials only
+	// within the isolated gateway.
+	SecretProviderGatewayCredentialVaultKey = "agentmemory_provider_gateway_credential_vault_key" // #nosec G101 -- identifier.
+	// SecretProviderGatewayCredentialVaultHMACKey authenticates the vault snapshot.
+	SecretProviderGatewayCredentialVaultHMACKey = "agentmemory_provider_gateway_credential_vault_hmac_key" // #nosec G101 -- identifier.
 	// SecretInstallationKey is retained as a source-compatible alias. New code
 	// must use SecretInstallationRootKey; the root key is never an API/HMAC key.
 	SecretInstallationKey = SecretInstallationRootKey
@@ -82,6 +97,14 @@ var requiredDefaultSecrets = []string{
 	SecretRerankingCapability,
 	SecretExtractionCapability,
 	SecretEgressAttestation,
+}
+
+var requiredRemoteSecrets = []string{
+	SecretProviderGatewayClientCapability,
+	SecretProviderGatewayPermitHMACKey,
+	SecretProviderGatewayCredentialVault,
+	SecretProviderGatewayCredentialVaultKey,
+	SecretProviderGatewayCredentialVaultHMACKey,
 }
 
 // Identity derives resource names only from validated installation state.
@@ -419,6 +442,15 @@ func requiredDefaultSecret(name string) bool {
 	return false
 }
 
+func requiredRemoteSecret(name string) bool {
+	for _, required := range requiredRemoteSecrets {
+		if name == required {
+			return true
+		}
+	}
+	return false
+}
+
 func validSecretFile(value string) bool {
 	return value != "" && len(value) <= 4096 && value == strings.TrimSpace(value) &&
 		!strings.ContainsAny(value, "\x00\r\n")
@@ -481,7 +513,7 @@ func validateService(model Model, name ServiceName, service Service) []Violation
 		!validTmpfs(name, service.Tmpfs) {
 		violations = append(violations, Violation{Code: ViolationResourceLimits, Resource: resource})
 	}
-	if !validServiceCommand(name, service.Command) {
+	if !validServiceCommand(model, name, service.Command) {
 		violations = append(violations, Violation{Code: ViolationClosedInventory, Resource: resource})
 	}
 	if !validServiceEnvironment(model, name, service.Environment) {
@@ -493,7 +525,7 @@ func validateService(model Model, name ServiceName, service Service) []Violation
 	if service.StopGracePeriod <= 0 || service.StopGracePeriod > 5*time.Minute {
 		violations = append(violations, Violation{Code: ViolationRestartPolicy, Resource: resource})
 	}
-	if !validDependencies(name, service.DependsOn) {
+	if !validDependencies(model, name, service.DependsOn) {
 		violations = append(violations, Violation{Code: ViolationDependencies, Resource: resource})
 	}
 	expectedRestart := "unless-stopped"
@@ -503,7 +535,7 @@ func validateService(model Model, name ServiceName, service Service) []Violation
 	if service.Restart != expectedRestart {
 		violations = append(violations, Violation{Code: ViolationRestartPolicy, Resource: resource})
 	}
-	if !validServiceNetworks(name, service.Networks, service.NetworkDisabled) {
+	if !validServiceNetworks(model, name, service.Networks, service.NetworkDisabled) {
 		violations = append(violations, Violation{Code: ViolationNetworkIsolation, Resource: resource})
 	}
 	if !validPorts(name, service.Ports) {
@@ -518,7 +550,10 @@ func validateService(model Model, name ServiceName, service Service) []Violation
 	return violations
 }
 
-func validServiceCommand(_ ServiceName, command []string) bool {
+func validServiceCommand(model Model, name ServiceName, command []string) bool {
+	if name == ServiceSecretProjector && remoteTopology(model) {
+		return len(command) == 1 && command[0] == "remote"
+	}
 	return len(command) == 0
 }
 
@@ -587,6 +622,8 @@ func validServiceEnvironment(model Model, name ServiceName, environment map[stri
 			ServiceLocalExtractor: extraction,
 		}[name]
 		return environment["AM_PROVIDER_MODEL_REVISION"] == expectedRevision
+	case ServiceProviderGateway:
+		return len(environment) == 0 && remoteTopology(model)
 	default:
 		return false
 	}
@@ -624,6 +661,9 @@ func validServiceHealthcheck(name ServiceName, command []string, timing Healthch
 		ServiceLocalEmbedding: {"CMD", "/usr/local/bin/agentmemory-provider", "healthcheck"},
 		ServiceLocalReranker:  {"CMD", "/usr/local/bin/agentmemory-provider", "healthcheck"},
 		ServiceLocalExtractor: {"CMD", "/usr/local/bin/agentmemory-provider", "healthcheck"},
+		ServiceProviderGateway: {
+			"CMD", "/usr/local/bin/agentmemory-provider-gateway", "healthcheck",
+		},
 	}[name]
 	if len(command) != len(expected) {
 		return false
@@ -636,7 +676,7 @@ func validServiceHealthcheck(name ServiceName, command []string, timing Healthch
 	return validHealthcheck(command, timing)
 }
 
-func validDependencies(name ServiceName, dependencies []Dependency) bool {
+func validDependencies(model Model, name ServiceName, dependencies []Dependency) bool {
 	var required map[ServiceName]string
 	switch name {
 	case ServiceCore:
@@ -645,10 +685,13 @@ func validDependencies(name ServiceName, dependencies []Dependency) bool {
 			ServiceLocalReranker: "service_healthy", ServiceLocalExtractor: "service_healthy",
 			ServiceMigrate: "service_completed_successfully",
 		}
+		if remoteTopology(model) {
+			required[ServiceProviderGateway] = "service_healthy"
+		}
 	case ServiceMigrate:
 		required = map[ServiceName]string{ServiceNeo4j: "service_healthy"}
 	case ServiceNeo4j, ServiceLocalEmbedding, ServiceLocalReranker, ServiceLocalExtractor,
-		ServiceSecretProjector:
+		ServiceSecretProjector, ServiceProviderGateway:
 		return len(dependencies) == 0
 	default:
 		return len(dependencies) == 0
@@ -745,9 +788,18 @@ func validHealthcheck(command []string, timing HealthcheckTiming) bool {
 	return true
 }
 
-func validServiceNetworks(service ServiceName, networks []NetworkName, disabled bool) bool {
+func validServiceNetworks(
+	model Model,
+	service ServiceName,
+	networks []NetworkName,
+	disabled bool,
+) bool {
 	if service == ServiceSecretProjector {
 		return disabled && len(networks) == 0
+	}
+	if service == ServiceProviderGateway {
+		return remoteTopology(model) && !disabled && len(networks) == 2 &&
+			networks[0] == NetworkEgress && networks[1] == NetworkInternal
 	}
 	return !disabled && len(networks) == 1 && networks[0] == NetworkInternal
 }
@@ -782,6 +834,11 @@ func validMounts(model Model, service ServiceName, mounts []Mount) bool {
 	seenVolumes := make(map[string]struct{}, len(mounts))
 	seenSecrets := make(map[string]string, len(mounts))
 	requiredSecrets := requiredSecretMounts(service)
+	if service == ServiceSecretProjector && remoteTopology(model) {
+		for _, name := range requiredRemoteSecrets {
+			requiredSecrets[name] = "/run/inputs/" + name
+		}
+	}
 	for _, mount := range mounts {
 		if mount.Source == "" || !strings.HasPrefix(mount.Target, "/") ||
 			strings.Contains(strings.ToLower(mount.Source+" "+mount.Target), "docker.sock") {
@@ -822,7 +879,7 @@ func validMounts(model Model, service ServiceName, mounts []Mount) bool {
 			return false
 		}
 	}
-	return requiredVolumeMountsPresent(model.Identity, service, seenVolumes) &&
+	return requiredVolumeMountsPresent(model, service, seenVolumes) &&
 		exactSecretMountsPresent(requiredSecrets, seenSecrets)
 }
 
@@ -860,7 +917,8 @@ func exactSecretMountsPresent(required map[string]string, seen map[string]string
 	return true
 }
 
-func requiredVolumeMountsPresent(identity Identity, service ServiceName, seen map[string]struct{}) bool {
+func requiredVolumeMountsPresent(model Model, service ServiceName, seen map[string]struct{}) bool {
+	identity := model.Identity
 	required := make([]string, 0, 6)
 	switch service {
 	case ServiceCore:
@@ -871,6 +929,9 @@ func requiredVolumeMountsPresent(identity Identity, service ServiceName, seen ma
 			identity.StableVolumeName("telemetry"),
 			identity.VolumeName(projectionPurposeCore),
 		)
+		if remoteTopology(model) {
+			required = append(required, identity.StableVolumeName("provider-core-egress"))
+		}
 	case ServiceNeo4j:
 		required = append(required, identity.VolumeName("neo4j"), identity.VolumeName(projectionPurposeNeo4j))
 	case ServiceLocalEmbedding, ServiceLocalReranker, ServiceLocalExtractor:
@@ -881,6 +942,20 @@ func requiredVolumeMountsPresent(identity Identity, service ServiceName, seen ma
 		for _, purpose := range requiredProjectionPurposes() {
 			required = append(required, identity.VolumeName(purpose))
 		}
+		if remoteTopology(model) {
+			for _, purpose := range []string{
+				"provider-core-egress",
+				"provider-gateway-secrets",
+				"provider-adapter-egress",
+			} {
+				required = append(required, identity.StableVolumeName(purpose))
+			}
+		}
+	case ServiceProviderGateway:
+		required = append(required,
+			identity.StableVolumeName("provider-gateway-secrets"),
+			identity.StableVolumeName("telemetry"),
+		)
 	}
 	if len(seen) != len(required) {
 		return false
@@ -900,6 +975,9 @@ func allowedVolumeMount(identity Identity, service ServiceName, mount Mount) boo
 	}
 	switch service {
 	case ServiceCore:
+		if mount.Source == identity.StableVolumeName("provider-core-egress") {
+			return mount.ReadOnly && mount.Target == "/run/provider-egress"
+		}
 		return !mount.ReadOnly && ((mount.Source == identity.VolumeName("state") && mount.Target == "/var/lib/agentmemory/state") ||
 			(mount.Source == identity.VolumeName("artifacts") && mount.Target == "/var/lib/agentmemory/artifacts") ||
 			(mount.Source == identity.StableVolumeName("journal") && mount.Target == "/var/lib/agentmemory/journal") ||
@@ -916,6 +994,22 @@ func allowedVolumeMount(identity Identity, service ServiceName, mount Mount) boo
 				return !mount.ReadOnly && mount.Target == "/run/outputs/"+purpose
 			}
 		}
+		for _, purpose := range []string{
+			"provider-core-egress",
+			"provider-gateway-secrets",
+			"provider-adapter-egress",
+		} {
+			if mount.Source == identity.StableVolumeName(purpose) {
+				return !mount.ReadOnly && mount.Target == "/run/outputs/"+purpose
+			}
+		}
+	case ServiceProviderGateway:
+		return (mount.ReadOnly &&
+			mount.Source == identity.StableVolumeName("provider-gateway-secrets") &&
+			mount.Target == "/run/secrets") ||
+			(!mount.ReadOnly &&
+				mount.Source == identity.StableVolumeName("telemetry") &&
+				mount.Target == "/var/lib/agentmemory/telemetry")
 	}
 	return false
 }
@@ -926,13 +1020,21 @@ func validVolume(volume Volume, model Model) bool {
 	}
 	purpose := volume.Labels[LabelPurpose]
 	generation := volume.Labels[LabelGeneration]
-	if generation == "stable" && (purpose == "models" || purpose == "journal" || purpose == "telemetry") {
+	if generation == "stable" && (purpose == "models" || purpose == "journal" ||
+		purpose == "telemetry" || purpose == "provider-core-egress" ||
+		purpose == "provider-gateway-secrets" || purpose == "provider-adapter-egress") {
 		return volume.Name == model.Identity.StableVolumeName(purpose)
 	}
 	if generation != model.Identity.Generation() || !generationVolumePurpose(purpose) {
 		return false
 	}
 	return volume.Name == model.Identity.VolumeName(purpose)
+}
+
+func remoteTopology(model Model) bool {
+	_, service := model.Services[ServiceProviderGateway]
+	_, network := model.Networks[NetworkEgress]
+	return service && network
 }
 
 const (

@@ -49,11 +49,25 @@ type protectedValue struct {
 // RunDefault executes the complete fixed projection and returns no secret-
 // derived receipt. The command wrapper emits only the constant token "ok".
 func RunDefault() error {
+	return runContract(
+		defaultContract(),
+	)
+}
+
+// RunRemote executes the fixed default plus provider-gateway projection. It
+// accepts no runtime manifest, destination, owner, or file-name authority.
+func RunRemote() error {
+	return runContract(
+		remoteContract(),
+	)
+}
+
+func runContract(contract []volumeContract) error {
 	return runDefault(
 		unix.Geteuid(), exactEffectiveCapabilities(), networkNamespaceIsDisabled(),
 		func() error {
 			return runProjection(
-				defaultContract(), inputPath, outputPath,
+				contract, inputPath, outputPath,
 				[]string{"/proc/self/cmdline", "/proc/self/environ"},
 			)
 		},
@@ -204,7 +218,7 @@ func readProtectedInput(contract fileContract, path string) (protectedValue, err
 }
 
 func readExactAt(descriptor int, size int) ([]byte, error) {
-	if size <= 0 || size > int(maximumAttestationBytes) {
+	if size <= 0 || size > int(maximumCredentialVaultBytes) {
 		return nil, errProjection
 	}
 	value := make([]byte, size)

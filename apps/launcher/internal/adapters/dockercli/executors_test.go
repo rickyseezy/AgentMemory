@@ -101,8 +101,13 @@ func (r *testBoundRunner) Run(
 func (r *testBoundRunner) RunStreaming(
 	ctx context.Context,
 	invocation argvprocess.Invocation,
-	_ argvprocess.Streams,
+	streams argvprocess.Streams,
 ) error {
+	if streaming, ok := r.delegate.(interface {
+		RunStreaming(context.Context, argvprocess.Invocation, argvprocess.Streams) error
+	}); ok {
+		return streaming.RunStreaming(ctx, invocation, streams)
+	}
 	_, err := r.delegate.Run(ctx, invocation)
 	return err
 }

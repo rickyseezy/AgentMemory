@@ -80,6 +80,8 @@ jobs:
             --tag agentmemory/neo4j:pf001 .
           docker build --pull=false --file deploy/docker/provider.Dockerfile \
             --tag agentmemory/provider:pf001 .
+          docker build --pull=false --file deploy/docker/provider-gateway.Dockerfile \
+            --tag agentmemory/provider-gateway:pro009 .
           docker build --pull=false --file deploy/docker/secret-projector.Dockerfile \
             --tag agentmemory/secret-projector:pf001 .
           docker build --pull=false --file deploy/docker/capacity-helper.Dockerfile \
@@ -94,6 +96,7 @@ jobs:
             'agentmemory/migrate:pf001=10001:10001' \
             'agentmemory/neo4j:pf001=7474:7474' \
             'agentmemory/provider:pf001=10001:10001' \
+            'agentmemory/provider-gateway:pro009=10001:10001' \
             'agentmemory/secret-projector:pf001=0:0' \
             'agentmemory/capacity-helper:pf001=10001:10001'
           do
@@ -182,6 +185,7 @@ jobs:
             agentmemory/migrate:pf001 \
             agentmemory/neo4j:pf001 \
             agentmemory/provider:pf001 \
+            agentmemory/provider-gateway:pro009 \
             agentmemory/secret-projector:pf001 \
             agentmemory/capacity-helper:pf001 \
             --format '{{.RepoTags}} {{.Id}}'

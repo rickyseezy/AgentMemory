@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -29,9 +29,6 @@ from agentmemory.operations.domain.errors import ErrorCode, OperationError
 from agentmemory.operations.domain.value_objects import format_rfc3339_microseconds
 from agentmemory.operations.infrastructure.configuration import CoreSettings
 from tests.core.support import NOW, FixedClock, binding, digest, write_secret
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _attestation_payload(key: bytes, **overrides: object) -> bytes:
@@ -278,6 +275,12 @@ def test_settings_pin_internal_services_and_derive_selected_port_hosts() -> None
         "[::1]:12345",
         "localhost:12345",
         "core:12345",
+    )
+    assert settings.provider_gateway_capability_file == Path(
+        "/run/provider-egress/agentmemory_provider_gateway_client_capability"
+    )
+    assert settings.provider_gateway_permit_hmac_key_file == Path(
+        "/run/provider-egress/agentmemory_provider_gateway_permit_hmac_key"
     )
     assert settings.listen_host == "0.0.0.0"  # noqa: S104 -- Certified container bind.
     assert settings.neo4j_database == "neo4j"

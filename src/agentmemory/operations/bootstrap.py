@@ -447,6 +447,13 @@ from agentmemory.providers.adapters.builtins.voyage import VoyageProviderAdapter
 from agentmemory.providers.adapters.contained_migration_execution import (
     ContainedEmbeddingMigrationRunner,
 )
+from agentmemory.providers.adapters.contained_profile_probe import (
+    ContainedProviderProfileProbeTransport,
+)
+from agentmemory.providers.adapters.containment_http_api import (
+    create_contract_provider_containment_router,
+    create_provider_containment_router,
+)
 from agentmemory.providers.adapters.embedding_space_http_api import (
     create_contract_embedding_space_router,
     create_embedding_space_router,
@@ -454,7 +461,9 @@ from agentmemory.providers.adapters.embedding_space_http_api import (
 from agentmemory.providers.adapters.embedding_space_identity import (
     SystemEmbeddingSpaceIdentityGenerator,
 )
-from agentmemory.providers.adapters.gateway_http import ProviderGatewayHttpTransport
+from agentmemory.providers.adapters.gateway_internal_client import (
+    ProviderGatewayInternalHttpClient,
+)
 from agentmemory.providers.adapters.migration_http_api import (
     create_contract_embedding_migration_router,
     create_embedding_migration_router,
@@ -466,6 +475,7 @@ from agentmemory.providers.adapters.neo4j_embedding_spaces import (
     Neo4jEmbeddingGenerationCleaner,
     Neo4jIndexGenerationProvisioner,
 )
+from agentmemory.providers.adapters.permit_codec import ProtectedFileProviderPermitCodec
 from agentmemory.providers.adapters.profile_http_api import (
     create_contract_provider_profile_router,
     create_provider_profile_router,
@@ -492,6 +502,9 @@ from agentmemory.providers.adapters.scheduling_http_api import (
 from agentmemory.providers.adapters.scheduling_identity import (
     SystemProviderSchedulingIdentityGenerator,
 )
+from agentmemory.providers.adapters.sqlite_containment import (
+    SqliteProviderContainmentRepository,
+)
 from agentmemory.providers.adapters.sqlite_embedding_spaces import (
     SqliteEmbeddingSpaceRepository,
 )
@@ -510,6 +523,10 @@ from agentmemory.providers.adapters.sqlite_routing import (
 )
 from agentmemory.providers.adapters.sqlite_scheduling import (
     SqliteProviderSchedulingRepository,
+)
+from agentmemory.providers.application.containment import (
+    GetProviderEgressPolicyHandler,
+    PublishProviderEgressPolicyHandler,
 )
 from agentmemory.providers.application.embedding_spaces import EnsureIndexGenerationHandler
 from agentmemory.providers.application.migration import (
@@ -1140,6 +1157,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_provider_routing_router(),
             create_contract_provider_scheduling_router(),
             create_contract_provider_resilience_router(),
+            create_contract_provider_containment_router(),
             create_contract_embedding_migration_router(),
         )
     )
@@ -1198,10 +1216,16 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             clock,
         )
     )
-    gateway = ProviderGatewayHttpTransport(
-        provider_client,
-        settings.provider_gateway_url,
-        settings.provider_gateway_capability_file,
+    provider_containment = SqliteProviderContainmentRepository(store)
+    gateway = ContainedProviderProfileProbeTransport(
+        authority=provider_containment,
+        permits=ProtectedFileProviderPermitCodec(settings.provider_gateway_permit_hmac_key_file),
+        gateway=ProviderGatewayInternalHttpClient(
+            provider_client,
+            settings.provider_gateway_url,
+            settings.provider_gateway_capability_file,
+        ),
+        now_microseconds=lambda: round(clock.now().timestamp() * 1_000_000),
     )
     provider_adapters = CertifiedProviderAdapterRegistry(
         (
@@ -1282,6 +1306,15 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             retrieval_scope,
             PublishEquivalentEndpointSetHandler(provider_resilience),
             GetEquivalentEndpointSetHandler(provider_resilience),
+            clock,
+        )
+    )
+    application.include_router(
+        create_provider_containment_router(
+            authenticator,
+            retrieval_scope,
+            PublishProviderEgressPolicyHandler(provider_containment),
+            GetProviderEgressPolicyHandler(provider_containment),
             clock,
         )
     )

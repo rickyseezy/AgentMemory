@@ -4,7 +4,6 @@ package composeplan
 import (
 	"errors"
 	"fmt"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -453,8 +452,19 @@ func requiredRemoteSecret(name string) bool {
 }
 
 func validSecretFile(value string) bool {
-	return value != "" && len(value) <= 4096 && value == strings.TrimSpace(value) &&
-		!strings.ContainsAny(value, "\x00\r\n") && path.IsAbs(value) && path.Clean(value) == value
+	if value == "" || len(value) > 4096 || value != strings.TrimSpace(value) ||
+		strings.ContainsAny(value, "\x00\r\n") || !strings.HasPrefix(value, "/") {
+		return false
+	}
+	for index, segment := range strings.Split(value, "/") {
+		if index == 0 {
+			continue
+		}
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func requiredService(name ServiceName) bool {

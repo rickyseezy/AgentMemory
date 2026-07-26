@@ -274,10 +274,8 @@ func NewProviderAdapterOperationSupervisor(
 	endpoint containerengine.Endpoint,
 	runtimeDirectory string,
 ) (*ProviderAdapterOperationSupervisor, error) {
-	info, err := os.Lstat(runtimeDirectory)
-	if !executors.valid() || endpoint.String() == "" || err != nil ||
-		!filepath.IsAbs(runtimeDirectory) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-		info.Mode().Perm()&0o077 != 0 {
+	if !executors.valid() || endpoint.String() == "" ||
+		!filepath.IsAbs(runtimeDirectory) || !privateComposePath(runtimeDirectory, true) {
 		return nil, provideradapterapp.ErrRuntime
 	}
 	return &ProviderAdapterOperationSupervisor{

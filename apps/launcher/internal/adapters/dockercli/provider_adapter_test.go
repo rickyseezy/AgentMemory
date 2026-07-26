@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -185,13 +186,15 @@ func TestPRO009OperationSupervisorRejectsUnsafeRuntimeAndBoundsOutput(t *testing
 	t.Parallel()
 	endpoint, _ := containerengine.NewEndpoint("unix:///run/user/1000/docker.sock")
 	directory := t.TempDir()
-	if err := os.Chmod(directory, 0o755); err != nil { //nolint:gosec // Adversarial test deliberately creates an unsafe directory.
-		t.Fatal(err)
-	}
-	if supervisor, err := NewProviderAdapterOperationSupervisor(
-		testExecutorsForCompose(t, &providerOperationRunner{}), endpoint, directory,
-	); err == nil || supervisor != nil {
-		t.Fatalf("unsafe directory accepted: %#v/%v", supervisor, err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(directory, 0o755); err != nil { //nolint:gosec // Adversarial test deliberately creates an unsafe directory.
+			t.Fatal(err)
+		}
+		if supervisor, err := NewProviderAdapterOperationSupervisor(
+			testExecutorsForCompose(t, &providerOperationRunner{}), endpoint, directory,
+		); err == nil || supervisor != nil {
+			t.Fatalf("unsafe directory accepted: %#v/%v", supervisor, err)
+		}
 	}
 	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // Private directories require execute permission.
 		t.Fatal(err)

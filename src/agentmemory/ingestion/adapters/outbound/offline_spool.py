@@ -9,6 +9,7 @@ import sqlite3
 import stat
 from contextlib import closing
 from dataclasses import dataclass
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidTag
@@ -99,6 +100,7 @@ class EncryptedSqliteSpool:
         self._key_file = key_file
         self._maximum_records = maximum_records
         self._maximum_bytes = maximum_bytes
+        self._enqueue_lock = Lock()
 
     def initialize(self) -> None:
         """Create the private durable spool schema without following unsafe paths."""
@@ -165,7 +167,7 @@ class EncryptedSqliteSpool:
         finally:
             zero_secret(key)
         try:
-            with closing(self._connect()) as connection:
+            with self._enqueue_lock, closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 existing = connection.execute(
                     "SELECT aad_sha256, canonical_sha256 FROM spool_events WHERE event_id = ?",

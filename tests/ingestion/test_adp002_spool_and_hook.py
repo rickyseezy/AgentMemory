@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from time import perf_counter
@@ -64,6 +65,21 @@ def test_spool_is_encrypted_bounded_idempotent_and_order_preserving(tmp_path: Pa
         )
     assert b"private" not in ciphertext
     assert spool.acknowledge((pending[0].event_id,)) == 1
+    assert [item.event_id for item in spool.pending()] == [EVENT_ID]
+
+
+def test_spool_serializes_concurrent_exact_retries(tmp_path: Path) -> None:
+    spool = _spool(tmp_path)
+    canonical = b'{"private":"same"}'
+
+    def enqueue(_: int) -> bool:
+        return spool.enqueue(EVENT_ID, "order-a", 1, canonical)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = tuple(executor.map(enqueue, range(32)))
+
+    assert results.count(True) == 1
+    assert results.count(False) == 31
     assert [item.event_id for item in spool.pending()] == [EVENT_ID]
 
 

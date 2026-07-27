@@ -164,6 +164,30 @@ def probe_request(**changes: object) -> ProviderGatewayRequest:
     return replace(value, **cast("Any", changes))
 
 
+def drift_request(**changes: object) -> ProviderGatewayRequest:
+    configuration = remote_configuration()
+    purpose = configuration.purposes[0].value
+    value = ProviderGatewayRequest(
+        operation_id=f"drift-probe:{PROFILE_ID}:2:{purpose}",
+        brain_id=BRAIN_ID,
+        profile_id=PROFILE_ID,
+        profile_version=2,
+        configuration_digest=configuration.digest,
+        adapter_id=configuration.adapter_id,
+        model_id=configuration.model_id,
+        operation_type=configuration.operation.value,
+        purpose=purpose,
+        endpoint_policy_ref=configuration.endpoint_policy_ref or "",
+        secret_ref=configuration.secret_ref or "",
+        method="POST",
+        path=destination().path_prefix,
+        body=b'{"input":["fixed public canary"],"model":"text-embedding-3-large"}',
+        timeout_milliseconds=configuration.limits.timeout_milliseconds,
+        max_response_bytes=4096,
+    )
+    return replace(value, **cast("Any", changes))
+
+
 async def seed_draft_provider(store: SqliteCoreStore) -> None:
     await seed_active_provider(store)
     configuration = draft_configuration()
@@ -217,6 +241,32 @@ async def test_draft_profile_probe_receives_only_a_provisional_policy_bound_perm
         assert b"secret://" not in bytes(document)
         assert b"policy://" not in bytes(document)
         assert probe_request().body not in bytes(document)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_active_drift_probe_uses_capability_attested_policy_route(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    repository = SqliteProviderContainmentRepository(store)
+    try:
+        attestation_id = await seed_active_provider(store)
+        await repository.publish(
+            scope("provider.containment.manage"),
+            "pro010-active-drift-policy",
+            digest("pro010-active-drift-policy").value,
+            active_policy(),
+            _micros(3),
+        )
+
+        permit = await repository.authorize_probe(drift_request(), _micros(4))
+
+        assert permit.profile_attestation_id == attestation_id
+        assert permit.model_revision == probe_result().model_revision
+        assert permit.operation_id.startswith("drift-probe:")
     finally:
         await store.close()
 

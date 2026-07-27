@@ -186,6 +186,55 @@ class ProviderContainmentDependencyError(RuntimeError):
     """Expose a content-free policy, gateway, supervisor, or runtime failure."""
 
 
+class ProviderObservabilityValidationError(ValueError):
+    """Reject malformed pricing, budget, telemetry, drift, or status evidence."""
+
+
+class ProviderObservabilityAuthorizationError(PermissionError):
+    """Reject provider observability administration without current authority."""
+
+
+class ProviderObservabilityConflictError(RuntimeError):
+    """Reject stale pricing, budget, reservation, drift, or evidence state."""
+
+
+class ProviderObservabilityDependencyError(RuntimeError):
+    """Expose a content-free provider observability storage or probe failure."""
+
+
+class ProviderBudgetExhaustedError(RuntimeError):
+    """Return the configured queue/degrade decision without permitting overrun."""
+
+    def __init__(
+        self,
+        decision: str,
+        degraded_channels: tuple[str, ...],
+    ) -> None:
+        """Carry only the closed decision and content-free fallback channels."""
+        if (
+            decision not in {"queued", "degraded"}
+            or (decision == "queued" and degraded_channels)
+            or (
+                decision == "degraded"
+                and (
+                    not degraded_channels
+                    or any(
+                        value not in {"exact", "lexical", "graph"} for value in degraded_channels
+                    )
+                )
+            )
+        ):
+            msg = "provider budget exhaustion decision is invalid"
+            raise ValueError(msg)
+        self.decision = decision
+        self.degraded_channels = degraded_channels
+        super().__init__(f"provider budget exhausted: {decision}")
+
+
+class ProviderDriftSuspendedError(RuntimeError):
+    """Deny semantic writes to a generation suspended by drift evidence."""
+
+
 class ProviderRetryScheduledError(RuntimeError):
     """Return one durable retry time without exposing an upstream response."""
 

@@ -7,7 +7,7 @@ index names manually.
 
 ## Preconditions
 
-1. Core is ready and reports relational migration head `0042_pro009_provider_containment`.
+1. Core is ready and reports relational migration head `0043_pro010_provider_observability`.
 2. The source generation is `active`; the target generation belongs to a different immutable
    embedding space and is `populating`.
 3. Both provider profiles and capability attestations are current.

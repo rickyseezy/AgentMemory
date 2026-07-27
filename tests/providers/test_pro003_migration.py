@@ -27,7 +27,7 @@ def test_pro003_empty_schema_installs_indexes_triggers_and_downgrades_cleanly(
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        assert head == ("0042_pro009_provider_containment",)
+        assert head == ("0043_pro010_provider_observability",)
         columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(provider_capability_attestations)")

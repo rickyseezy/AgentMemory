@@ -454,6 +454,10 @@ from agentmemory.providers.adapters.containment_http_api import (
     create_contract_provider_containment_router,
     create_provider_containment_router,
 )
+from agentmemory.providers.adapters.drift_probe import (
+    ConfiguredDriftVectorGateway,
+    ProviderVectorDriftProbe,
+)
 from agentmemory.providers.adapters.embedding_space_http_api import (
     create_contract_embedding_space_router,
     create_embedding_space_router,
@@ -474,6 +478,10 @@ from agentmemory.providers.adapters.migration_identity import (
 from agentmemory.providers.adapters.neo4j_embedding_spaces import (
     Neo4jEmbeddingGenerationCleaner,
     Neo4jIndexGenerationProvisioner,
+)
+from agentmemory.providers.adapters.observability_http_api import (
+    create_contract_provider_observability_router,
+    create_provider_observability_router,
 )
 from agentmemory.providers.adapters.permit_codec import ProtectedFileProviderPermitCodec
 from agentmemory.providers.adapters.profile_http_api import (
@@ -514,6 +522,9 @@ from agentmemory.providers.adapters.sqlite_migration import (
 from agentmemory.providers.adapters.sqlite_migration_content import (
     SqliteCanonicalEmbeddingContentSource,
 )
+from agentmemory.providers.adapters.sqlite_observability import (
+    SqliteProviderObservabilityRepository,
+)
 from agentmemory.providers.adapters.sqlite_profiles import SqliteProviderProfileRepository
 from agentmemory.providers.adapters.sqlite_resilience import (
     SqliteProviderResilienceRepository,
@@ -538,6 +549,14 @@ from agentmemory.providers.application.migration import (
     PlanEmbeddingMigrationHandler,
     ResumeEmbeddingMigrationHandler,
     RollbackEmbeddingMigrationHandler,
+)
+from agentmemory.providers.application.observability import (
+    GetProviderStatusHandler,
+    PublishBudgetPolicyHandler,
+    PublishPricingSnapshotHandler,
+    RegisterDriftCanaryHandler,
+    RunDriftProbeHandler,
+    ScheduledDriftProbeWorker,
 )
 from agentmemory.providers.application.profiles import (
     CreateProviderProfileHandler,
@@ -987,6 +1006,8 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
     )
     container = CoreContainer(store, neo4j_driver, provider_client)
 
+    drift_worker: ScheduledDriftProbeWorker | None = None
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         del application
@@ -998,6 +1019,9 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             # Establish the immutable historical watermark before automatic
             # consolidation may claim any task snapshot.
             await memory_backfill_repository.start_or_resume()
+            if drift_worker is None:
+                msg = "provider drift worker composition is unavailable"
+                raise RuntimeError(msg)
             tasks = (
                 asyncio.create_task(projection_worker.run(stop)),
                 asyncio.create_task(materialized_edge_worker.run(stop)),
@@ -1013,6 +1037,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
                 asyncio.create_task(checkpoint_worker.run(stop)),
                 asyncio.create_task(incremental_index_worker.run(stop)),
                 asyncio.create_task(index_projection_worker.run(stop)),
+                asyncio.create_task(drift_worker.run(stop)),
             )
             yield
         finally:
@@ -1032,7 +1057,7 @@ def create_core_app(  # noqa: PLR0915 -- Explicit outer composition root.
             clock,
         )
     )
-    _include_identity_graph_and_retrieval_runtime_routers(
+    drift_worker = _include_identity_graph_and_retrieval_runtime_routers(
         application,
         store,
         clock,
@@ -1158,6 +1183,7 @@ def export_core_openapi_schema() -> dict[str, object]:
             create_contract_provider_scheduling_router(),
             create_contract_provider_resilience_router(),
             create_contract_provider_containment_router(),
+            create_contract_provider_observability_router(),
             create_contract_embedding_migration_router(),
         )
     )
@@ -1200,7 +1226,7 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
     embeddings: LocalEmbeddingHttpAdapter,
     reranker: LocalRerankingHttpAdapter,
     session_authenticator: SessionCredentialAuthenticator,
-) -> None:
+) -> ScheduledDriftProbeWorker:
     """Compose identity authorization once for identity and continuity query boundaries."""
     identity_authorization = SqliteIdentityAuthorizationPolicy(store.engine)
     retrieval_scope = ResolveRetrievalScopeHandler(
@@ -1315,6 +1341,26 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
             retrieval_scope,
             PublishProviderEgressPolicyHandler(provider_containment),
             GetProviderEgressPolicyHandler(provider_containment),
+            clock,
+        )
+    )
+    provider_observability = SqliteProviderObservabilityRepository(store)
+    drift_probe = ProviderVectorDriftProbe(
+        ConfiguredDriftVectorGateway(
+            profiles=provider_profiles,
+            adapters=provider_adapters,
+            now_microseconds=lambda: round(clock.now().timestamp() * 1_000_000),
+        )
+    )
+    application.include_router(
+        create_provider_observability_router(
+            authenticator,
+            retrieval_scope,
+            PublishPricingSnapshotHandler(provider_observability),
+            PublishBudgetPolicyHandler(provider_observability),
+            RegisterDriftCanaryHandler(provider_observability),
+            RunDriftProbeHandler(provider_observability, drift_probe),
+            GetProviderStatusHandler(provider_observability),
             clock,
         )
     )
@@ -1495,6 +1541,12 @@ def _include_identity_graph_and_retrieval_runtime_routers(  # noqa: PLR0913 -- E
         installation_root_key_file,
     ):
         application.include_router(retrieval_router)
+    return ScheduledDriftProbeWorker(
+        provider_observability,
+        drift_probe,
+        clock,
+        "provider-drift-v1",
+    )
 
 
 def _graph_rebuild_manifest(settings: CoreSettings) -> RebuildManifest:

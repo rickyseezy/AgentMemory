@@ -41,7 +41,7 @@ async def test_migration_head_installs_complete_containment_schema(tmp_path: Pat
                     )
                 ).all()
             }
-        assert head == "0042_pro009_provider_containment"
+        assert head == "0043_pro010_provider_observability"
         assert {
             "provider_egress_policies",
             "provider_egress_operations",

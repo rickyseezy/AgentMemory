@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Never, Protocol, cast
 
+from agentmemory.providers.adapters.drift_probe import MutableAdapterVectorResult
 from agentmemory.providers.adapters.strict_json import StrictJsonError, canonical_bytes, loads
 from agentmemory.providers.domain.capability_probe import (
     EmbeddingProbeBatch,
@@ -184,11 +185,58 @@ class CertifiedRemoteAdapter:
             validated_batches=suite_result.validated_batches,
         )
 
+    async def observe_drift_vectors(
+        self,
+        profile: ProviderProfile,
+        purpose: CanonicalPurpose,
+    ) -> MutableAdapterVectorResult:
+        """Return one validated fixed embedding canary batch for immediate reduction."""
+        configuration = profile.configuration
+        self._manifest.validate_configuration(configuration)
+        if (
+            configuration.operation is not ProviderOperation.EMBEDDING
+            or purpose not in configuration.purposes
+        ):
+            raise ProviderAdapterError(ProviderErrorCode.UNSUPPORTED_CAPABILITY)
+        result = await self._probe_purpose(
+            profile,
+            purpose,
+            None,
+            operation_prefix="drift-probe",
+        )
+        if not isinstance(result.parsed.batch, EmbeddingProbeBatch):
+            raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE)
+        vectors: list[list[float]] = []
+        try:
+            for raw in result.parsed.batch.vectors:
+                if not isinstance(raw, tuple):
+                    _malformed()
+                typed_raw = cast("tuple[object, ...]", raw)
+                converted: list[float] = []
+                for value in typed_raw:
+                    if (
+                        not isinstance(value, (int, float))
+                        or isinstance(value, bool)
+                        or not math.isfinite(value)
+                    ):
+                        _malformed()
+                    converted.append(float(value))
+                vectors.append(converted)
+        except (TypeError, ValueError) as error:
+            raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
+        return MutableAdapterVectorResult(
+            content_ids=result.parsed.batch.content_ids,
+            vectors=vectors,
+            revision_fingerprint=result.revision[1],
+        )
+
     async def _probe_purpose(
         self,
         profile: ProviderProfile,
         purpose: CanonicalPurpose,
         expected_dimension: int | None,
+        *,
+        operation_prefix: str = "profile-probe",
     ) -> _PurposeProbe:
         configuration = profile.configuration
         path, body = self._protocol.request(
@@ -199,7 +247,7 @@ class CertifiedRemoteAdapter:
         response = await self._transport.execute(
             ProviderGatewayRequest(
                 operation_id=(
-                    f"profile-probe:{profile.profile_id}:{profile.version}:{purpose.value}"
+                    f"{operation_prefix}:{profile.profile_id}:{profile.version}:{purpose.value}"
                 ),
                 brain_id=configuration.brain_id,
                 profile_id=profile.profile_id,
@@ -288,6 +336,10 @@ def _validate_parsed_batch(
     if parsed.dimension != validated.dimension:
         raise ProviderAdapterError(ProviderErrorCode.DIMENSION_MISMATCH)
     return validated
+
+
+def _malformed() -> Never:
+    raise TypeError
 
 
 def certified_manifest(

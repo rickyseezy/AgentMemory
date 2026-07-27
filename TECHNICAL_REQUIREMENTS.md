@@ -2886,6 +2886,9 @@ For a pre-core host-launcher operation such as install, automatic MCP start, off
 
 #### PRO-010 — Observe provider health, cost, and drift
 
+**Implementation record:** [`docs/implementation/PRO-010.md`](docs/implementation/PRO-010.md) and
+[`docs/runbooks/PRO-010-PROVIDER-OBSERVABILITY.md`](docs/runbooks/PRO-010-PROVIDER-OBSERVABILITY.md).
+
 **User story:** As an operator, I can diagnose providers and detect silent model changes.
 
 **Acceptance criteria**

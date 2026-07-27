@@ -262,8 +262,16 @@ class SqliteProviderContainmentRepository:
                 if policy_row is None:
                     raise ProviderContainmentDeniedError(_ERR_DENIED)
                 policy = _policy(policy_row)
-                profile = await _draft_probe_profile(connection, request)
-                route = _provisional_probe_route(policy, request)
+                profile, route_attestation, route_revision = await _probe_profile(
+                    connection,
+                    request,
+                )
+                route = _provisional_probe_route(
+                    policy,
+                    request,
+                    route_attestation,
+                    route_revision,
+                )
                 data_policy = require_object(profile["data_policy"])
                 quota = require_object(profile["quota"])
                 budget = require_object(profile["budget"])
@@ -275,8 +283,8 @@ class SqliteProviderContainmentRepository:
                     project_id=None,
                     profile_id=request.profile_id,
                     profile_version=request.profile_version,
-                    profile_attestation_id=request.configuration_digest,
-                    model_revision=request.model_id,
+                    profile_attestation_id=route_attestation,
+                    model_revision=route_revision,
                     purpose=request.purpose,
                     operation_type=request.operation_type,
                     destination=route.destination,
@@ -652,10 +660,10 @@ async def _verify_request_profile(
         raise ProviderContainmentDeniedError(_ERR_DENIED)
 
 
-async def _draft_probe_profile(
+async def _probe_profile(
     connection: AsyncConnection,
     request: ProviderGatewayRequest,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], str, str]:
     row = (
         (
             await connection.execute(
@@ -674,9 +682,16 @@ async def _draft_probe_profile(
     document = require_object(loads(_blob(row["document_json"])))
     configuration = require_object(document["configuration"])
     configuration_digest = hashlib.sha256(canonical_bytes(configuration)).hexdigest()
+    draft_probe = request.operation_id.startswith("profile-probe:")
+    drift_probe = request.operation_id.startswith("drift-probe:")
+    exact_operation = request.operation_id in {
+        f"profile-probe:{request.profile_id}:{request.profile_version}:{request.purpose}",
+        f"drift-probe:{request.profile_id}:{request.profile_version}:{request.purpose}",
+    }
+    active_probe_id = None if row["active_probe_id"] is None else str(row["active_probe_id"])
     if (
-        str(row["status"]) != "draft"
-        or row["active_probe_id"] is not None
+        not exact_operation
+        or draft_probe == drift_probe
         or int(row["version"]) != request.profile_version
         or configuration_digest != request.configuration_digest
         or configuration.get("brain_id") != request.brain_id
@@ -689,12 +704,36 @@ async def _draft_probe_profile(
         or configuration.get("execution_class") != "remote"
     ):
         raise ProviderContainmentDeniedError(_ERR_DENIED)
-    return configuration
+    if draft_probe:
+        if str(row["status"]) != "draft" or active_probe_id is not None:
+            raise ProviderContainmentDeniedError(_ERR_DENIED)
+        return configuration, configuration_digest, request.model_id
+    if str(row["status"]) != "active" or active_probe_id is None:
+        raise ProviderContainmentDeniedError(_ERR_DENIED)
+    evidence = (
+        (
+            await connection.execute(
+                text(
+                    "SELECT evidence_json FROM provider_probe_evidence "
+                    "WHERE evidence_id=:evidence AND profile_id=:profile"
+                ),
+                {"evidence": active_probe_id, "profile": request.profile_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if evidence is None:
+        raise ProviderContainmentDeniedError(_ERR_DENIED)
+    result = require_object(loads(_blob(evidence["evidence_json"])))
+    return configuration, active_probe_id, _string(result, "model_revision")
 
 
 def _provisional_probe_route(
     policy: ProviderEgressPolicy,
     request: ProviderGatewayRequest,
+    profile_attestation_id: str,
+    model_revision: str,
 ) -> ProviderEgressRoute:
     routes = tuple(
         route
@@ -702,8 +741,8 @@ def _provisional_probe_route(
         if (
             route.profile_id == request.profile_id
             and route.profile_version == request.profile_version
-            and route.profile_attestation_id == request.configuration_digest
-            and route.model_revision == request.model_id
+            and route.profile_attestation_id == profile_attestation_id
+            and route.model_revision == model_revision
             and route.operation_type == request.operation_type
             and route.purpose == request.purpose
             and (

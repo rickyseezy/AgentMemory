@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from agentmemory.providers.domain.errors import ProviderAdapterError, ProviderErrorCode
 from agentmemory.providers.domain.profiles import (
@@ -15,8 +15,23 @@ from agentmemory.providers.domain.profiles import (
 )
 
 if TYPE_CHECKING:
+    from agentmemory.providers.adapters.drift_probe import MutableAdapterVectorResult
     from agentmemory.providers.domain.profile_ports import LocalProviderProbe
-    from agentmemory.providers.domain.profiles import ProviderProbeResult, ProviderProfile
+    from agentmemory.providers.domain.profiles import (
+        ProviderProbeResult,
+        ProviderProfile,
+    )
+
+
+class _LocalDriftProbe(Protocol):
+    async def observe_drift_vectors(
+        self,
+        profile: ProviderProfile,
+        purpose: CanonicalPurpose,
+    ) -> MutableAdapterVectorResult:
+        """Return one fixed public canary vector batch."""
+        ...
+
 
 QWEN_LOCAL_MANIFEST = ProviderManifest(
     adapter_id="qwen-local",
@@ -62,3 +77,14 @@ class QwenLocalProviderAdapter:
         ):
             raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE)
         return result
+
+    async def observe_drift_vectors(
+        self,
+        profile: ProviderProfile,
+        purpose: CanonicalPurpose,
+    ) -> MutableAdapterVectorResult:
+        """Delegate fixed canary execution to the release-verified local probe."""
+        return await cast("_LocalDriftProbe", self._probe).observe_drift_vectors(
+            profile,
+            purpose,
+        )

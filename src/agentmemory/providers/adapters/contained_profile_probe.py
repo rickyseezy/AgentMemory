@@ -60,9 +60,12 @@ class ContainedProviderProfileProbeTransport:
                 or permit.operation_id != request.operation_id
                 or permit.profile_id != request.profile_id
                 or permit.profile_version != request.profile_version
-                or permit.profile_attestation_id != request.configuration_digest
                 or permit.operation_type != request.operation_type
                 or permit.purpose != request.purpose
+                or (
+                    request.operation_id.startswith("profile-probe:")
+                    and permit.profile_attestation_id != request.configuration_digest
+                )
             ):
                 _deny()
             response = await self.gateway.execute(

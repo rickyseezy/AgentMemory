@@ -27,7 +27,7 @@ def test_pro005_schema_installs_immutable_authority_evidence_and_empty_downgrade
     command.upgrade(configuration, "head")
     with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0042_pro009_provider_containment",
+            "0043_pro010_provider_observability",
         )
         tables = {
             str(row[0])

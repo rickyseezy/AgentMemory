@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING
 
 from agentmemory.identity.domain.retrieval_scope import RetrievalRole
 from agentmemory.providers.domain.errors import (
+    ProviderBudgetExhaustedError,
+    ProviderObservabilityConflictError,
+    ProviderObservabilityDependencyError,
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingDependencyError,
     ProviderSchedulingValidationError,
@@ -250,6 +253,29 @@ class ProviderSchedulerWorker:
                 lease,
                 "dependency_unavailable",
                 now + _DEPENDENCY_RETRY_MICROSECONDS,
+                now,
+            )
+        except ProviderObservabilityDependencyError:
+            now = _microseconds(self.clock)
+            await self.repository.release(
+                lease,
+                "observability_unavailable",
+                now + _DEPENDENCY_RETRY_MICROSECONDS,
+                now,
+            )
+        except ProviderObservabilityConflictError:
+            await self.repository.release(
+                lease,
+                "pricing_authority_missing",
+                None,
+                _microseconds(self.clock),
+            )
+        except ProviderBudgetExhaustedError as error:
+            now = _microseconds(self.clock)
+            await self.repository.release(
+                lease,
+                f"budget_{error.decision}",
+                (now + _DEPENDENCY_RETRY_MICROSECONDS if error.decision == "queued" else None),
                 now,
             )
         except ProviderSchedulingValidationError:

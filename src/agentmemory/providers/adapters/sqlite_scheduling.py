@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from agentmemory.identity.domain.retrieval_scope import Classification
 from agentmemory.providers.adapters.strict_json import StrictJsonError, canonical_bytes, loads
 from agentmemory.providers.domain.errors import (
+    ProviderDriftSuspendedError,
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingConflictError,
     ProviderSchedulingDependencyError,
@@ -54,6 +55,7 @@ _ERR_AUTHORIZATION = "provider scheduling storage action is not authorized"
 _ERR_CONFLICT = "provider scheduling conflicts with immutable history"
 _ERR_INTEGRITY = "provider scheduling storage failed integrity verification"
 _ERR_STORAGE = "provider scheduling storage is unavailable"
+_ERR_DRIFT = "provider generation writes are suspended"
 _READ_ACTION = "provider.schedule.read"
 _WRITE_ACTIONS = frozenset({"provider.schedule.enqueue", "provider.schedule.cancel"})
 _WRITE_ROLES = frozenset({"owner", "admin", "editor", "adapter", "worker"})
@@ -122,6 +124,7 @@ class SqliteProviderSchedulingRepository:
                     return replay
                 _require_scope_coordinates(scope, work.batch_key)
                 await _validate_authority(connection, work)
+                await _assert_generation_writable(connection, work)
                 await connection.execute(
                     text(
                         "INSERT INTO provider_scheduling_operations "
@@ -160,6 +163,7 @@ class SqliteProviderSchedulingRepository:
                 )
                 return work
         except (
+            ProviderDriftSuspendedError,
             ProviderSchedulingAuthorizationError,
             ProviderSchedulingConflictError,
             ProviderSchedulingValidationError,
@@ -855,6 +859,31 @@ async def _validate_authority(
         or work.estimated_cost_micros > limits.max_batch_cost_micros
     ):
         raise ProviderSchedulingValidationError(_ERR_INTEGRITY)
+
+
+async def _assert_generation_writable(
+    connection: AsyncConnection,
+    work: ProviderWorkItem,
+) -> None:
+    key = work.batch_key
+    suspended = (
+        await connection.execute(
+            text(
+                "SELECT 1 FROM active_embedding_generations AS active "
+                "JOIN provider_generation_write_suspensions AS suspension "
+                "ON suspension.generation_id=active.generation_id "
+                "WHERE active.brain_id=:brain AND active.purpose=:purpose "
+                "AND active.space_id=:space LIMIT 1"
+            ),
+            {
+                "brain": key.brain_id,
+                "purpose": key.purpose.value,
+                "space": key.space_id,
+            },
+        )
+    ).scalar_one_or_none()
+    if suspended is not None:
+        raise ProviderDriftSuspendedError(_ERR_DRIFT)
 
 
 async def _profile_policies(

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from agentmemory.identity.domain.retrieval_scope import AuthorizedScope
     from agentmemory.operations.adapters.outbound.sqlite_store import SqliteCoreStore
+    from agentmemory.providers.domain.observability import DriftCanary
 
 _ERR_AUTHORIZATION = "provider profile storage action is not authorized"
 _ERR_CONFLICT = "provider profile conflicts with immutable history"
@@ -142,6 +143,57 @@ class SqliteProviderProfileRepository:
                 return None if row is None else await _decode_row(connection, row)
         except ProviderProfileAuthorizationError:
             raise
+        except SQLAlchemyError as error:
+            raise ProviderProfileDependencyError(_ERR_STORAGE) from error
+        except (StrictJsonError, KeyError, TypeError, ValueError) as error:
+            raise ProviderProfileConflictError(_ERR_INTEGRITY) from error
+
+    async def get_drift_profile(
+        self,
+        canary: DriftCanary,
+    ) -> tuple[ProviderProfile, CanonicalPurpose] | None:
+        """Load exact active profile and generation purpose for an internal drift probe."""
+        try:
+            async with self._store.engine.connect() as connection:
+                row = (
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT profile.*,space.purpose AS drift_purpose "
+                                "FROM provider_profiles AS profile "
+                                "JOIN embedding_spaces AS space "
+                                "ON space.profile_id=profile.id "
+                                "AND space.brain_id=profile.brain_id "
+                                "JOIN embedding_index_generations AS generation "
+                                "ON generation.space_id=space.id "
+                                "AND generation.brain_id=space.brain_id "
+                                "WHERE profile.id=:profile AND profile.brain_id=:brain "
+                                "AND space.id=:space AND generation.id=:generation"
+                            ),
+                            {
+                                "brain": canary.brain_id,
+                                "generation": canary.generation_id,
+                                "profile": canary.profile_id,
+                                "space": canary.space_id,
+                            },
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if row is None:
+                    return None
+                profile = await _decode_row(connection, row)
+                if (
+                    profile.version != canary.profile_version
+                    or profile.status is not ProviderProfileStatus.ACTIVE
+                    or profile.active_probe is None
+                    or profile.active_probe.evidence_id != canary.capability_attestation_id
+                    or profile.active_probe.result.revision_fingerprint
+                    != canary.revision_fingerprint
+                ):
+                    return None
+                return profile, CanonicalPurpose(_string(row["drift_purpose"]))
         except SQLAlchemyError as error:
             raise ProviderProfileDependencyError(_ERR_STORAGE) from error
         except (StrictJsonError, KeyError, TypeError, ValueError) as error:

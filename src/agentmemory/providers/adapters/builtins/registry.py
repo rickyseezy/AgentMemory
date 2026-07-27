@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from agentmemory.providers.domain.errors import (
     ProviderAdapterError,
@@ -13,6 +13,7 @@ from agentmemory.providers.domain.errors import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from agentmemory.providers.adapters.drift_probe import ProviderDriftVectorAdapter
     from agentmemory.providers.domain.profile_ports import ProviderAdapterPort
 
 _ERR_AMBIGUOUS = "provider adapter registry is ambiguous"
@@ -40,3 +41,7 @@ class CertifiedProviderAdapterRegistry:
             return self._adapters[adapter_id]
         except KeyError as error:
             raise ProviderAdapterError(ProviderErrorCode.UNSUPPORTED_CAPABILITY) from error
+
+    def get_drift(self, adapter_id: str) -> ProviderDriftVectorAdapter:
+        """Return the exact certified adapter through its drift-only capability."""
+        return cast("ProviderDriftVectorAdapter", self.get(adapter_id))

@@ -27,6 +27,7 @@ from agentmemory.providers.application.scheduling import (
     GetProviderWorkQuery,
 )
 from agentmemory.providers.domain.errors import (
+    ProviderDriftSuspendedError,
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingCapacityError,
     ProviderSchedulingConflictError,
@@ -381,6 +382,7 @@ def _require_idempotency(supplied: str | None, expected: str) -> None:
 
 
 _HANDLED_ERRORS = (
+    ProviderDriftSuspendedError,
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingCapacityError,
     ProviderSchedulingConflictError,
@@ -399,6 +401,8 @@ def _problem(error: Exception) -> JSONResponse:
         (ProviderSchedulingAuthorizationError, IdentityAuthorizationError),
     ):
         status, code = 403, "forbidden"
+    elif isinstance(error, ProviderDriftSuspendedError):
+        status, code = 409, "drift_suspended"
     elif isinstance(error, (ProviderSchedulingConflictError, IdentityConflictError)):
         status, code = 409, "conflict"
     elif isinstance(

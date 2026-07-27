@@ -20,6 +20,7 @@ from agentmemory.providers.application.scheduling import (
     _wait_or_stop,  # pyright: ignore[reportPrivateUsage]
 )
 from agentmemory.providers.domain.errors import (
+    ProviderBudgetExhaustedError,
     ProviderSchedulingAuthorizationError,
     ProviderSchedulingDependencyError,
     ProviderSchedulingValidationError,
@@ -536,6 +537,46 @@ async def test_dependency_failure_releases_exact_lease_without_fabricating_resul
     assert repository.completed == []
     assert repository.released[0][1] == "dependency_unavailable"
     assert repository.released[0][2] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "channels", "retry"),
+    [("queued", (), True), ("degraded", ("exact", "graph"), False)],
+)
+async def test_budget_exhaustion_releases_without_provider_result(
+    decision: str,
+    channels: tuple[str, ...],
+    retry: bool,  # noqa: FBT001 -- Explicit parametrized expectation.
+) -> None:
+    lease = _lease()
+    repository = _Repository(lease=lease)
+    authorizer = _Authorizer()
+
+    @dataclass(slots=True)
+    class _BudgetDenied:
+        async def execute(
+            self,
+            batch: ProviderBatch,
+            payloads: Sequence[bytearray],
+        ) -> ProviderBatchOutcome:
+            del batch, payloads
+            raise ProviderBudgetExhaustedError(decision, channels)
+
+    worker = ProviderSchedulerWorker(
+        repository,
+        authorizer,
+        _Materializer(authorizer),
+        _BudgetDenied(),
+        FixedClock(),
+        "provider-scheduler-v1",
+        poll_seconds=0,
+    )
+
+    assert await worker.run_once()
+    assert repository.completed == []
+    assert repository.released[0][1] == f"budget_{decision}"
+    assert (repository.released[0][2] is not None) is retry
 
 
 @pytest.mark.asyncio

@@ -233,6 +233,22 @@ async def test_every_remote_builtin_passes_one_shared_live_conformance_contract(
 
 
 @pytest.mark.asyncio
+async def test_remote_drift_execution_returns_validated_mutable_canary_vectors() -> None:
+    gateway = _Gateway(_valid_response)
+    adapter = OpenAIProviderAdapter(gateway)
+
+    result = await adapter.observe_drift_vectors(
+        _profile(adapter, ProviderOperation.EMBEDDING),
+        CanonicalPurpose.RETRIEVAL_QUERY,
+    )
+
+    assert result.revision_fingerprint == FINGERPRINT
+    assert result.vectors == [[0.1, 0.2], [0.3, 0.4]]
+    result.vectors[0][0] = 0.0
+    assert result.vectors[0][0] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_protocols_map_canonical_purpose_without_vendor_logic_in_core() -> None:
     gateway = _Gateway(_valid_response)
     cohere = CohereProviderAdapter(gateway)
@@ -539,6 +555,9 @@ class _Sidecar:
     async def probe(self) -> ProviderAttestation:
         return self.attestation
 
+    async def probe_identity(self) -> ProviderAttestation:
+        return self.attestation
+
     async def embed_probe(
         self,
         purpose: str,
@@ -610,6 +629,13 @@ async def test_qwen_local_runtime_bridge_uses_release_attestation(
     assert result.operation is operation
     assert result.dimension == dimension
     assert result.cancellation_verified
+    if operation is ProviderOperation.EMBEDDING:
+        drift = await adapter.observe_drift_vectors(
+            local_profile,
+            CanonicalPurpose.RETRIEVAL_QUERY,
+        )
+        assert drift.revision_fingerprint == result.revision_fingerprint
+        assert len(drift.vectors) == 2
 
 
 @pytest.mark.asyncio

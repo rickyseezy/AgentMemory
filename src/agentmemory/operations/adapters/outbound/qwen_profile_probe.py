@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentmemory.operations.domain.errors import ErrorCode, OperationError
+from agentmemory.providers.adapters.drift_probe import MutableAdapterVectorResult
 from agentmemory.providers.domain.capability_probe import (
     EmbeddingProbeBatch,
     ProviderProbeSuite,
@@ -33,7 +34,8 @@ if TYPE_CHECKING:
         LocalEmbeddingHttpAdapter,
         LocalRerankingHttpAdapter,
     )
-    from agentmemory.providers.domain.profiles import ProviderProfile
+    from agentmemory.operations.domain.dependency_ports import ProviderAttestation
+    from agentmemory.providers.domain.profiles import CanonicalPurpose, ProviderProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,12 +108,7 @@ class QwenProfileProbeAdapter:
             raise ProviderAdapterError(ProviderErrorCode.MALFORMED_RESPONSE) from error
         if attestation.model_id != configuration.model_id:
             raise ProviderAdapterError(ProviderErrorCode.MISSING_MODEL)
-        fingerprint = hashlib.sha256(
-            (
-                f"qwen-local\0{attestation.role}\0{attestation.model_id}\0"
-                f"{attestation.model_revision}\0{attestation.dimension}"
-            ).encode()
-        ).hexdigest()
+        fingerprint = _revision_fingerprint(attestation)
         embedding = configuration.operation is ProviderOperation.EMBEDDING
         try:
             suite_result = suite.finalize(
@@ -144,3 +141,43 @@ class QwenProfileProbeAdapter:
             validation_digest=suite_result.validation_digest,
             validated_batches=suite_result.validated_batches,
         )
+
+    async def observe_drift_vectors(
+        self,
+        profile: ProviderProfile,
+        purpose: CanonicalPurpose,
+    ) -> MutableAdapterVectorResult:
+        """Execute and validate the fixed public canary through the local sidecar."""
+        configuration = profile.configuration
+        if (
+            configuration.operation is not ProviderOperation.EMBEDDING
+            or purpose not in configuration.purposes
+        ):
+            raise ProviderAdapterError(ProviderErrorCode.UNSUPPORTED_CAPABILITY)
+        canaries = probe_canaries()
+        try:
+            attestation = await self.embeddings.probe_identity()
+            vectors = await self.embeddings.embed_probe(
+                purpose.value,
+                tuple((item.content_id, item.content) for item in canaries),
+            )
+        except OperationError as error:
+            raise ProviderAdapterError(ProviderErrorCode.TRANSIENT_UPSTREAM) from error
+        if attestation.model_id != configuration.model_id or tuple(
+            item.content_id for item in vectors
+        ) != tuple(item.content_id for item in canaries):
+            raise ProviderAdapterError(ProviderErrorCode.MODEL_DRIFT)
+        return MutableAdapterVectorResult(
+            content_ids=tuple(item.content_id for item in vectors),
+            vectors=[list(item.values) for item in vectors],
+            revision_fingerprint=_revision_fingerprint(attestation),
+        )
+
+
+def _revision_fingerprint(attestation: ProviderAttestation) -> str:
+    return hashlib.sha256(
+        (
+            f"qwen-local\0{attestation.role}\0{attestation.model_id}\0"
+            f"{attestation.model_revision}\0{attestation.dimension}"
+        ).encode()
+    ).hexdigest()

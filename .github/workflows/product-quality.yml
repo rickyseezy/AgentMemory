@@ -169,7 +169,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -204,7 +204,7 @@ jobs:
         run: >-
           uv run python -m tools.python_mutation_shards run
           --project-root .
-          --shard-count 8
+          --shard-count 16
           --shard-index ${{ matrix.shard }}
           --max-children 4
 
@@ -244,7 +244,7 @@ jobs:
           python -m tools.python_mutation_shards verify
           --project-root .
           --evidence build/python-mutation-shards
-          --shard-count 8
+          --shard-count 16
           --minimum 80
 
   setup-ui:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from agentmemory.identity.domain.retrieval_scope import AuthorizedScope, RetrievalRole
+from agentmemory.providers.application import observability as observability_module
 from agentmemory.providers.application.observability import (
     BudgetedTelemetryProviderBatchGateway,
     GetProviderStatusHandler,
@@ -30,6 +31,7 @@ from agentmemory.providers.application.observability import (
 )
 from agentmemory.providers.domain.errors import (
     ProviderBudgetExhaustedError,
+    ProviderErrorCode,
     ProviderObservabilityAuthorizationError,
     ProviderObservabilityConflictError,
     ProviderObservabilityValidationError,
@@ -291,9 +293,101 @@ async def test_administration_handlers_publish_exact_versioned_authority() -> No
     assert await PublishPricingSnapshotHandler(repository).execute(price_command) == pricing()
     assert await PublishBudgetPolicyHandler(repository).execute(budget_command) == budget()
     assert await RegisterDriftCanaryHandler(repository).execute(canary_command) == canary()
+    assert (
+        price_command.request_digest
+        == "51c99b42458e9cc8e6635ff3d68655af9a3fe827a5edb3ae6ec3d60f934f809e"
+    )
+    assert (
+        budget_command.request_digest
+        == "86019525c38ac912100621851ee0ccca51d6461931032a6e9a05f912e69f7783"
+    )
+    assert (
+        canary_command.request_digest
+        == "312ab4819ef39d9faebadd498f61903db5ca05aae54d652e2d3c7492077d5c68"
+    )
     assert repository.pricing_publications[0][2] == price_command.request_digest
     assert repository.budget_publications[0][2] == budget_command.request_digest
     assert repository.canary_registrations[0][2] == canary_command.request_digest
+
+
+def test_administration_commands_use_canonical_request_digests() -> None:
+    commands = (
+        PublishPricingSnapshotCommand(
+            operation_id="publish-pricing-3",
+            scope=scope("provider.observability.pricing.publish"),
+            snapshot=pricing(),
+        ),
+        PublishBudgetPolicyCommand(
+            operation_id="publish-budget-4",
+            scope=scope("provider.observability.budget.publish"),
+            policy=budget(),
+        ),
+        RegisterDriftCanaryCommand(
+            operation_id="register-canary-1",
+            scope=scope("provider.observability.drift.register"),
+            canary=canary(),
+        ),
+    )
+
+    assert tuple(command.request_digest for command in commands) == (
+        "51c99b42458e9cc8e6635ff3d68655af9a3fe827a5edb3ae6ec3d60f934f809e",
+        "86019525c38ac912100621851ee0ccca51d6461931032a6e9a05f912e69f7783",
+        "312ab4819ef39d9faebadd498f61903db5ca05aae54d652e2d3c7492077d5c68",
+    )
+
+
+def test_batch_outcome_preserves_certified_safe_provider_error_code() -> None:
+    failed = ProviderBatchOutcome(
+        "provider-batch-outcome-safe-error",
+        (
+            ProviderItemResult.failed(
+                item(0).item_id,
+                ProviderItemResultStatus.RETRYABLE_FAILURE,
+                "rate_limit",
+            ),
+        ),
+    )
+
+    assert observability_module._batch_outcome(  # pyright: ignore[reportPrivateUsage]
+        failed
+    ) == (
+        ProviderOperationOutcome.RETRY_SCHEDULED,
+        ProviderErrorCode.RATE_LIMIT,
+    )
+
+    unknown = ProviderBatchOutcome(
+        "provider-batch-outcome-unknown-error",
+        (
+            ProviderItemResult.failed(
+                item(0).item_id,
+                ProviderItemResultStatus.PERMANENT_FAILURE,
+                "untrusted_vendor_code",
+            ),
+        ),
+    )
+    assert observability_module._batch_outcome(  # pyright: ignore[reportPrivateUsage]
+        unknown
+    ) == (
+        ProviderOperationOutcome.PERMANENT_FAILURE,
+        ProviderErrorCode.ADAPTER_CRASH,
+    )
+
+    cancelled = ProviderBatchOutcome(
+        "provider-batch-outcome-cancelled",
+        (
+            ProviderItemResult.failed(
+                item(0).item_id,
+                ProviderItemResultStatus.CANCELLED,
+                "cancelled",
+            ),
+        ),
+    )
+    assert observability_module._batch_outcome(  # pyright: ignore[reportPrivateUsage]
+        cancelled
+    ) == (
+        ProviderOperationOutcome.CANCELLED,
+        ProviderErrorCode.ADAPTER_CRASH,
+    )
 
 
 @pytest.mark.asyncio

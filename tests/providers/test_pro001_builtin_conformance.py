@@ -696,6 +696,7 @@ def test_certified_registry_is_closed_non_empty_and_unambiguous() -> None:
     openai = OpenAIProviderAdapter(gateway)
     registry = CertifiedProviderAdapterRegistry((openai, CohereProviderAdapter(gateway)))
     assert registry.get("openai") is openai
+    assert registry.get_drift("openai") is openai
     with pytest.raises(ProviderAdapterError) as captured:
         registry.get("unknown")
     assert captured.value.code is ProviderErrorCode.UNSUPPORTED_CAPABILITY
@@ -703,6 +704,14 @@ def test_certified_registry_is_closed_non_empty_and_unambiguous() -> None:
         CertifiedProviderAdapterRegistry(())
     with pytest.raises(ProviderProfileConflictError, match="ambiguous"):
         CertifiedProviderAdapterRegistry((openai, OpenAIProviderAdapter(gateway)))
+
+
+def test_certified_registry_exposes_the_same_adapter_for_drift_probes() -> None:
+    gateway = _Gateway(_valid_response)
+    openai = OpenAIProviderAdapter(gateway)
+    registry = CertifiedProviderAdapterRegistry((openai,))
+
+    assert registry.get_drift("openai") is openai
 
 
 @pytest.mark.parametrize("protocol", [OpenAIProtocol(), GoogleProtocol()])

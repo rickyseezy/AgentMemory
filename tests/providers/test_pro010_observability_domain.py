@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from agentmemory.providers.domain import observability as observability_module
 from agentmemory.providers.domain.capability_probe import ProviderProbeSuite, probe_canaries
 from agentmemory.providers.domain.errors import (
     ProviderErrorCode,
@@ -127,11 +128,69 @@ def test_pricing_snapshot_is_content_addressed_and_uses_integer_micro_costs() ->
     replay = PricingSnapshot.create(**cast("Any", first.creation_document))
     assert replay == first
     assert replay.snapshot_id == first.snapshot_id
+    assert first.snapshot_id == "4a0d9b427459abb27330d1f5c9a9c5e2526a3ffe26dd3ce4c2a30c94e9b3bfea"
     assert first.cost(request_count=2, input_units=250_001, output_units=10_001) == 540_206
     assert (
         PricingSnapshot.create(**cast("Any", {**first.creation_document, "version": 4})).snapshot_id
         != first.snapshot_id
     )
+
+
+def test_pricing_ceil_rate_preserves_zero_and_single_micro_boundaries() -> None:
+    zero_units = PricingSnapshot.create(
+        **cast(
+            "Any",
+            {
+                **pricing().creation_document,
+                "request_micros": 0,
+                "input_micros_per_million": 2_000_000,
+                "output_micros_per_million": 4_000_000,
+            },
+        )
+    )
+    assert zero_units.cost(request_count=0, input_units=0, output_units=0) == 0
+
+    zero_rate = PricingSnapshot.create(
+        **cast(
+            "Any",
+            {
+                **pricing().creation_document,
+                "request_micros": 0,
+                "input_micros_per_million": 0,
+                "output_micros_per_million": 0,
+            },
+        )
+    )
+    assert zero_rate.cost(request_count=0, input_units=1, output_units=1) == 0
+
+    single_micro = PricingSnapshot.create(
+        **cast(
+            "Any",
+            {
+                **pricing().creation_document,
+                "request_micros": 0,
+                "input_micros_per_million": 1,
+                "output_micros_per_million": 0,
+            },
+        )
+    )
+    assert single_micro.cost(request_count=0, input_units=1, output_units=0) == 1
+
+
+def test_observability_digest_has_canonical_unicode_and_rejects_non_finite_values() -> None:
+    assert (
+        observability_module._digest(  # pyright: ignore[reportPrivateUsage]
+            {"label": "mémoire", "ordinal": 1}
+        )
+        == "0b791414d794f869cd0d2663dd22408f301d18f0f14f94896318619694673f2e"
+    )
+    with pytest.raises(
+        ProviderObservabilityValidationError,
+        match=r"^provider observability input is invalid$",
+    ):
+        observability_module._digest(  # pyright: ignore[reportPrivateUsage]
+            {"value": float("nan")}
+        )
 
 
 @pytest.mark.parametrize(
@@ -240,6 +299,53 @@ def test_drift_probe_accepts_tolerated_norm_noise_but_rejects_semantic_change() 
         observation(revision_fingerprint=digest("changed-revision").value),
     )
     assert revision.reason_code == "model_revision_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("profile_id", BRAIN_ID),
+        ("profile_version", 3),
+        ("space_id", CANARY_ID),
+        ("generation_id", CANARY_ID),
+    ],
+)
+def test_drift_evaluator_rejects_each_independently_mismatched_authority_coordinate(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ProviderObservabilityValidationError):
+        DriftEvaluator.evaluate(
+            canary(),
+            replace(observation(), **cast("Any", {field: value})),
+        )
+
+
+def test_drift_evaluator_rejects_foreign_canary_items_and_accepts_exact_boundaries() -> None:
+    foreign_items = (digest("foreign-canary-1").value, digest("foreign-canary-2").value)
+    with pytest.raises(ProviderObservabilityValidationError):
+        DriftEvaluator.evaluate(
+            canary(),
+            observation(
+                canary_item_ids=foreign_items,
+                distance_order=foreign_items,
+            ),
+        )
+
+    norm_boundary = DriftEvaluator.evaluate(
+        canary(),
+        observation(norms_micros=(1_000_100, 999_960)),
+    )
+    assert norm_boundary.verdict is DriftVerdict.STABLE
+
+    order_boundary_contract = canary(maximum_order_inversions=1)
+    order_boundary = DriftEvaluator.evaluate(
+        order_boundary_contract,
+        observation(
+            distance_order=tuple(reversed(order_boundary_contract.distance_order)),
+        ),
+    )
+    assert order_boundary.verdict is DriftVerdict.STABLE
 
 
 @pytest.mark.parametrize(

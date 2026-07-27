@@ -591,6 +591,93 @@ async def test_telemetry_reconciles_actual_cost_once_and_status_uses_safe_aggreg
 
 
 @pytest.mark.asyncio
+async def test_reconciliation_overrun_emits_one_content_addressed_critical_alert(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    repository = SqliteProviderObservabilityRepository(store)
+    try:
+        await _seed_generation(store)
+        snapshot, _ = await _publish_authority(repository, limit_micros=250)
+        reservation = ReserveProviderBudgetCommand(
+            operation_id="pro010-reconciliation-overrun",
+            brain_id=BRAIN_ID,
+            profile_id=PROFILE_ID,
+            profile_version=2,
+            pricing_snapshot_id=snapshot.snapshot_id,
+            estimated_cost_micros=100,
+            requested_at_microseconds=1_500_000,
+        )
+        admission = await repository.reserve_budget(reservation)
+        assert admission.decision is BudgetDecision.RESERVED
+        assert admission.reserved_micros == 100
+
+        fact = await ProviderTelemetryRecorder(repository, repository).record(
+            ProviderOperationMeasurement(
+                operation_id=reservation.operation_id,
+                brain_id=BRAIN_ID,
+                profile_id=PROFILE_ID,
+                profile_version=2,
+                space_id=SPACE_ID,
+                generation_id=GENERATION_ID,
+                pricing_snapshot_id=snapshot.snapshot_id,
+                outcome=ProviderOperationOutcome.SUCCEEDED,
+                error_code=None,
+                request_count=1,
+                item_count=1,
+                input_units=100,
+                output_units=0,
+                request_bytes=64,
+                response_bytes=128,
+                attempt_count=1,
+                latency_microseconds=10_000,
+                estimated_cost_micros=100,
+                cache_hit=False,
+                deduplicated=False,
+                occurred_at_microseconds=1_500_000,
+                operation=ProviderOperation.EMBEDDING,
+            )
+        )
+        assert fact.actual_cost_micros == 300
+
+        await repository.record_and_reconcile(fact)
+
+        async with store.engine.connect() as connection:
+            alerts = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT hex(alert_digest) AS alert_digest,brain_id,profile_id,"
+                            "generation_id,severity,code,hex(evidence_digest) AS evidence_digest,"
+                            "created_at,state,schema_version "
+                            "FROM provider_observability_alerts "
+                            "WHERE code='provider_budget_reconciled_overrun'"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert len(alerts) == 1
+        alert = alerts[0]
+        assert (
+            str(alert["alert_digest"]).lower()
+            == "bba2973f27d062efea76cec8f423e00b60a5543688c1cd08e9782bb73106bfda"
+        )
+        assert str(alert["brain_id"]) == BRAIN_ID
+        assert str(alert["profile_id"]) == PROFILE_ID
+        assert str(alert["generation_id"]) == GENERATION_ID
+        assert str(alert["severity"]) == "critical"
+        assert str(alert["code"]) == "provider_budget_reconciled_overrun"
+        assert str(alert["evidence_digest"]).lower() == fact.fact_digest
+        assert int(alert["created_at"]) == fact.occurred_at_microseconds
+        assert str(alert["state"]) == "active"
+        assert int(alert["schema_version"]) == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_drift_mismatch_suspends_generation_and_database_rejects_new_writes(
     tmp_path: Path,
 ) -> None:

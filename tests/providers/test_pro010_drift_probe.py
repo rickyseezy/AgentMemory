@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from agentmemory.providers.adapters import drift_probe as drift_probe_module
 from agentmemory.providers.adapters.drift_probe import (
     ConfiguredDriftVectorGateway,
     MutableAdapterVectorResult,
@@ -145,8 +146,11 @@ async def test_vector_probe_reduces_vectors_to_safe_tolerant_aggregates_and_zero
     observed = await ProviderVectorDriftProbe(gateway).observe(canary())
     assert observed.canary_item_ids == canary().canary_item_ids
     assert observed.norms_micros == (1_000_000, 1_000_000)
-    assert set(observed.distance_order) == set(canary().canary_item_ids)
-    assert len(observed.vector_fingerprint) == 64
+    assert observed.distance_order == tuple(sorted(canary().canary_item_ids))
+    assert (
+        observed.vector_fingerprint
+        == "e604806e4f8561da0560bb6736b7b62c1d7c03e00c091c9039362f2a39c384a7"
+    )
     assert batch.vectors == [[0.0, 0.0, 0.0]] * 2
     assert "1.0" not in repr(batch)
 
@@ -160,6 +164,90 @@ async def test_vector_probe_reduces_vectors_to_safe_tolerant_aggregates_and_zero
 
 
 @pytest.mark.asyncio
+async def test_vector_probe_accepts_exact_time_value_and_dimension_boundaries() -> None:
+    contract = canary()
+    time_boundary = _batch()
+    time_boundary.observed_at_microseconds = contract.created_at_microseconds
+    observed = await ProviderVectorDriftProbe(_Gateway(time_boundary)).observe(contract)
+    assert observed.observed_at_microseconds == contract.created_at_microseconds
+
+    dimension_boundary = _batch(
+        [
+            [1.0] * 65_536,
+            [1.0] * 65_536,
+        ]
+    )
+    dimension_observation = await ProviderVectorDriftProbe(_Gateway(dimension_boundary)).observe(
+        contract
+    )
+    assert dimension_observation.norms_micros == (256_000_000, 256_000_000)
+
+    value_boundary = _batch(
+        [
+            [1_000_000.0, 0.0],
+            [0.0, 1_000_000.0],
+        ]
+    )
+    value_observation = await ProviderVectorDriftProbe(_Gateway(value_boundary)).observe(contract)
+    assert value_observation.norms_micros == (1_000_000_000_000, 1_000_000_000_000)
+
+
+@pytest.mark.asyncio
+async def test_vector_probe_rejects_each_independent_batch_contract_violation() -> None:
+    contract = canary()
+    invalid_batches = (
+        replace(_batch(), canary_set_digest=digest("foreign-canary-set").value),
+        _batch(content_ids=(digest("foreign-1").value, digest("foreign-2").value)),
+        _batch([[1, 0.0], [0.0, 1.0]]),
+        _batch(
+            [
+                [1.0] * 65_537,
+                [1.0] * 65_537,
+            ]
+        ),
+    )
+
+    for batch in invalid_batches:
+        with pytest.raises(ProviderObservabilityDependencyError):
+            await ProviderVectorDriftProbe(_Gateway(batch)).observe(contract)
+        assert all(all(value == 0.0 for value in vector) for vector in batch.vectors)
+
+
+def test_vector_probe_orders_three_items_by_mean_cosine_distance() -> None:
+    item_ids = tuple(
+        sorted(
+            (
+                digest("distance-item-1").value,
+                digest("distance-item-2").value,
+                digest("distance-item-3").value,
+            )
+        )
+    )
+    ordering = drift_probe_module._distance_order(  # pyright: ignore[reportPrivateUsage]
+        item_ids,
+        (
+            (0.0, 1.0),
+            (1.0, 0.0),
+            (1.0, 0.0),
+        ),
+        (1_000_000, 1_000_000, 1_000_000),
+    )
+
+    assert ordering == (item_ids[1], item_ids[2], item_ids[0])
+
+    scaled_ordering = drift_probe_module._distance_order(  # pyright: ignore[reportPrivateUsage]
+        item_ids,
+        (
+            (1.1212735697522742, 1.1438265121613487),
+            (1.476153699352122, 1.518796267699451),
+            (-1.5090616043625968, -1.4572253840897236),
+        ),
+        (1_601_747, 2_117_964, 2_097_802),
+    )
+    assert scaled_ordering == (item_ids[1], item_ids[0], item_ids[2])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "batch",
     [
@@ -167,6 +255,14 @@ async def test_vector_probe_reduces_vectors_to_safe_tolerant_aggregates_and_zero
         _batch([[1.0, 0.0], [float("nan"), 1.0]]),
         _batch([[0.0, 0.0], [1.0, 0.0]]),
         _batch(content_ids=(digest("foreign").value,) * 2),
+        _batch(content_ids=(digest("foreign-1").value, digest("foreign-2").value)),
+        _batch([[1, 0.0], [0.0, 1.0]]),
+        _batch(
+            [
+                [1.0] * 65_537,
+                [1.0] * 65_537,
+            ]
+        ),
     ],
 )
 async def test_vector_probe_rejects_malformed_output_and_always_zeroes(

@@ -254,9 +254,19 @@ class _GenerationSpy:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("projection_type", [ProjectionType.MEMORY, ProjectionType.GRAPH])
+@pytest.mark.parametrize(
+    ("projection_type", "expected_graph_calls"),
+    [
+        (ProjectionType.GRAPH, 1),
+        (ProjectionType.MEMORY, 0),
+        (ProjectionType.SEARCH, 0),
+        (ProjectionType.CODE, 0),
+        (ProjectionType.VECTOR, 1),
+    ],
+)
 async def test_generation_router_uses_graph_store_only_for_graph_families(
     projection_type: ProjectionType,
+    expected_graph_calls: int,
 ) -> None:
     validation = ProjectionValidation(
         record_count=1,
@@ -277,7 +287,6 @@ async def test_generation_router_uses_graph_store_only_for_graph_families(
     assert await router.put(brain, projection_type, generation, _source(), manifest)
     result = await router.validate(brain, projection_type, generation, manifest)
     assert result.passed
-    expected_graph_calls = int(projection_type is ProjectionType.GRAPH)
     assert graph.prepared == expected_graph_calls
     assert graph.written == expected_graph_calls
     assert graph.validated == expected_graph_calls

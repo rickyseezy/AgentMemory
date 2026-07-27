@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,6 +20,7 @@ from agentmemory.operations.application.commands.projection_rebuild import (
     ProjectionRebuilder,
     StartProjectionRebuildHandler,
 )
+from agentmemory.operations.application.projection_worker import ProjectionRebuildWorker
 from agentmemory.operations.domain.projection_rebuild import (
     ProjectionType,
     RebuildManifest,
@@ -29,6 +32,7 @@ from agentmemory.operations.domain.value_objects import Sha256Digest, Uuid7Id
 from tests.core.support import (
     BRAIN_ID,
     GRANT_ID,
+    NOW,
     OWNER_ID,
     FixedClock,
     bootstrap_request,
@@ -209,5 +213,113 @@ async def test_sqlite_rebuild_skips_tombstone_and_resumes_missing_dependency(
             )
         assert audit_actions.count("projection.rebuild.partial") == 2
         assert audit_actions[-1] == "projection.rebuild.active"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.resilience
+async def test_sqlite_rebuild_recovers_an_expired_worker_lease(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    initial = SqliteProjectionRebuildAdapter(store, FixedClock())
+    try:
+        await BootstrapLocalBrainHandler(SqliteUnitOfWorkFactory(store, FixedClock())).execute(
+            bootstrap_request()
+        )
+        await _seed_event(store, 1)
+        await StartProjectionRebuildHandler(initial, initial, initial).execute(
+            _command("rebuild-interrupted")
+        )
+
+        interrupted = await initial.claim("rebuild-interrupted")
+        assert interrupted.state is RebuildState.BUILDING
+        assert await initial.next_runnable() is None
+
+        recovered = SqliteProjectionRebuildAdapter(
+            store,
+            FixedClock(NOW + timedelta(minutes=5, microseconds=1)),
+        )
+        assert await recovered.next_runnable() == "rebuild-interrupted"
+        result = await ProjectionRebuilder(
+            recovered,
+            recovered,
+            recovered,
+            recovered,
+        ).execute("rebuild-interrupted")
+
+        assert result.state is RebuildState.ACTIVE
+        assert result.cursor == 1
+        assert result.record_count == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.privacy
+async def test_revoked_grant_prevents_shadow_write_and_activation(
+    tmp_path: Path,
+) -> None:
+    store = migrated_store(tmp_path)
+    adapter = SqliteProjectionRebuildAdapter(store, FixedClock())
+    try:
+        await BootstrapLocalBrainHandler(SqliteUnitOfWorkFactory(store, FixedClock())).execute(
+            bootstrap_request()
+        )
+        await _seed_event(store, 1)
+        await StartProjectionRebuildHandler(adapter, adapter, adapter).execute(
+            _command("rebuild-revoked")
+        )
+        async with store.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE principals SET status='revoked' WHERE id=:actor"),
+                {"actor": OWNER_ID},
+            )
+
+        worker = ProjectionRebuildWorker(
+            adapter,
+            ProjectionRebuilder(adapter, adapter, adapter, adapter),
+            poll_seconds=0.01,
+        )
+        stop = asyncio.Event()
+        worker_task = asyncio.create_task(worker.run(stop))
+        try:
+            for _ in range(100):
+                result = await adapter.get("rebuild-revoked")
+                if result is not None and result.state is RebuildState.FAILED:
+                    break
+                await asyncio.sleep(0)
+        finally:
+            stop.set()
+            await worker_task
+
+        result = await adapter.get("rebuild-revoked")
+        assert result is not None
+        assert result.state is RebuildState.FAILED
+        assert result.partial_reason == "authorization_revoked"
+        async with store.engine.connect() as connection:
+            projected = (
+                await connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM projection_records "
+                        "WHERE brain_id=:brain AND projection_type='graph'"
+                    ),
+                    {"brain": BRAIN_ID},
+                )
+            ).scalar_one()
+            activated = (
+                await connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM active_projection_generations "
+                        "WHERE brain_id=:brain AND projection_type='graph'"
+                    ),
+                    {"brain": BRAIN_ID},
+                )
+            ).scalar_one()
+        assert projected == 0
+        assert activated == 0
     finally:
         await store.close()

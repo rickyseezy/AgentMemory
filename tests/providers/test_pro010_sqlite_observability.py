@@ -298,6 +298,15 @@ async def test_publication_rejects_missing_budget_catalog_and_non_monotonic_vers
             digest("pro010-canary-first").value,
             contract,
         )
+        assert (
+            await repository.register_canary(
+                scope("provider.observability.drift.register"),
+                "pro010-canary-first",
+                digest("pro010-canary-first").value,
+                contract,
+            )
+            == contract
+        )
         changed = canary(
             capability_attestation_id=contract.capability_attestation_id,
             revision_fingerprint=contract.revision_fingerprint,

@@ -152,7 +152,12 @@ async def test_pf004_offline_capture_and_duplicate_recovery_produce_one_effectiv
 ) -> None:
     value = spool(tmp_path)
     raw = AgentEventEnvelopeV1.from_domain(event()).to_canonical_json()
-    hook = AgentEventCaptureHook(PassRedactor(), OfflineLedger(), value)
+    hook = AgentEventCaptureHook(
+        PassRedactor(),
+        OfflineLedger(),
+        value,
+        hook_deadline_seconds=1.0,
+    )
 
     first, retry = await asyncio.gather(hook.capture(raw), hook.capture(raw))
 

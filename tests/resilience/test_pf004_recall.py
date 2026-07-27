@@ -110,13 +110,13 @@ async def test_pf004_authorization_failure_prevents_every_channel_call() -> None
 
 @pytest.mark.asyncio
 async def test_pf004_fatal_channel_cancels_and_awaits_its_sibling() -> None:
+    sibling = Source(ChannelName.VECTOR, DependencyName.EMBEDDING, delay=10)
     fatal = Source(
         ChannelName.EXACT,
         DependencyName.CANONICAL_LEDGER,
         failure="integrity",
-        delay=0.01,
+        wait_for_start=sibling.started,
     )
-    sibling = Source(ChannelName.VECTOR, DependencyName.EMBEDDING, delay=10)
     handler = RecallQueryHandler.create(
         authorization=Authorization(),
         sources=(fatal, sibling),
@@ -441,11 +441,14 @@ class Source:
     score_basis_points: int = 9_000
     returned_channel: ChannelName | None = None
     cancelled: bool = False
+    wait_for_start: asyncio.Event | None = None
 
     async def recall(self, request: RecallQuery) -> RecallChannelSuccess:
         self.calls.append(request.operation_id)
         self.started.set()
         try:
+            if self.wait_for_start is not None:
+                await self.wait_for_start.wait()
             if self.delay:
                 await asyncio.sleep(self.delay)
         except asyncio.CancelledError:

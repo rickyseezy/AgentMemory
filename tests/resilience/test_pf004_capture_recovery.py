@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from time import perf_counter, sleep
+from threading import Event
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,6 +54,11 @@ class OfflineLedger:
 class SlowSpool:
     """Represent local disk latency beyond the complete host-hook budget."""
 
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+        self.finished = Event()
+
     def enqueue(
         self,
         event_id: str,
@@ -65,7 +70,9 @@ class SlowSpool:
         assert ordering_key
         assert sequence is not None
         assert canonical_event
-        sleep(0.1)
+        self.entered.set()
+        self.release.wait()
+        self.finished.set()
         return True
 
 
@@ -118,20 +125,23 @@ def spool(tmp_path: Path) -> EncryptedSqliteSpool:
 @pytest.mark.resilience
 async def test_pf004_host_returns_with_typed_degradation_before_slow_disk_finishes() -> None:
     raw = AgentEventEnvelopeV1.from_domain(event()).to_canonical_json()
+    slow_spool = SlowSpool()
     hook = AgentEventCaptureHook(
         PassRedactor(),
         OfflineLedger(),
-        SlowSpool(),
+        slow_spool,
         ipc_timeout_seconds=0.005,
         hook_deadline_seconds=0.02,
     )
 
-    started = perf_counter()
-    result = await hook.capture(raw)
-    elapsed = perf_counter() - started
-
-    assert result.status is CaptureStatus.DEADLINE_EXCEEDED
-    assert elapsed < 0.075
+    try:
+        result = await asyncio.wait_for(hook.capture(raw), timeout=0.5)
+        assert result.status is CaptureStatus.DEADLINE_EXCEEDED
+        assert slow_spool.entered.is_set()
+        assert not slow_spool.finished.is_set()
+    finally:
+        slow_spool.release.set()
+        assert await asyncio.to_thread(slow_spool.finished.wait, 0.5)
 
 
 @pytest.mark.asyncio

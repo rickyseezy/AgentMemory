@@ -165,7 +165,10 @@ jobs:
   mutation:
     name: Critical-domain mutation shard (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The largest 32-way shard is one irreducible source ownership target and
+    # has exceeded 60 minutes on a contended two-core hosted runner. Preserve a
+    # finite margin without reducing its mutants, source binding, or score gate.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

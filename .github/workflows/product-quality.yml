@@ -170,9 +170,10 @@ jobs:
       fail-fast: false
       matrix:
         # The 52,100-line critical surface exceeds the finite worker budget when
-        # partitioned into 16 line-balanced shards. Twenty-four keeps every
-        # planned shard below 2,200 weighted source lines without relaxing the
-        # exhaustive source-bound aggregate or its mandatory 80% score.
+        # partitioned into 16 or 24 line-balanced shards. Thirty-two separates
+        # every historically slow ownership target and keeps the largest planned
+        # shard below 1,850 weighted source lines without relaxing the exhaustive
+        # source-bound aggregate or its mandatory 80% score.
         shard:
           - 0
           - 1
@@ -198,6 +199,14 @@ jobs:
           - 21
           - 22
           - 23
+          - 24
+          - 25
+          - 26
+          - 27
+          - 28
+          - 29
+          - 30
+          - 31
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -232,7 +241,7 @@ jobs:
         run: >-
           uv run python -m tools.python_mutation_shards run
           --project-root .
-          --shard-count 24
+          --shard-count 32
           --shard-index ${{ matrix.shard }}
           --max-children 4
 
@@ -272,7 +281,7 @@ jobs:
           python -m tools.python_mutation_shards verify
           --project-root .
           --evidence build/python-mutation-shards
-          --shard-count 24
+          --shard-count 32
           --minimum 80
 
   setup-ui:
